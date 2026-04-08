@@ -18,7 +18,7 @@ from google.adk.agents import LlmAgent
 from conf.system import SYS_CONFIG
 from conf.agent import experts_list
 
-avaliable_agents: str = '\n'.join([str(expert) for expert in experts_list if expert.enable])
+available_agents: str = '\n'.join([str(expert) for expert in experts_list if expert.enable])
 
 
 def clean_and_parse_json(json_string: str) -> Dict[str, Any]:
@@ -123,7 +123,7 @@ class OrchestratorAgent(BaseAgent):
             name="PlannerAgent",
             model=llm_model,
             description='Analyze input request, output a plan in json format in order to successive execution.',
-            instruction=ORCHESTRATOR_INSTRUCTION + avaliable_agents,
+            instruction=ORCHESTRATOR_INSTRUCTION + available_agents,
             before_model_callback=orchestrator_before_model_callback,
         )
 
@@ -131,7 +131,7 @@ class OrchestratorAgent(BaseAgent):
             name="CriticAgent", 
             model=llm_model, 
             description="check the plan and output optimization instruction",
-            instruction=CRITIC_INSTRUCTION + avaliable_agents,
+            instruction=CRITIC_INSTRUCTION + available_agents,
             output_key='instruction',
             before_model_callback=orchestrator_before_model_callback,
         )

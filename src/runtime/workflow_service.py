@@ -27,6 +27,12 @@ from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
 from src.runtime.models import InboundMessage, WorkflowEvent
 
+_HELP_TEXT = (
+    "CreativeClaw commands:\n"
+    "/new - Start a new conversation session\n"
+    "/help - Show available commands"
+)
+
 
 class CreativeClawRuntime:
     """Run Creative Claw workflow for normalized channel messages."""
@@ -62,6 +68,23 @@ class CreativeClawRuntime:
 
     async def run_message(self, inbound: InboundMessage):
         """Execute one inbound message and yield workflow events."""
+        command = inbound.text.strip().lower()
+        if command == "/help":
+            yield WorkflowEvent(
+                event_type="final",
+                text=_HELP_TEXT,
+                metadata={"user_id": inbound.sender_id or SYS_CONFIG.user_id_default},
+            )
+            return
+        if command == "/new":
+            user_id, session_id = await self.reset_session(inbound)
+            yield WorkflowEvent(
+                event_type="final",
+                text="Started a new conversation session.",
+                metadata={"session_id": session_id, "user_id": user_id},
+            )
+            return
+
         user_id, session_id = await self._ensure_session(inbound)
 
         yield WorkflowEvent(
@@ -176,6 +199,21 @@ class CreativeClawRuntime:
             error_text = f"Workflow failed: {exc}"
             logger.error(error_text, exc_info=True)
             yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
+
+    async def reset_session(self, inbound: InboundMessage) -> tuple[str, str]:
+        """Force-create a fresh ADK session for the current channel conversation."""
+        user_id = inbound.sender_id or SYS_CONFIG.user_id_default
+        session_key = inbound.session_key
+        session_id = f"{SYS_CONFIG.session_id_default_prefix}{uuid.uuid4()}"
+        await self.session_service.create_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=user_id,
+            session_id=session_id,
+            state={},
+        )
+        self._session_keys[session_key] = session_id
+        logger.info("Reset session for {} -> {}", session_key, session_id)
+        return user_id, session_id
 
     async def _ensure_session(self, inbound: InboundMessage) -> tuple[str, str]:
         """Create or reuse one ADK session for a logical channel conversation."""

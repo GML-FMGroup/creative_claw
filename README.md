@@ -4,11 +4,6 @@
   <strong>A multi-agent system for autonomous artistic creation. The development is based on Google's Agent Development Kit (ADK) and Gemini Model</strong>
   <br />
   <br />
-  <a href="https://github.com/GML-FMGroup/creative_claw/stargazers"><img src="https://img.shields.io/github/stars/GML-FMGroup/creative_claw?style=social" alt="Stars"></a>
-  <a href="https://github.com/GML-FMGroup/creative_claw/network/members"><img src="https://img.shields.io/github/forks/GML-FMGroup/creative_claw?style=social" alt="Forks"></a>
-  <a href="https://github.com/GML-FMGroup/creative_claw/issues"><img src="https://img.shields.io/github/issues/GML-FMGroup/creative_claw" alt="Issues"></a>
-  <a href="https://google.github.io/adk-docs/"><img src="https://img.shields.io/badge/Powered%20by-ADK%201.0-blue" alt="ADK"></a>
-  <a href="https://ai.google.dev/gemini-api/docs/get-started/python"><img src="https://img.shields.io/badge/Model-Gemini-purple" alt="Gemini"></a>
 </div>
 
 
@@ -43,6 +38,8 @@ We currently provide a channel-oriented local CLI:
     *   Supports text dialogue through the local terminal channel.
     *   Supports up to two local file attachments per message.
     *   Reuses the same chat session through `user-id` and `chat-id`.
+    *   Supports `/new` to start a fresh conversation session inside the same channel chat.
+    *   Supports `/help` to show built-in chat commands.
 2.  **Telegram channel runner (`apps/run_telegram.py`)**:
     *   Uses Telegram long polling.
     *   Required in `.env`: `TELEGRAM_BOT_TOKEN`
@@ -53,7 +50,6 @@ We currently provide a channel-oriented local CLI:
     *   Optional in `.env`: `FEISHU_ENCRYPT_KEY`, `FEISHU_VERIFICATION_TOKEN`
     *   Recommended in `.env`: `FEISHU_ALLOW_FROM`
 
-The project no longer ships the old Web GUI or FastAPI API layer. Chat channels are now the only supported interaction path.
 ---
 
 
@@ -95,6 +91,13 @@ Notes:
 - For Feishu long connection mode, `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are required.
 - For Feishu long connection mode, `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` can usually stay empty.
 - `FEISHU_ALLOW_FROM` is optional but recommended if you want to limit who can trigger the agent.
+
+## **Chat Commands**
+
+The following commands are supported across the local CLI, Telegram, and Feishu channels:
+
+- `/help`: Show the built-in chat commands.
+- `/new`: Start a fresh conversation session inside the current channel chat.
 
 * Run the local channel CLI
 ```bash
