@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "artistic-multi-agent-system"
-version = "0.2.0"
+version = "0.1.0"
 description = "A multi-agent system for autonomous artistic creation using ADK."
 authors = ["GML <mail@yxy.pub>"]
 readme = "README.md"
