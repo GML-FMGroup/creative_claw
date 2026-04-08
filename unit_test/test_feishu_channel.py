@@ -22,6 +22,7 @@ class _TestFeishuChannel(FeishuChannel):
         self.sent_texts: list[tuple[str, str]] = []
         self.sent_images: list[tuple[str, str]] = []
         self.sent_files: list[tuple[str, str]] = []
+        self.reactions: list[tuple[str, str]] = []
 
     def _send_text_sync(self, chat_id: str, text: str) -> str:
         self.sent_texts.append((chat_id, text))
@@ -34,6 +35,9 @@ class _TestFeishuChannel(FeishuChannel):
     def _send_file_sync(self, chat_id: str, file_path: str) -> str:
         self.sent_files.append((chat_id, file_path))
         return "om_file_1"
+
+    async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
+        self.reactions.append((message_id, emoji_type))
 
     async def _download_image(self, image_key: str, message_id: str) -> Path:
         return Path(f"/tmp/{message_id}_{image_key}.png")
@@ -68,6 +72,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(inbound_messages), 1)
         self.assertEqual(inbound_messages[0].chat_id, "oc_group_1")
         self.assertEqual(inbound_messages[0].text, "hello from feishu")
+        self.assertEqual(channel.reactions, [("om_1", "THUMBSUP")])
 
     async def test_on_message_respects_allow_list(self) -> None:
         inbound_messages: list[InboundMessage] = []
@@ -91,6 +96,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
         await channel._on_message(data)
         self.assertEqual(inbound_messages, [])
+        self.assertEqual(channel.reactions, [])
 
     async def test_send_routes_text_and_image_artifact(self) -> None:
         inbound_messages: list[InboundMessage] = []

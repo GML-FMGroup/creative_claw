@@ -1,18 +1,14 @@
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, Dict
 from typing_extensions import override
-from concurrent.futures import ThreadPoolExecutor
-import time
-import asyncio
 
-from google.adk.agents import BaseAgent, LlmAgent
+from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.tools import ToolContext
 from google.genai.types import Part, Content, Blob
 
 from src.logger import logger
-from conf.system import SYS_CONFIG
-from src.agents.experts.image_editing.tool import segmind_GPT_image_1_tool
+from src.agents.experts.image_editing import tool as editing_tools
 
 class ImageEditingAgent(BaseAgent):
     """A custom agent that orchestrates a sequence of agents to generate an image from text."""
@@ -63,7 +59,15 @@ class ImageEditingAgent(BaseAgent):
             yield self.format_event(error_text, {"current_output":current_output}) 
             return
 
-        rsp = await segmind_GPT_image_1_tool(ToolContext(ctx))    
+        prompt_list = current_parameters["prompt"]
+        if isinstance(prompt_list, str):
+            prompt_list = [prompt_list]
+        provider = str(current_parameters.get("provider", "nano_banana")).strip().lower()
+
+        if provider == "seedream":
+            rsp = await editing_tools.seedream_image_edit_tool(ToolContext(ctx), prompt_list)
+        else:
+            rsp = await editing_tools.nano_banana_image_edit_tool(ToolContext(ctx), prompt_list)
         step = ctx.session.state['step']
 
         if rsp["status"] == "error":
@@ -76,8 +80,6 @@ class ImageEditingAgent(BaseAgent):
         
         else:
             # save artifact
-            prompt_list = current_parameters['prompt']
-            if not isinstance(prompt_list, list): prompt_list = [prompt_list]
             text = f"Round {step+1}: {self.name} finished editing {len(prompt_list)} image(s)."
             output_artifacts = []
 

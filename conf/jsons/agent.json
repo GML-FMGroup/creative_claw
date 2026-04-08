@@ -4,14 +4,14 @@
         {
             "name": "ImageGenerationAgent",
             "enable": true,
-            "description": "Generate an image based on the input text. Can only be generated based on text, cannot receive reference images. The input parameter 'prompt' can be a single string or a list containing multiple strings, depending on the number of images that need to be generated. \n #Attention: 1. If not otherwise specified, simply enter a single prompt to generate one image. If multiple images need to be generated, you must input multiple prompts at once instead of repeatedly calling this agent.\n 2. This agent can only accept plain text. If you need to refer to other images for generation, please select ImageEditingAgent.",
-            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...]}`"
+            "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values.",
+            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional), 'aspect_ratio': '16:9'(optional), 'resolution': '1K|2K|4K'(optional)}`"
         },
         {
             "name": "ImageEditingAgent",
             "enable": true,
-            "description": "Edit the image by entering a list of image names, which can be a single image to be edited or multiple images including the image to be edited and reference images. If you input multiple images, you need to indicate the order of the images in the prompt, for example, `refer to the second image, edit the first image, ...`\n #Attention: 1.This agent also supports inputting multiple prompts for different editing or reference generation of the same input image. In this case, the input prompt needs to be a list.\n 2. In addition to regular image editing, this agent can also be used for tasks such as image generation or style transfer that include reference images.",
-            "parameters": "`{'input_name': ['image name1', ...], 'prompt': ['prompt1', 'prompt2', ...]}`"
+            "description": "Edit one or more existing images. `input_name` can include the image to edit plus optional reference images. If multiple input images are provided, the prompt should explain their order. This agent supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly.",
+            "parameters": "`{'input_name': ['image name1', ...], 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}`"
         },
         {
             "name": "KnowledgeAgent",

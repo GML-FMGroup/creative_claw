@@ -1,28 +1,31 @@
-import time
-import requests
 import os
 import asyncio
-import httpx
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, AsyncGenerator
-from urllib.parse import urlparse, unquote
-from pathlib import PurePosixPath
-from http import HTTPStatus
+from dataclasses import dataclass
+from typing import Any, AsyncGenerator
 
-from dashscope import ImageSynthesis
-from google.adk.tools import ToolContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest
-from google.genai.types import Part, Content
+from google.genai import types
+from google.genai.types import Content, Part
 
 from conf.system import SYS_CONFIG
-from conf.api import API_CONFIG
 from src.logger import logger
 
 
-async def prompt_enhancement_tool(ctx: InvocationContext, prompt: str) -> AsyncGenerator[str, None]:
+@dataclass
+class ImageGenerationResult:
+    """Normalized image generation result across different providers."""
+
+    status: str
+    message: Any
+    provider: str
+    model_name: str
+    usage: dict | None = None
+
+
+async def prompt_enhancement_tool(ctx: InvocationContext, prompt: str) -> dict[str, str]:
     system_prompt = """
     You are a professional prompt optimization expert, proficient in the concretization and optimization of prompt words in the field of text, biology, and graphics.
     The user will input the initial prompt, and you need to polish or expand it.
@@ -78,89 +81,187 @@ async def prompt_enhancement_tool(ctx: InvocationContext, prompt: str) -> AsyncG
             'message': error_text
         }
 
-async def tongyi_text2image_tool(prompt: str) -> AsyncGenerator[dict[str, Any], None]:
-    """
-    Generate images through Tongyi.
-    """
+def _normalize_aspect_ratio(raw_value: str) -> str:
+    """Normalize arbitrary aspect ratio hints into one supported Gemini value."""
+    supported = {"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"}
+    value = str(raw_value or "").strip()
+    return value if value in supported else "16:9"
 
-    logger.info(f"[text2image_tool] called: prompt='{prompt}'")
-    DASHSCOPE_API_KEY = API_CONFIG.DASHSCOPE_API_KEY
-    if not DASHSCOPE_API_KEY:
-        return {
-            "status": "error",
-            "message": "DASHSCOPE_API_KEY not found",
-        }
 
+async def gemini_image_generation(
+    ctx: InvocationContext,
+    prompt: str,
+    *,
+    aspect_ratio: str = "16:9",
+    resolution: str = "1K",
+) -> ImageGenerationResult:
+    """Generate one image with Gemini image preview."""
     try:
-        rsp = ImageSynthesis.async_call(
-            api_key=DASHSCOPE_API_KEY,
-            model="wanx2.1-t2i-turbo",
-            prompt=prompt,
-            n=1
+        normalized_ratio = _normalize_aspect_ratio(aspect_ratio)
+
+        def before_model_callback(
+            callback_context: CallbackContext,
+            llm_request: LlmRequest,
+        ) -> None:
+            llm_request.contents.append(Content(role="user", parts=[Part(text=prompt)]))
+
+        llm = LlmAgent(
+            name="media_gemini_image_generation",
+            model="gemini-3.1-flash-image-preview",
+            instruction="Generate an image according to the prompt.",
+            include_contents="none",
+            generate_content_config=types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio=normalized_ratio,
+                    image_size=resolution,
+                ),
+            ),
+            before_model_callback=before_model_callback,
         )
 
-        if not rsp.status_code == HTTPStatus.OK:
-            error_msg = f"dashscope task creation failed, status_code: {rsp.status_code}, code: {rsp.code}, message: {rsp.message}"
-            logger.info(error_msg)
-            return {"status": "error", "message": error_msg}
-        
-        logger.info('dashscope task creation success, waiting for execution...')
-        rsp = ImageSynthesis.wait(rsp)
+        text_message = ""
+        image_data: bytes | None = None
+        async for event in llm.run_async(ctx):
+            if not event.content or not event.content.parts:
+                continue
+            for part in event.content.parts:
+                if part.text is not None:
+                    text_message = part.text
+                elif part.inline_data is not None:
+                    image_data = part.inline_data.data
 
-        if rsp.status_code == HTTPStatus.OK:
-            logger.info('dashscope t2i task finish')
-            if rsp.output.task_status == 'FAILED':
-                error_msg = f"dashscope task failed: {rsp['output']['message']}"
-                logger.error(error_msg)
-                return {'status':'error', 'message':error_msg}
+        if image_data:
+            return ImageGenerationResult(
+                status="success",
+                message=image_data,
+                provider="gemini",
+                model_name="gemini-3.1-flash-image-preview",
+            )
 
-            for result in rsp.output.results:
-                content = requests.get(result.url).content
-                return {"status": "success", "message": content}
-        else:
-            error_msg = f"dashscope task failed, status_code: {rsp.status_code}, code: {rsp.code}, message: {rsp.message}"
-            logger.error(error_msg)
-            return {"status": "error", "message": error_msg}
+        return ImageGenerationResult(
+            status="error",
+            message=text_message or "gemini returned no image",
+            provider="gemini",
+            model_name="gemini-3.1-flash-image-preview",
+        )
+    except Exception as exc:
+        return ImageGenerationResult(
+            status="error",
+            message=f"gemini exception: {exc}",
+            provider="gemini",
+            model_name="gemini-3.1-flash-image-preview",
+        )
 
-    except Exception as e:
-        error_msg = f"[text2image_tool] failed: {e}"
-        logger.error(f"[text2image_tool] failed: {e}", exc_info=True)
-        return {"status": "error", "message": error_msg}
 
+async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGenerationResult:
+    """Generate one image with Seedream when the optional SDK is available."""
+    if not ark_api_key:
+        return ImageGenerationResult(
+            status="error",
+            message="ARK_API_KEY is not set.",
+            provider="seedream",
+            model_name="doubao-seedream-4-0-250828",
+        )
 
-
-async def GPTimage1_text2image_tool(prompt: str) -> AsyncGenerator[dict[str, Any], None]:
-    """
-    generation with GPT-image-1
-    """
-    SEGMIND_API_KEY = API_CONFIG.SEGMIND_API_KEY
-    url = "https://api.segmind.com/v1/gpt-image-1"
-
-    timeout = httpx.Timeout(None, connect=5.0)
     try:
-        logger.info("calling segmind GPT-image-1 API ...")
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            data = {
-                "prompt": prompt,
-                "size": "auto",
-                "quality": "auto",
-                "moderation": "auto",
-                "background": "opaque",
-                "output_compression": 100,
-                "output_format": "png"
-            }
-            headers = {'x-api-key': SEGMIND_API_KEY}
+        from volcenginesdkarkruntime import Ark
+        from volcenginesdkarkruntime.types.images_generate_params import (
+            SequentialImageGenerationOptions,
+        )
+    except Exception as exc:
+        return ImageGenerationResult(
+            status="error",
+            message=f"seedream SDK unavailable: {exc}",
+            provider="seedream",
+            model_name="doubao-seedream-4-0-250828",
+        )
 
-            response = await client.post(url, json=data, headers=headers)
-            if response.status_code == HTTPStatus.OK:
-                content = response.content
-                return {"status": "success", "message": content}
-            else:
-                error_msg = f"Error generating image: status code:{response.status_code}: {response.content[:500]}"
-                logger.info(error_msg)
-                return {"status": "error", "message": f"{response.status_code}: {response.content[:500]}"}
+    try:
+        client = Ark(
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key=ark_api_key,
+        )
+        response = client.images.generate(
+            model="doubao-seedream-4-0-250828",
+            prompt=prompt,
+            size="2K",
+            sequential_image_generation="auto",
+            sequential_image_generation_options=SequentialImageGenerationOptions(max_images=10),
+            response_format="b64_json",
+            watermark=False,
+        )
+        if getattr(response, "error", None):
+            return ImageGenerationResult(
+                status="error",
+                message=f"seedream generation failed: {response.error}",
+                provider="seedream",
+                model_name="doubao-seedream-4-0-250828",
+            )
 
-    except Exception as e:
-        error_msg = f"[text2image_tool] failed: {e}"
-        logger.error(f"[text2image_tool] failed: {e}", exc_info=True)
-        return {"status": "error", "message": error_msg}
+        for item in getattr(response, "data", []) or []:
+            image_base64 = getattr(item, "b64_json", None)
+            if image_base64:
+                import base64
+
+                return ImageGenerationResult(
+                    status="success",
+                    message=base64.b64decode(image_base64),
+                    provider="seedream",
+                    model_name="doubao-seedream-4-0-250828",
+                )
+
+        return ImageGenerationResult(
+            status="error",
+            message="seedream returned empty images",
+            provider="seedream",
+            model_name="doubao-seedream-4-0-250828",
+        )
+    except Exception as exc:
+        logger.error("seedream exception: {}", exc, exc_info=True)
+        return ImageGenerationResult(
+            status="error",
+            message=f"seedream exception: {exc}",
+            provider="seedream",
+            model_name="doubao-seedream-4-0-250828",
+        )
+
+
+async def nano_banana_image_generation_tool(
+    ctx: InvocationContext,
+    prompt: str,
+    aspect_ratio="16:9",
+    resolution="1K",
+) -> dict[str, Any]:
+    # aspect_ratio = "16:9"  # "1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
+    # resolution = "2K"  # "1K", "2K", "4K"
+    logger.info("calling nano banana for image generation ...")
+
+    result = await gemini_image_generation(
+        ctx,
+        prompt,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+    )
+    if result.status == "success" and isinstance(result.message, (bytes, bytearray)):
+        logger.info(f"nano_banana 已完成任务生成，二进制文件大小为{len(result.message)}")
+    return {
+        "status": result.status,
+        "message": result.message,
+        "provider": result.provider,
+        "model_name": result.model_name,
+        "usage": result.usage,
+    }
+
+
+async def seedream_image_generation_tool(prompt: str) -> AsyncGenerator[dict[str, Any], None]:
+    logger.info("calling seedream for image generation ...")
+    ark_api_key = os.environ.get("ARK_API_KEY") or ""
+    result = await seedream_image_generation(prompt, ark_api_key)
+    return {
+        "status": result.status,
+        "message": result.message,
+        "provider": result.provider,
+        "model_name": result.model_name,
+        "usage": result.usage,
+    }

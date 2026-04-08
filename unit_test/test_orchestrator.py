@@ -23,6 +23,10 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("web_fetch", instruction)
         self.assertIn("web_search", instruction)
         self.assertIn("reverse prompt extraction", instruction)
+        self.assertIn("aspect_ratio", instruction)
+        self.assertIn("resolution", instruction)
+        self.assertIn("nano_banana", instruction)
+        self.assertIn("seedream", instruction)
         self.assertIn("<skills>", instruction)
         self.assertIn("planning-with-files", instruction)
 

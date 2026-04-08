@@ -25,12 +25,16 @@ try:
         CreateImageRequestBody,
         CreateMessageRequest,
         CreateMessageRequestBody,
+        CreateMessageReactionRequest,
+        CreateMessageReactionRequestBody,
+        Emoji,
         GetFileRequest,
         GetImageRequest,
         P2ImMessageReceiveV1,
     )
 
     FEISHU_AVAILABLE = True
+    FEISHU_REACTION_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
     lark = None
     CreateFileRequest = None
@@ -39,10 +43,14 @@ except ImportError:  # pragma: no cover - environment dependent
     CreateImageRequestBody = None
     CreateMessageRequest = None
     CreateMessageRequestBody = None
+    CreateMessageReactionRequest = None
+    CreateMessageReactionRequestBody = None
+    Emoji = None
     GetFileRequest = None
     GetImageRequest = None
     P2ImMessageReceiveV1 = None
     FEISHU_AVAILABLE = False
+    FEISHU_REACTION_AVAILABLE = False
 
 
 class FeishuChannel(BaseChannel):
@@ -260,6 +268,38 @@ class FeishuChannel(BaseChannel):
             raise RuntimeError("Feishu file upload returned empty file_key.")
         return str(file_key)
 
+    def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
+        """Best-effort reaction API call executed in a worker thread."""
+        if (
+            not self._client
+            or not FEISHU_REACTION_AVAILABLE
+            or CreateMessageReactionRequest is None
+            or CreateMessageReactionRequestBody is None
+            or Emoji is None
+        ):
+            return
+        try:
+            request = (
+                CreateMessageReactionRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    CreateMessageReactionRequestBody.builder()
+                    .reaction_type(Emoji.builder().emoji_type(emoji_type).build())
+                    .build()
+                )
+                .build()
+            )
+            self._client.im.v1.message_reaction.create(request)
+        except Exception:
+            logger.exception("Failed adding Feishu reaction")
+
+    async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
+        """Add one reaction to an inbound message without blocking message handling."""
+        if not message_id:
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
+
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """Bridge SDK callback thread into the main event loop."""
         if self._loop and self._loop.is_running():
@@ -280,6 +320,8 @@ class FeishuChannel(BaseChannel):
                 return
 
             message_id = str(getattr(message, "message_id", "") or "")
+            if message_id:
+                await self._add_reaction(message_id, "THUMBSUP")
             chat_id = str(getattr(message, "chat_id", "") or "")
             chat_type = str(getattr(message, "chat_type", "") or "")
             msg_type = str(getattr(message, "message_type", "") or "")

@@ -153,6 +153,9 @@ Rules:
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local project work: `list_dir`, `read_file`, `write_file`, `edit_file`, `exec`, `web_search`, `web_fetch`.
 - Use `run_expert` for image generation, image editing, image understanding, reverse prompt extraction, search, and prompt refinement.
+- When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
+- When using `ImageEditingAgent`, you may pass optional `provider`.
+- Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - Call `finish_task` when the task is complete.
 - If you are not done yet, execute only one meaningful step in this turn.
 
