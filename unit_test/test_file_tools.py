@@ -3,7 +3,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.tools.builtin_tools import BuiltinToolbox, edit_file, exec_command, list_dir, read_file, web_fetch, write_file
+from PIL import Image
+
+from src.tools.builtin_tools import (
+    BuiltinToolbox,
+    edit_file,
+    exec_command,
+    image_crop,
+    image_flip,
+    image_rotate,
+    list_dir,
+    read_file,
+    web_fetch,
+    write_file,
+)
 
 
 class BuiltinToolTests(unittest.TestCase):
@@ -75,6 +88,31 @@ class BuiltinToolTests(unittest.TestCase):
             self.assertIn("Successfully wrote", toolbox.write_file("nested/demo.txt", "abc"))
             self.assertEqual(toolbox.read_file("nested/demo.txt"), "abc")
             self.assertIn("[F] nested/demo.txt", toolbox.list_dir("nested"))
+
+    def test_image_tools_save_outputs_with_suffixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            previous = os.environ.get("CREATIVE_CLAW_WORKSPACE")
+            os.environ["CREATIVE_CLAW_WORKSPACE"] = str(root)
+            try:
+                source = root / "sample.png"
+                Image.new("RGB", (100, 80), color="red").save(source)
+
+                cropped_path = image_crop("sample.png", 10, 10, 60, 50)
+                rotated_path = image_rotate("sample.png", 90)
+                flipped_path = image_flip("sample.png", "horizontal")
+
+                self.assertEqual(cropped_path, "sample_crop.png")
+                self.assertEqual(rotated_path, "sample_rotate_90.png")
+                self.assertEqual(flipped_path, "sample_flip_horizontal.png")
+                self.assertTrue((root / cropped_path).exists())
+                self.assertTrue((root / rotated_path).exists())
+                self.assertTrue((root / flipped_path).exists())
+            finally:
+                if previous is None:
+                    os.environ.pop("CREATIVE_CLAW_WORKSPACE", None)
+                else:
+                    os.environ["CREATIVE_CLAW_WORKSPACE"] = previous
 
 
 if __name__ == "__main__":

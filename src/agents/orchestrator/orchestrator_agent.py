@@ -114,6 +114,9 @@ class Orchestrator:
                 self.toolbox.read_file,
                 self.toolbox.write_file,
                 self.toolbox.edit_file,
+                self.toolbox.image_crop,
+                self.toolbox.image_rotate,
+                self.toolbox.image_flip,
                 self.toolbox.exec_command,
                 self.toolbox.web_search,
                 self.toolbox.web_fetch,
@@ -151,7 +154,7 @@ Rules:
 - When a skill seems relevant, call `list_skills` first and then `read_skill`.
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
-- Use built-in tools for local project work: `list_dir`, `read_file`, `write_file`, `edit_file`, `exec`, `web_search`, `web_fetch`.
+- Use built-in tools for local project work: `list_dir`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec`, `web_search`, `web_fetch`.
 - Use `run_expert` for image generation, image editing, image understanding, reverse prompt extraction, search, and prompt refinement.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.

@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from PIL import Image
+
 from conf.system import SYS_CONFIG
 
 
@@ -99,6 +101,70 @@ class BuiltinToolbox:
             return "\n".join(entries) if entries else f"Directory {target.relative_to(self.workspace_root)} is empty"
         except Exception as exc:
             return f"Error listing directory: {exc}"
+
+    def image_crop(self, path: str, left: int, top: int, right: int, bottom: int) -> str:
+        """Crop an image and save the result next to the input file."""
+        try:
+            source = self.resolve_path(path)
+            if not source.exists():
+                return f"Error: File not found: {path}"
+            if not source.is_file():
+                return f"Error: Not a file: {path}"
+            if right <= left or bottom <= top:
+                return "Error: Invalid crop box. Ensure right > left and bottom > top."
+
+            with Image.open(source) as image:
+                cropped = image.crop((left, top, right, bottom))
+                destination = _derived_image_output_path(source, "crop")
+                cropped.save(destination)
+
+            return str(destination.relative_to(self.workspace_root))
+        except Exception as exc:
+            return f"Error cropping image: {exc}"
+
+    def image_rotate(self, path: str, degrees: float, expand: bool = True) -> str:
+        """Rotate an image and save the result next to the input file."""
+        try:
+            source = self.resolve_path(path)
+            if not source.exists():
+                return f"Error: File not found: {path}"
+            if not source.is_file():
+                return f"Error: Not a file: {path}"
+
+            with Image.open(source) as image:
+                rotated = image.rotate(degrees, expand=expand)
+                suffix = f"rotate_{_format_rotation_suffix(degrees)}"
+                destination = _derived_image_output_path(source, suffix)
+                rotated.save(destination)
+
+            return str(destination.relative_to(self.workspace_root))
+        except Exception as exc:
+            return f"Error rotating image: {exc}"
+
+    def image_flip(self, path: str, direction: str) -> str:
+        """Flip an image horizontally or vertically and save the result."""
+        try:
+            source = self.resolve_path(path)
+            if not source.exists():
+                return f"Error: File not found: {path}"
+            if not source.is_file():
+                return f"Error: Not a file: {path}"
+
+            normalized = direction.strip().lower()
+            with Image.open(source) as image:
+                if normalized == "horizontal":
+                    flipped = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                elif normalized == "vertical":
+                    flipped = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                else:
+                    return "Error: direction must be 'horizontal' or 'vertical'."
+
+                destination = _derived_image_output_path(source, f"flip_{normalized}")
+                flipped.save(destination)
+
+            return str(destination.relative_to(self.workspace_root))
+        except Exception as exc:
+            return f"Error flipping image: {exc}"
 
     def exec_command(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
         """Execute one shell command and return stdout and stderr."""
@@ -235,6 +301,18 @@ def _json(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
+def _derived_image_output_path(source: Path, suffix: str) -> Path:
+    """Build one deterministic output path next to the input image."""
+    extension = source.suffix or ".png"
+    return source.with_name(f"{source.stem}_{suffix}{extension}")
+
+
+def _format_rotation_suffix(degrees: float) -> str:
+    """Convert rotation degrees into a filename-safe suffix."""
+    integer_value = int(degrees)
+    return str(integer_value) if integer_value == degrees else str(degrees).replace(".", "_")
+
+
 def read_file(path: str) -> str:
     """Read the contents of a UTF-8 text file."""
     return _get_default_toolbox().read_file(path)
@@ -253,6 +331,21 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
 def list_dir(path: str = ".") -> str:
     """List entries in a directory."""
     return _get_default_toolbox().list_dir(path)
+
+
+def image_crop(path: str, left: int, top: int, right: int, bottom: int) -> str:
+    """Crop an image and return the saved output path."""
+    return _get_default_toolbox().image_crop(path, left, top, right, bottom)
+
+
+def image_rotate(path: str, degrees: float, expand: bool = True) -> str:
+    """Rotate an image and return the saved output path."""
+    return _get_default_toolbox().image_rotate(path, degrees, expand=expand)
+
+
+def image_flip(path: str, direction: str) -> str:
+    """Flip an image and return the saved output path."""
+    return _get_default_toolbox().image_flip(path, direction)
 
 
 _DENY_PATTERNS = [
