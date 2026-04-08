@@ -18,12 +18,17 @@ Use this skill when the task should be delegated to an existing image-related ex
 ## Workflow
 
 1. Decide which expert is best suited for the current single step.
-2. Prepare a minimal and correct parameter object.
-3. Call `run_expert`.
-4. Review the returned result and either continue next turn or call `finish_task`.
+2. If the task first needs simple local preprocessing, use `image_crop`, `image_rotate`, or `image_flip` on the input files before calling an expert.
+3. Prepare a minimal and correct parameter object.
+4. Call `run_expert`.
+5. Review the returned result and either continue next turn or call `finish_task`.
 
 ## Notes
 
 - Use one expert step at a time unless the user explicitly asks for batch work.
 - If better prompting is needed before generation or editing, use `KnowledgeAgent` first.
 - If outside references are needed, use `SearchAgent` before image generation or editing.
+- Use local image tools for basic file preparation only. Use experts when the task requires semantic generation, editing, understanding, or prompt extraction.
+- `image_crop(path, left, top, right, bottom)` is useful for isolating the subject or removing borders before expert calls.
+- `image_rotate(path, degrees, expand=True)` is useful for orientation fixes before OCR, understanding, or editing.
+- `image_flip(path, direction)` is useful for quick horizontal or vertical mirroring when the task is purely geometric.
