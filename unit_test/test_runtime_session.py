@@ -1,10 +1,17 @@
 import unittest
 
+from conf.system import SYS_CONFIG
 from src.runtime.models import InboundMessage
 from src.runtime.workflow_service import CreativeClawRuntime
 
 
 class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
+    def test_runtime_registers_image_to_prompt_expert(self) -> None:
+        runtime = CreativeClawRuntime()
+
+        self.assertIn("ImageToPromptAgent", runtime.expert_agents)
+        self.assertIn("ImageToPromptAgent", runtime.expert_runners)
+
     async def test_ensure_session_reuses_same_channel_chat_pair(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
@@ -53,6 +60,28 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/new", events[0].text)
         self.assertIn("/help", events[0].text)
         self.assertEqual(runtime._session_keys, {})
+
+    async def test_initial_state_uses_skills_first_runtime_fields(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="hello",
+        )
+
+        user_id, session_id = await runtime._ensure_session(inbound)
+        await runtime._set_initial_state(user_id, session_id, inbound)
+        session = await runtime.session_service.get_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+        self.assertEqual(session.state["workflow_status"], "running")
+        self.assertEqual(session.state["final_summary"], "")
+        self.assertEqual(session.state["current_parameters"], {})
+        self.assertIsNone(session.state["current_output"])
 
 
 if __name__ == "__main__":

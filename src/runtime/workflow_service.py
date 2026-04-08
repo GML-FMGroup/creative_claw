@@ -15,10 +15,10 @@ from google.adk.sessions import InMemorySessionService
 from google.genai.types import Blob, Content, Part
 
 from conf.system import SYS_CONFIG
-from src.agents.executor.executor_agent import Executor
 from src.agents.experts import (
     ImageEditingAgent,
     ImageGenerationAgent,
+    ImageToPromptAgent,
     ImageUnderstandingAgent,
     KnowledgeAgent,
     SearchAgent,
@@ -45,6 +45,7 @@ class CreativeClawRuntime:
         self.expert_agents = {
             "ImageGenerationAgent": ImageGenerationAgent(name="Text2ImageAgent"),
             "ImageEditingAgent": ImageEditingAgent(name="ImageEditingAgent"),
+            "ImageToPromptAgent": ImageToPromptAgent(name="ImageToPromptAgent"),
             "ImageUnderstandingAgent": ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
             "KnowledgeAgent": KnowledgeAgent(name="KnowledgeAgent"),
             "SearchAgent": SearchAgent(name="SearchAgent"),
@@ -110,30 +111,14 @@ class CreativeClawRuntime:
         orchestrator_agent = Orchestrator(
             session_service=self.session_service,
             artifact_service=self.artifact_service,
-            app_name=SYS_CONFIG.app_name,
-            max_iter=-1,
-        )
-        executor_agent = Executor(
-            session_service=self.session_service,
-            artifact_service=self.artifact_service,
-            app_name=SYS_CONFIG.app_name,
             expert_runners=self.expert_runners,
-            execute_enabled=SYS_CONFIG.execute_enabled,
+            app_name=SYS_CONFIG.app_name,
+            save_dir=str(self.images_dir),
         )
         orchestrator_agent.uid = user_id
         orchestrator_agent.sid = session_id
-        executor_agent.uid = user_id
-        executor_agent.sid = session_id
-        executor_agent.save_dir = self.images_dir
 
         try:
-            _, global_summary = await orchestrator_agent.generate_plan(global_plan=True)
-            yield WorkflowEvent(
-                event_type="status",
-                text=f"Orchestrator global plan: {global_summary}",
-                metadata={"session_id": session_id},
-            )
-
             final_summary = "task workflow has started."
             max_loops = SYS_CONFIG.max_iterations_orchestrator
             for index in range(max_loops):
@@ -148,46 +133,28 @@ class CreativeClawRuntime:
                     json.dumps(current_session.state, indent=2, ensure_ascii=False),
                 )
 
-                plan, current_summary = await orchestrator_agent.generate_plan(global_plan=False)
-                next_agent_name = plan.get("next_agent")
-                final_summary = current_summary
+                step_result = await orchestrator_agent.run_step()
+                workflow_status = step_result.get("workflow_status", "running")
+                response_text = step_result.get("last_response", "")
+                output_message = step_result.get("last_output_message", "")
+                final_summary = step_result.get("final_summary") or output_message or response_text or final_summary
 
                 yield WorkflowEvent(
                     event_type="status",
-                    text=f"Orchestrator decision: {current_summary}",
-                    metadata={"session_id": session_id, "next_agent": next_agent_name},
+                    text=f"Orchestrator response: {response_text}",
+                    metadata={"session_id": session_id, "workflow_status": workflow_status},
                 )
 
-                if not next_agent_name or next_agent_name == "FINISH":
+                if output_message:
+                    yield WorkflowEvent(
+                        event_type="status",
+                        text=f"Step result: {output_message}",
+                        metadata={"session_id": session_id, "workflow_status": workflow_status},
+                    )
+
+                if workflow_status == "finished":
                     logger.info("Workflow finished. summary={}", final_summary)
                     break
-
-                if next_agent_name not in self.expert_agents:
-                    error_text = f"Orchestrator calls an unknown agent: '{next_agent_name}'"
-                    logger.error(error_text)
-                    yield WorkflowEvent(
-                        event_type="error",
-                        text=error_text,
-                        metadata={"session_id": session_id},
-                    )
-                    return
-
-                yield WorkflowEvent(
-                    event_type="status",
-                    text=f"Assign task to expert: {next_agent_name}",
-                    metadata={"session_id": session_id, "next_agent": next_agent_name},
-                )
-
-                current_output = await executor_agent.execute_plan()
-                result_text = current_output.get("message", "")
-                if current_output.get("output_text"):
-                    result_text = f"{result_text}\n{current_output['output_text']}"
-
-                yield WorkflowEvent(
-                    event_type="status",
-                    text=f"Execution result: {result_text}",
-                    metadata={"session_id": session_id, "next_agent": next_agent_name},
-                )
             else:
                 final_summary = (
                     f"Workflow has reached the max iteration ({max_loops}) and has been terminated."
@@ -256,10 +223,14 @@ class CreativeClawRuntime:
         state_delta["uid"] = user_id
         state_delta["sid"] = session_id
         state_delta["user_prompt"] = inbound.text
-        state_delta["global_plan"] = None
-        state_delta["current_plan"] = None
         state_delta["step"] = current_session.state.get("step", 0)
         state_delta["input_artifacts"] = []
+        state_delta["workflow_status"] = "running"
+        state_delta["final_summary"] = ""
+        state_delta["last_output_message"] = ""
+        state_delta["last_orchestrator_response"] = ""
+        state_delta["current_parameters"] = {}
+        state_delta["current_output"] = None
 
         for index, attachment in enumerate(inbound.attachments, start=1):
             artifact_name = attachment.name or osp.basename(attachment.path)
@@ -329,8 +300,11 @@ class CreativeClawRuntime:
         if text_history and text_history[-1]:
             final_summary = text_history[-1]
         else:
+            state_summary = final_session.state.get("final_summary")
+            if state_summary:
+                final_summary = state_summary
             summary_history = final_session.state.get("summary_history") or []
-            if summary_history:
+            if summary_history and not state_summary:
                 history_text = "\n".join(f"- {summary}" for summary in summary_history)
                 final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 
