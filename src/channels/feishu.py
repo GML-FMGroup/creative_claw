@@ -30,7 +30,11 @@ try:
         Emoji,
         GetFileRequest,
         GetImageRequest,
+        PatchMessageRequest,
+        PatchMessageRequestBody,
         P2ImMessageReceiveV1,
+        UpdateMessageRequest,
+        UpdateMessageRequestBody,
     )
 
     FEISHU_AVAILABLE = True
@@ -48,9 +52,61 @@ except ImportError:  # pragma: no cover - environment dependent
     Emoji = None
     GetFileRequest = None
     GetImageRequest = None
+    PatchMessageRequest = None
+    PatchMessageRequestBody = None
     P2ImMessageReceiveV1 = None
+    UpdateMessageRequest = None
+    UpdateMessageRequestBody = None
     FEISHU_AVAILABLE = False
     FEISHU_REACTION_AVAILABLE = False
+
+
+_STAGE_TITLES = {
+    "started": "开始处理",
+    "attachment_received": "已接收输入",
+    "in_progress": "处理中",
+}
+
+
+def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build one lightweight Feishu card for progress or final text."""
+    info = metadata or {}
+    display_style = str(info.get("display_style", "")).strip().lower()
+    stage = str(info.get("stage", "")).strip().lower()
+    if display_style == "final":
+        title = "处理结果"
+        template = "green"
+    else:
+        title = str(info.get("stage_title", "")).strip() or _STAGE_TITLES.get(stage, "当前进度")
+        template = {
+            "started": "blue",
+            "attachment_received": "wathet",
+            "in_progress": "indigo",
+        }.get(stage, "blue")
+
+    body = str(text or "").strip() or "暂无内容"
+    return {
+        "config": {"wide_screen_mode": True, "enable_forward": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": title},
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": body,
+            }
+        ],
+    }
+
+
+def _should_use_interactive_card(text: str, metadata: dict[str, Any] | None = None) -> bool:
+    """Return whether one outbound text should be rendered as a Feishu card."""
+    info = metadata or {}
+    display_style = str(info.get("display_style", "")).strip().lower()
+    if display_style in {"progress", "final"}:
+        return True
+    return len(str(text or "").strip()) > 180
 
 
 class FeishuChannel(BaseChannel):
@@ -83,6 +139,7 @@ class FeishuChannel(BaseChannel):
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
+        self._progress_cards: dict[tuple[str, str], str] = {}
 
     async def start(self) -> None:
         """Start Feishu long connection."""
@@ -152,7 +209,11 @@ class FeishuChannel(BaseChannel):
 
     def _send_sync(self, message: OutboundMessage) -> None:
         """Blocking Feishu send path."""
-        self._send_text_sync(message.chat_id, message.text.strip() if message.text else "[empty message]")
+        text = message.text.strip() if message.text else "[empty message]"
+        if _should_use_interactive_card(text, message.metadata):
+            self._send_card_message_sync(message.chat_id, text, message.metadata)
+        else:
+            self._send_text_sync(message.chat_id, text)
         for artifact_path in message.artifact_paths:
             cleaned_path = artifact_path.strip()
             if not cleaned_path:
@@ -180,6 +241,81 @@ class FeishuChannel(BaseChannel):
         )
         response = self._client.im.v1.message.create(request)
         return self._extract_message_id(response, "text")
+
+    def _send_interactive_sync(self, chat_id: str, card: dict[str, Any]) -> str:
+        """Send one interactive card message to Feishu."""
+        if not self._client or CreateMessageRequest is None or CreateMessageRequestBody is None:
+            raise RuntimeError("Feishu client is unavailable.")
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(self._resolve_receive_id_type(chat_id))
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("interactive")
+                .content(json.dumps(card, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        response = self._client.im.v1.message.create(request)
+        return self._extract_message_id(response, "interactive")
+
+    def _patch_interactive_sync(self, message_id: str, card: dict[str, Any]) -> None:
+        """Update one existing interactive message when the SDK supports it."""
+        if not self._client:
+            raise RuntimeError("Feishu client is unavailable.")
+        content = json.dumps(card, ensure_ascii=False)
+        if PatchMessageRequest is not None and PatchMessageRequestBody is not None:
+            request = (
+                PatchMessageRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    PatchMessageRequestBody.builder()
+                    .content(content)
+                    .build()
+                )
+                .build()
+            )
+            response = self._client.im.v1.message.patch(request)
+        elif UpdateMessageRequest is not None and UpdateMessageRequestBody is not None:
+            request = (
+                UpdateMessageRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    UpdateMessageRequestBody.builder()
+                    .msg_type("interactive")
+                    .content(content)
+                    .build()
+                )
+                .build()
+            )
+            response = self._client.im.v1.message.update(request)
+        else:
+            raise RuntimeError("Feishu message patch API is unavailable.")
+        self._ensure_success(response, "interactive patch")
+
+    def _send_card_message_sync(self, chat_id: str, text: str, metadata: dict[str, Any] | None = None) -> str:
+        """Send or update one rendered card depending on display style and session scope."""
+        info = metadata or {}
+        card = _build_status_card(text, info)
+        display_style = str(info.get("display_style", "")).strip().lower()
+        session_id = str(info.get("session_id", "")).strip()
+        state_key = (chat_id, session_id) if display_style == "progress" and session_id else None
+
+        if state_key is not None:
+            existing_message_id = self._progress_cards.get(state_key, "")
+            if existing_message_id:
+                self._patch_interactive_sync(existing_message_id, card)
+                return existing_message_id
+
+        message_id = self._send_interactive_sync(chat_id, card)
+        if state_key is not None and message_id:
+            self._progress_cards[state_key] = message_id
+
+        if display_style == "final" and session_id:
+            self._progress_cards.pop((chat_id, session_id), None)
+        return message_id
 
     def _send_image_sync(self, chat_id: str, image_path: str) -> str:
         """Upload one image and send it to Feishu."""

@@ -1,0 +1,70 @@
+import unittest
+from types import SimpleNamespace
+
+from src.runtime.step_events import CreativeClawStepEventPlugin, configure_step_event_publisher
+from src.runtime.tool_context import route_context
+
+
+class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.messages = []
+
+        async def _publisher(message):
+            self.messages.append(message)
+
+        configure_step_event_publisher(_publisher)
+
+    async def asyncTearDown(self) -> None:
+        configure_step_event_publisher(None)
+
+    async def test_plugin_publishes_realtime_tool_start_and_finish(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-1")
+        tool = SimpleNamespace(name="read_file")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-1",
+            session=SimpleNamespace(id="session-1"),
+        )
+
+        with route_context("local", "chat-1"):
+            await plugin.before_run_callback(invocation_context=invocation)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"path": "README.md"},
+                tool_context=tool_context,
+            )
+            await plugin.after_tool_callback(
+                tool=tool,
+                tool_args={"path": "README.md"},
+                tool_context=tool_context,
+                result="line one\nline two\nline three",
+            )
+            await plugin.after_run_callback(invocation_context=invocation)
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertEqual(self.messages[0].metadata["stage_title"], "read_file")
+        self.assertIn("状态：开始", self.messages[0].text)
+        self.assertIn("参数：path=README.md", self.messages[0].text)
+        self.assertIn("1. read_file", self.messages[1].text)
+        self.assertIn("2. read_file", self.messages[1].text)
+        self.assertIn("结果：读取成功", self.messages[1].text)
+
+    async def test_plugin_ignores_unknown_tool_names(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-2")
+        tool = SimpleNamespace(name="run_expert")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-2",
+            session=SimpleNamespace(id="session-2"),
+        )
+
+        with route_context("local", "chat-2"):
+            await plugin.before_run_callback(invocation_context=invocation)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"agent_name": "KnowledgeAgent"},
+                tool_context=tool_context,
+            )
+            await plugin.after_run_callback(invocation_context=invocation)
+
+        self.assertEqual(self.messages, [])

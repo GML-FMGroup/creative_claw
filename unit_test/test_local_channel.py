@@ -13,12 +13,12 @@ class LocalChannelTests(unittest.IsolatedAsyncioTestCase):
             OutboundMessage(
                 channel="local",
                 chat_id="terminal",
-                text="[final] completed",
+                text="completed",
                 artifact_paths=["outputs/image.png"],
             )
         )
 
-        self.assertEqual(lines, ["[final] completed", "[artifact] outputs/image.png"])
+        self.assertEqual(lines, ["completed", "[artifact] outputs/image.png"])
 
 
 if __name__ == "__main__":

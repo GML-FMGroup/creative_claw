@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os.path as osp
-from typing import Optional
+from typing import Any, Optional
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -18,6 +18,8 @@ from google.genai.types import Content, Part
 from conf.agent import experts_list
 from conf.system import SYS_CONFIG
 from src.logger import logger
+from src.runtime.step_events import CreativeClawStepEventPlugin, step_event_streaming_active
+from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
     BuiltinToolbox,
@@ -110,16 +112,16 @@ class Orchestrator:
             tools=[
                 self.list_skills,
                 self.read_skill,
-                self.toolbox.list_dir,
-                self.toolbox.read_file,
-                self.toolbox.write_file,
-                self.toolbox.edit_file,
-                self.toolbox.image_crop,
-                self.toolbox.image_rotate,
-                self.toolbox.image_flip,
-                self.toolbox.exec_command,
-                self.toolbox.web_search,
-                self.toolbox.web_fetch,
+                self.list_dir,
+                self.read_file,
+                self.write_file,
+                self.edit_file,
+                self.image_crop,
+                self.image_rotate,
+                self.image_flip,
+                self.exec_command,
+                self.web_search,
+                self.web_fetch,
                 self.run_expert,
                 self.finish_task,
             ],
@@ -129,6 +131,7 @@ class Orchestrator:
             app_name=self.app_name,
             session_service=self.session_service,
             artifact_service=self.artifact_service,
+            plugins=[CreativeClawStepEventPlugin()],
         )
 
     def _build_instruction(self) -> str:
@@ -173,12 +176,108 @@ Available expert agents:
 """
 
     @staticmethod
+    def _append_step_event(
+        state: dict[str, Any],
+        *,
+        title: str,
+        detail: str,
+        stage: str = "orchestrating",
+    ) -> None:
+        """Append one structured orchestrator step event into session state."""
+        events = list(state.get("orchestration_events", []))
+        events.append(
+            {
+                "title": title.strip() or "处理中",
+                "detail": detail.strip() or "正在处理当前步骤。",
+                "stage": stage.strip() or "orchestrating",
+            }
+        )
+        state["orchestration_events"] = events
+
+    @staticmethod
+    def _stringify_value(value: Any, max_chars: int = 180) -> str:
+        """Render one tool argument or result into a compact display string."""
+        return stringify_value(value, max_chars=max_chars)
+
+    @classmethod
+    def _format_tool_args(cls, args: dict[str, Any]) -> str:
+        """Format tool arguments for progress display."""
+        return format_tool_args(args)
+
+    @classmethod
+    def _summarize_tool_result(cls, tool_name: str, result: Any) -> tuple[str, str]:
+        """Summarize one tool result into status plus short preview."""
+        return summarize_tool_result(tool_name, result)
+
+    def _record_tool_started(
+        self,
+        state: dict[str, Any],
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        stage: str,
+    ) -> None:
+        """Record one tool-call start event."""
+        self._append_step_event(
+            state,
+            title=tool_name,
+            detail=f"状态：开始\n参数：{self._format_tool_args(args)}",
+            stage=stage,
+        )
+
+    def _record_tool_finished(
+        self,
+        state: dict[str, Any],
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        result: Any,
+        stage: str,
+    ) -> None:
+        """Record one tool-call completion event."""
+        status, summary = self._summarize_tool_result(tool_name, result)
+        self._append_step_event(
+            state,
+            title=tool_name,
+            detail=(
+                f"状态：{'成功' if status == 'success' else '异常'}\n"
+                f"参数：{self._format_tool_args(args)}\n"
+                f"结果：{summary}"
+            ),
+            stage=stage,
+        )
+
+    def _run_tool_with_events(
+        self,
+        *,
+        tool_context: ToolContext | None,
+        tool_name: str,
+        stage: str,
+        args: dict[str, Any],
+        runner,
+    ):
+        """Execute one tool and record its start and finish events when context exists."""
+        if tool_context is None or step_event_streaming_active():
+            return runner()
+        self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
+        result = runner()
+        self._record_tool_finished(tool_context.state, tool_name=tool_name, args=args, result=result, stage=stage)
+        return result
+
+    @staticmethod
     def build_runner_message(instruction: str) -> Content:
         """Create an ADK-compatible user message for one orchestrator turn."""
         return Content(role="user", parts=[Part(text=instruction)])
 
-    def list_skills(self) -> str:
+    def list_skills(self, tool_context: ToolContext | None = None) -> str:
         """List available skills in JSON format."""
+        if tool_context is not None:
+            self._append_step_event(
+                tool_context.state,
+                title="查看技能列表",
+                detail="正在检查当前可用的技能。",
+                stage="planning",
+            )
         payload = [
             {
                 "name": info.name,
@@ -189,9 +288,142 @@ Available expert agents:
         ]
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
-    def read_skill(self, name: str) -> str:
+    def read_skill(self, name: str, tool_context: ToolContext | None = None) -> str:
         """Read the full markdown content of one skill."""
+        if tool_context is not None:
+            self._append_step_event(
+                tool_context.state,
+                title="读取技能说明",
+                detail=f"正在读取技能 `{name}` 的说明。",
+                stage="planning",
+            )
         return self.skill_registry.read_skill(name)
+
+    def list_dir(self, path: str = ".", tool_context: ToolContext | None = None) -> str:
+        """List one directory and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="list_dir",
+            stage="inspection",
+            args={"path": path},
+            runner=lambda: self.toolbox.list_dir(path),
+        )
+
+    def read_file(self, path: str, tool_context: ToolContext | None = None) -> str:
+        """Read one file and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="read_file",
+            stage="inspection",
+            args={"path": path},
+            runner=lambda: self.toolbox.read_file(path),
+        )
+
+    def write_file(self, path: str, content: str, tool_context: ToolContext | None = None) -> str:
+        """Write one file and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="write_file",
+            stage="editing",
+            args={"path": path, "content": content},
+            runner=lambda: self.toolbox.write_file(path, content),
+        )
+
+    def edit_file(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Edit one file and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="edit_file",
+            stage="editing",
+            args={"path": path, "old_text": old_text, "new_text": new_text},
+            runner=lambda: self.toolbox.edit_file(path, old_text, new_text),
+        )
+
+    def image_crop(
+        self,
+        path: str,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Crop one image and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="image_crop",
+            stage="image_processing",
+            args={"path": path, "left": left, "top": top, "right": right, "bottom": bottom},
+            runner=lambda: self.toolbox.image_crop(path, left, top, right, bottom),
+        )
+
+    def image_rotate(
+        self,
+        path: str,
+        degrees: float,
+        expand: bool = True,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Rotate one image and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="image_rotate",
+            stage="image_processing",
+            args={"path": path, "degrees": degrees, "expand": expand},
+            runner=lambda: self.toolbox.image_rotate(path, degrees, expand),
+        )
+
+    def image_flip(self, path: str, direction: str, tool_context: ToolContext | None = None) -> str:
+        """Flip one image and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="image_flip",
+            stage="image_processing",
+            args={"path": path, "direction": direction},
+            runner=lambda: self.toolbox.image_flip(path, direction),
+        )
+
+    def exec_command(
+        self,
+        command: str,
+        working_dir: str | None = None,
+        timeout: int = 60,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Execute one command and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="exec_command",
+            stage="execution",
+            args={"command": command, "working_dir": working_dir, "timeout": timeout},
+            runner=lambda: self.toolbox.exec_command(command, working_dir, timeout),
+        )
+
+    def web_search(self, query: str, count: int = 5, tool_context: ToolContext | None = None) -> str:
+        """Search the web and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="web_search",
+            stage="research",
+            args={"query": query, "count": count},
+            runner=lambda: self.toolbox.web_search(query, count),
+        )
+
+    def web_fetch(self, url: str, max_chars: int = 50000, tool_context: ToolContext | None = None) -> str:
+        """Fetch one webpage and record the step."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="web_fetch",
+            stage="research",
+            args={"url": url, "max_chars": max_chars},
+            runner=lambda: self.toolbox.web_fetch(url, max_chars),
+        )
 
     async def run_agent_and_log_events(
         self,
@@ -227,6 +459,7 @@ Available expert agents:
         )
         current_session.state["last_output_message"] = ""
         current_session.state["last_orchestrator_response"] = ""
+        previous_event_count = len(current_session.state.get("orchestration_events", []))
 
         final_response = await self.run_agent_and_log_events(
             user_id=self.uid,
@@ -243,11 +476,13 @@ Available expert agents:
         )
         state = session.state
         state["last_orchestrator_response"] = final_response
+        orchestration_events = list(state.get("orchestration_events", []))
         return {
             "workflow_status": state.get("workflow_status", "running"),
             "final_summary": state.get("final_summary", ""),
             "last_response": final_response,
             "last_output_message": state.get("last_output_message", ""),
+            "new_orchestration_events": orchestration_events[previous_event_count:],
         }
 
     async def run_expert(
@@ -260,6 +495,12 @@ Available expert agents:
         if agent_name not in self.expert_runners:
             return {"status": "error", "message": f"Unknown expert agent: {agent_name}"}
 
+        self._append_step_event(
+            tool_context.state,
+            title="调用专家代理",
+            detail=f"正在调用 `{agent_name}` 处理当前步骤。",
+            stage="expert_execution",
+        )
         tool_context.state["current_parameters"] = parameters
         tool_context.state["current_agent_name"] = agent_name
         tool_context.state["workflow_status"] = "running"
@@ -332,6 +573,12 @@ Available expert agents:
 
     async def finish_task(self, summary: str, tool_context: ToolContext) -> dict:
         """Mark the workflow as completed with one final summary."""
+        self._append_step_event(
+            tool_context.state,
+            title="整理最终结果",
+            detail="正在整理最终回复内容。",
+            stage="finalizing",
+        )
         tool_context.state["workflow_status"] = "finished"
         tool_context.state["final_summary"] = summary
         tool_context.state["last_output_message"] = summary

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from src.runtime import CreativeClawRuntime, InboundMessage, WorkflowEvent
+from src.runtime.models import InboundMessage, WorkflowEvent
+from src.runtime.workflow_service import CreativeClawRuntime
+from src.runtime.step_events import configure_step_event_publisher
+from src.runtime.tool_context import route_context
 
 from .base import BaseChannel
 from .events import OutboundMessage
@@ -14,6 +17,7 @@ class ChannelManager:
     def __init__(self, runtime: CreativeClawRuntime) -> None:
         self.runtime = runtime
         self.channels: dict[str, BaseChannel] = {}
+        configure_step_event_publisher(self._publish_realtime_outbound)
 
     def register(self, channel: BaseChannel) -> None:
         """Register one channel implementation by name."""
@@ -35,23 +39,35 @@ class ChannelManager:
         if channel is None:
             raise ValueError(f"Channel '{message.channel}' is not registered.")
 
-        async for event in self.runtime.run_message(message):
-            await channel.send(_render_outbound(message.channel, message.chat_id, event))
+        with route_context(message.channel, message.chat_id):
+            async for event in self.runtime.run_message(message):
+                outbound = _render_outbound(message.channel, message.chat_id, event)
+                if outbound is None:
+                    continue
+                await channel.send(outbound)
+
+    async def _publish_realtime_outbound(self, message: OutboundMessage) -> None:
+        """Send one realtime outbound message emitted directly from tool callbacks."""
+        channel = self.channels.get(message.channel)
+        if channel is None:
+            return
+        await channel.send(message)
 
 
-def _render_outbound(channel: str, chat_id: str, event: WorkflowEvent) -> OutboundMessage:
-    """Convert a workflow event into a channel-sendable payload."""
-    prefixes = {
-        "status": "[status]",
-        "error": "[error]",
-        "final": "[final]",
-    }
-    prefix = prefixes.get(event.event_type, "[event]")
-    text = f"{prefix} {event.text}".strip()
+def _render_outbound(channel: str, chat_id: str, event: WorkflowEvent) -> OutboundMessage | None:
+    """Convert one workflow event into a user-facing outbound payload."""
+    metadata = dict(event.metadata)
+    if metadata.get("visible") is False:
+        return None
+
+    text = str(event.text or "").strip()
+    if event.event_type == "error" and text and not text.startswith("处理失败："):
+        text = f"处理失败：{text}"
+
     return OutboundMessage(
         channel=channel,
         chat_id=chat_id,
         text=text,
         artifact_paths=list(event.artifact_paths),
-        metadata=dict(event.metadata),
+        metadata=metadata,
     )

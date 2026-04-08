@@ -26,12 +26,81 @@ from src.agents.experts import (
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
 from src.runtime.models import InboundMessage, WorkflowEvent
+from src.runtime.step_events import step_event_streaming_active
 
 _HELP_TEXT = (
     "CreativeClaw commands:\n"
     "/new - Start a new conversation session\n"
     "/help - Show available commands"
 )
+
+_PROGRESS_STAGE_TITLES = {
+    "started": "开始处理",
+    "attachment_received": "已接收输入",
+    "in_progress": "处理中",
+    "planning": "规划下一步",
+    "inspection": "查看上下文",
+    "editing": "修改内容",
+    "image_processing": "处理图片",
+    "execution": "执行命令",
+    "research": "查询资料",
+    "expert_execution": "调用专家代理",
+    "finalizing": "整理结果",
+}
+
+
+def _build_progress_event(
+    text: str,
+    *,
+    session_id: str,
+    stage: str,
+    stage_title: str | None = None,
+) -> WorkflowEvent:
+    """Build one user-facing progress event."""
+    return WorkflowEvent(
+        event_type="status",
+        text=text,
+        metadata={
+            "session_id": session_id,
+            "display_style": "progress",
+            "stage": stage,
+            "stage_title": stage_title or _PROGRESS_STAGE_TITLES.get(stage, "当前进度"),
+        },
+    )
+
+
+def _summarize_step_output(output_message: str) -> str:
+    """Convert one raw step output into a concise user-facing progress line."""
+    text = str(output_message or "").strip()
+    if not text:
+        return ""
+    if len(text) > 160:
+        text = f"{text[:157].rstrip()}..."
+    return f"当前进展：{text}"
+
+
+def _build_orchestration_progress_event(step_event: dict[str, str], *, session_id: str) -> WorkflowEvent:
+    """Convert one structured orchestrator step event into a progress event."""
+    stage = str(step_event.get("stage", "")).strip() or "in_progress"
+    title = str(step_event.get("title", "")).strip() or _PROGRESS_STAGE_TITLES.get(stage, "当前进度")
+    detail = str(step_event.get("detail", "")).strip() or "正在处理当前步骤。"
+    return _build_progress_event(
+        detail,
+        session_id=session_id,
+        stage=stage,
+        stage_title=title,
+    )
+
+
+def _render_orchestration_history(history: list[dict[str, str]], limit: int = 8) -> str:
+    """Render recent orchestration events into one readable progress timeline."""
+    recent = history[-limit:]
+    blocks: list[str] = []
+    for index, step_event in enumerate(recent, start=1):
+        title = str(step_event.get("title", "")).strip() or "处理中"
+        detail = str(step_event.get("detail", "")).strip() or "正在处理当前步骤。"
+        blocks.append(f"**{index}. {title}**\n{detail}")
+    return "\n\n".join(blocks)
 
 
 class CreativeClawRuntime:
@@ -82,22 +151,26 @@ class CreativeClawRuntime:
             yield WorkflowEvent(
                 event_type="final",
                 text="Started a new conversation session.",
-                metadata={"session_id": session_id, "user_id": user_id},
+                metadata={
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "display_style": "final",
+                },
             )
             return
 
         user_id, session_id = await self._ensure_session(inbound)
 
-        yield WorkflowEvent(
-            event_type="status",
-            text=f"user instruction: {inbound.text}",
-            metadata={"session_id": session_id},
+        yield _build_progress_event(
+            "我先处理一下你的请求。",
+            session_id=session_id,
+            stage="started",
         )
         for attachment in inbound.attachments:
-            yield WorkflowEvent(
-                event_type="status",
-                text=f"received attachment: {attachment.name}",
-                metadata={"session_id": session_id, "path": attachment.path},
+            yield _build_progress_event(
+                f"已收到附件：{attachment.name}",
+                session_id=session_id,
+                stage="attachment_received",
             )
 
         try:
@@ -121,6 +194,7 @@ class CreativeClawRuntime:
         try:
             final_summary = "task workflow has started."
             max_loops = SYS_CONFIG.max_iterations_orchestrator
+            orchestration_history: list[dict[str, str]] = []
             for index in range(max_loops):
                 logger.info("--- workflow: round {}/{} ---", index + 1, max_loops)
                 current_session = await self.session_service.get_session(
@@ -137,19 +211,50 @@ class CreativeClawRuntime:
                 workflow_status = step_result.get("workflow_status", "running")
                 response_text = step_result.get("last_response", "")
                 output_message = step_result.get("last_output_message", "")
+                orchestration_events = list(step_result.get("new_orchestration_events", []))
+                if step_event_streaming_active():
+                    orchestration_events = [
+                        step_event
+                        for step_event in orchestration_events
+                        if str(step_event.get("title", "")).strip()
+                        not in {
+                            "list_dir",
+                            "read_file",
+                            "write_file",
+                            "edit_file",
+                            "image_crop",
+                            "image_rotate",
+                            "image_flip",
+                            "exec_command",
+                            "web_search",
+                            "web_fetch",
+                        }
+                    ]
                 final_summary = step_result.get("final_summary") or output_message or response_text or final_summary
 
-                yield WorkflowEvent(
-                    event_type="status",
-                    text=f"Orchestrator response: {response_text}",
-                    metadata={"session_id": session_id, "workflow_status": workflow_status},
-                )
+                for step_event in orchestration_events:
+                    orchestration_history.append(step_event)
+                    progress_event = _build_orchestration_progress_event(step_event, session_id=session_id)
+                    progress_event.text = _render_orchestration_history(orchestration_history)
+                    yield progress_event
 
-                if output_message:
-                    yield WorkflowEvent(
-                        event_type="status",
-                        text=f"Step result: {output_message}",
-                        metadata={"session_id": session_id, "workflow_status": workflow_status},
+                progress_text = ""
+                if output_message and workflow_status != "finished" and not orchestration_events:
+                    progress_text = _summarize_step_output(output_message)
+                elif (
+                    not output_message
+                    and response_text
+                    and workflow_status != "finished"
+                    and index == 0
+                    and not orchestration_events
+                ):
+                    progress_text = "正在继续处理，请稍等。"
+
+                if progress_text:
+                    yield _build_progress_event(
+                        progress_text,
+                        session_id=session_id,
+                        stage="in_progress",
                     )
 
                 if workflow_status == "finished":
@@ -256,6 +361,7 @@ class CreativeClawRuntime:
         state_delta["text_history"] = current_session.state.get("text_history", [])
         state_delta["message_history"] = current_session.state.get("message_history", [])
         state_delta["new_artifacts"] = state_delta["input_artifacts"]
+        state_delta["orchestration_events"] = current_session.state.get("orchestration_events", [])
 
         event = Event(
             author="channel_gateway",
@@ -317,7 +423,7 @@ class CreativeClawRuntime:
             event_type="final",
             text=final_summary,
             artifact_paths=artifact_paths,
-            metadata={"session_id": session_id},
+            metadata={"session_id": session_id, "display_style": "final"},
         )
 
 

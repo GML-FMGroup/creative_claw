@@ -1,11 +1,8 @@
 """Chat channel adapters for Creative Claw."""
 
-from .base import BaseChannel
-from .events import OutboundMessage
-from .feishu import FeishuChannel
-from .local import LocalChannel
-from .manager import ChannelManager
-from .telegram import TelegramChannel
+from __future__ import annotations
+
+from importlib import import_module
 
 __all__ = [
     "BaseChannel",
@@ -15,3 +12,20 @@ __all__ = [
     "OutboundMessage",
     "TelegramChannel",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily resolve channel exports to avoid circular imports."""
+    module_map = {
+        "BaseChannel": ".base",
+        "OutboundMessage": ".events",
+        "LocalChannel": ".local",
+        "ChannelManager": ".manager",
+        "FeishuChannel": ".feishu",
+        "TelegramChannel": ".telegram",
+    }
+    module_name = module_map.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name, __name__)
+    return getattr(module, name)
