@@ -1,0 +1,35 @@
+{
+    "root_agent": [],
+    "expert_agents": [
+        {
+            "name": "ImageGenerationAgent",
+            "enable": true,
+            "description": "Generate an image based on the input text. Can only be generated based on text, cannot receive reference images. The input parameter 'prompt' can be a single string or a list containing multiple strings, depending on the number of images that need to be generated. \n #Attention: 1. If not otherwise specified, simply enter a single prompt to generate one image. If multiple images need to be generated, you must input multiple prompts at once instead of repeatedly calling this agent.\n 2. This agent can only accept plain text. If you need to refer to other images for generation, please select ImageEditingAgent.",
+            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...]}`"
+        },
+        {
+            "name": "ImageEditingAgent",
+            "enable": true,
+            "description": "Edit the image by entering a list of image names, which can be a single image to be edited or multiple images including the image to be edited and reference images. If you input multiple images, you need to indicate the order of the images in the prompt, for example, `refer to the second image, edit the first image, ...`\n #Attention: 1.This agent also supports inputting multiple prompts for different editing or reference generation of the same input image. In this case, the input prompt needs to be a list.\n 2. In addition to regular image editing, this agent can also be used for tasks such as image generation or style transfer that include reference images.",
+            "parameters": "`{'input_name': ['image name1', ...], 'prompt': ['prompt1', 'prompt2', ...]}`"
+        },
+        {
+            "name": "KnowledgeAgent",
+            "enable": true,
+            "description": "Perform art design and text optimization. Given the original task and optional reference images, this agent generates a professional design plan and image generation prompts derived from those inputs. It is best suited for tasks that need specialized visual design, promotional marketing effects, or detailed analysis of reference images for precise image generation. Ordinary image generation does not require this agent. This agent can complete more than one design and prompt at the same time, but the task must clearly specify how many designs and prompts are required.",
+            "parameters": "`{'prompt': 'original task', 'input_name': ['image name1', ...](optional)}`"
+        },
+        {
+            "name": "ImageUnderstandingAgent",
+            "enable": true,
+            "description": "Analyze the image and output text, has three modes: description, style, ocr, the respective functions are: Analyzing image content; Analyze the artistic style of images; Analyze the text in the image",
+            "parameters": "`{'input_name': 'name', 'mode': 'description|style|ocr'}`"
+        },
+        {
+            "name": "SearchAgent",
+            "enable": true,
+            "description": "Search the Internet for pictures or text related to the input parameter query, has three modes: image, text, all. How to choose mode: If the task requires images as a reference, choose `image`; If the task requires obtaining knowledge-based information such as design concepts, choose `text`; If both, choose `all`",
+            "parameters": "`{'query': 'content need to be search', 'mode': 'image|text|all'}`"
+        }
+    ]
+}

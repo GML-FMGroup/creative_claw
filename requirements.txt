@@ -1,0 +1,24 @@
+google-adk
+google-genai
+google-cloud-aiplatform
+pillow
+python-dotenv
+pydantic
+requests
+loguru
+
+# Tools
+dashscope
+httpx[socks]
+requests-toolbelt
+openai
+asyncddgs==0.1.0a1
+lark-oapi
+python-socks
+
+# Dev/Testing
+pytest
+pytest-mock
+
+# log
+loguru

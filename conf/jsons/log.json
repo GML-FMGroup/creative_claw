@@ -1,0 +1,6 @@
+{
+  "log_level": "DEBUG",
+  "log_file": "artistic_agent_system_{time}.log",
+  "retention": "7 days",
+  "rotation": "10 MB"
+}

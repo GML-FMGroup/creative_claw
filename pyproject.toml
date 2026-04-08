@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "artistic-multi-agent-system"
+version = "0.2.0"
+description = "A multi-agent system for autonomous artistic creation using ADK."
+authors = ["GML <mail@yxy.pub>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<4.0"
+google-genai = ">=0.6.0"
+google-adk = "1.0.0"
+python-dotenv = "^1.0.1"
+pydantic = "^2.7.0"
+requests = "^2.31.0"
+pillow = "^10.3.0"
+loguru = "^0.7.2"
+
+# Tools
+dashscope = ">=1.20.7"
+httpx = {extras = ["socks"], version = ">=0.27.0"}
+requests-toolbelt = ">=1.0.0"
+openai = ">=1.16.0"
+lark-oapi = ">=1.4.13"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-mock = "^3.12.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
