@@ -25,6 +25,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)
         self.assertIn("image_flip", instruction)
+        self.assertIn("keep changes small and reviewable", instruction.lower())
+        self.assertIn("re-check the latest state", instruction.lower())
         self.assertIn("reverse prompt extraction", instruction)
         self.assertIn("aspect_ratio", instruction)
         self.assertIn("resolution", instruction)

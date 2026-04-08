@@ -10,7 +10,6 @@ class SkillRegistryTests(unittest.TestCase):
         registry = SkillRegistry(workspace=Path("/tmp/nonexistent-creative-claw-workspace"))
         names = {item.name for item in registry.list_skills()}
 
-        self.assertIn("general", names)
         self.assertIn("code-edit", names)
         self.assertIn("creative-image-task", names)
         self.assertIn("summarize", names)
@@ -20,18 +19,18 @@ class SkillRegistryTests(unittest.TestCase):
     def test_workspace_skill_overrides_builtin(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            skill_dir = workspace / "skills" / "general"
+            skill_dir = workspace / "skills" / "code-edit"
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(
-                "---\nname: general\ndescription: custom general\n---\n\n# Custom General\n",
+                "---\nname: code-edit\ndescription: custom code edit\n---\n\n# Custom Code Edit\n",
                 encoding="utf-8",
             )
 
             registry = SkillRegistry(workspace=workspace)
             skills = {item.name: item for item in registry.list_skills()}
 
-            self.assertEqual(skills["general"].source, "workspace")
-            self.assertIn("# Custom General", registry.read_skill("general"))
+            self.assertEqual(skills["code-edit"].source, "workspace")
+            self.assertIn("# Custom Code Edit", registry.read_skill("code-edit"))
 
     def test_read_skill_raises_for_missing_name(self) -> None:
         registry = SkillRegistry(workspace=Path("/tmp/nonexistent-creative-claw-workspace"))

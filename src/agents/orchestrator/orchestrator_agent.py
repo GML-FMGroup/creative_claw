@@ -155,6 +155,9 @@ Rules:
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local project work: `list_dir`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec`, `web_search`, `web_fetch`.
+- Inspect local files with `list_dir` and `read_file` before changing them when the path or contents are uncertain.
+- Use local image tools for lightweight preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
+- Keep changes small and reviewable, and re-check the latest state after each meaningful action.
 - Use `run_expert` for image generation, image editing, image understanding, reverse prompt extraction, search, and prompt refinement.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
