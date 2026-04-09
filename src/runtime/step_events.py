@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any, Awaitable, Callable
 
@@ -12,7 +13,7 @@ from src.runtime.tool_context import get_route
 from src.runtime.tool_display import format_tool_args, summarize_tool_result
 
 _STEP_EVENT_PUBLISHER: Callable[[OutboundMessage], Awaitable[None] | None] | None = None
-_HISTORY_BY_INVOCATION: dict[str, list[dict[str, str]]] = {}
+_HISTORY_BY_SESSION: dict[str, list[dict[str, str]]] = {}
 _BUILTIN_TOOL_STAGES = {
     "list_dir": "inspection",
     "read_file": "inspection",
@@ -57,9 +58,9 @@ def _render_history(history: list[dict[str, str]], limit: int = 8) -> str:
     return "\n\n".join(blocks)
 
 
-def _invocation_key(invocation_id: str, channel: str, chat_id: str) -> str:
-    """Build the in-memory history key for one tool-callback invocation."""
-    return f"{channel}:{chat_id}:{invocation_id}"
+def _session_history_key(channel: str, chat_id: str, session_id: str) -> str:
+    """Build the in-memory history key for one channel session."""
+    return f"{channel}:{chat_id}:{session_id}"
 
 
 def _build_detail(*, status: str, args: dict[str, Any], result_text: str | None = None) -> str:
@@ -72,7 +73,6 @@ def _build_detail(*, status: str, args: dict[str, Any], result_text: str | None 
 
 async def _publish_step_event(
     *,
-    invocation_id: str,
     session_id: str,
     tool_name: str,
     stage: str,
@@ -84,8 +84,8 @@ async def _publish_step_event(
     if publisher is None or not channel or not chat_id:
         return
 
-    key = _invocation_key(invocation_id, channel, chat_id)
-    history = _HISTORY_BY_INVOCATION.setdefault(key, [])
+    key = _session_history_key(channel, chat_id, session_id)
+    history = _HISTORY_BY_SESSION.setdefault(key, [])
     history.append({"title": tool_name, "detail": detail, "stage": stage})
 
     maybe_awaitable = publisher(
@@ -98,12 +98,43 @@ async def _publish_step_event(
                 "display_style": "progress",
                 "stage": stage,
                 "stage_title": tool_name,
-                "invocation_id": invocation_id,
             },
         )
     )
     if inspect.isawaitable(maybe_awaitable):
         await maybe_awaitable
+
+
+def reset_step_event_history(*, session_id: str) -> None:
+    """Reset the in-memory realtime history for the current routed session."""
+    channel, chat_id = get_route()
+    if not channel or not chat_id or not session_id:
+        return
+    _HISTORY_BY_SESSION[_session_history_key(channel, chat_id, session_id)] = []
+
+
+def publish_orchestration_step_event(
+    *,
+    session_id: str,
+    title: str,
+    detail: str,
+    stage: str,
+) -> None:
+    """Schedule one realtime publish for an orchestrator-level step event."""
+    if not step_event_streaming_active():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(
+        _publish_step_event(
+            session_id=session_id,
+            tool_name=title,
+            stage=stage,
+            detail=detail,
+        )
+    )
 
 
 class CreativeClawStepEventPlugin(BasePlugin):
@@ -114,20 +145,10 @@ class CreativeClawStepEventPlugin(BasePlugin):
 
     async def before_run_callback(self, *, invocation_context) -> None:
         """Initialize one empty realtime history per invocation."""
-        channel, chat_id = get_route()
-        if not channel or not chat_id:
-            return None
-        key = _invocation_key(invocation_context.invocation_id, channel, chat_id)
-        _HISTORY_BY_INVOCATION[key] = []
         return None
 
     async def after_run_callback(self, *, invocation_context) -> None:
         """Release one invocation history after the runner finishes."""
-        channel, chat_id = get_route()
-        if not channel or not chat_id:
-            return None
-        key = _invocation_key(invocation_context.invocation_id, channel, chat_id)
-        _HISTORY_BY_INVOCATION.pop(key, None)
         return None
 
     async def before_tool_callback(
@@ -142,7 +163,6 @@ class CreativeClawStepEventPlugin(BasePlugin):
         if stage is None or not step_event_streaming_active():
             return None
         await _publish_step_event(
-            invocation_id=tool_context.invocation_id,
             session_id=tool_context.session.id,
             tool_name=tool.name,
             stage=stage,
@@ -164,7 +184,6 @@ class CreativeClawStepEventPlugin(BasePlugin):
             return None
         status, summary = summarize_tool_result(tool.name, result)
         await _publish_step_event(
-            invocation_id=tool_context.invocation_id,
             session_id=tool_context.session.id,
             tool_name=tool.name,
             stage=stage,
@@ -189,7 +208,6 @@ class CreativeClawStepEventPlugin(BasePlugin):
         if stage is None or not step_event_streaming_active():
             return None
         await _publish_step_event(
-            invocation_id=tool_context.invocation_id,
             session_id=tool_context.session.id,
             tool_name=tool.name,
             stage=stage,

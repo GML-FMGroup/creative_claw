@@ -1,7 +1,13 @@
 import unittest
+import asyncio
 from types import SimpleNamespace
 
-from src.runtime.step_events import CreativeClawStepEventPlugin, configure_step_event_publisher
+from src.runtime.step_events import (
+    CreativeClawStepEventPlugin,
+    configure_step_event_publisher,
+    publish_orchestration_step_event,
+    reset_step_event_history,
+)
 from src.runtime.tool_context import route_context
 
 
@@ -68,3 +74,46 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             await plugin.after_run_callback(invocation_context=invocation)
 
         self.assertEqual(self.messages, [])
+
+    async def test_orchestration_event_is_published_realtime(self) -> None:
+        with route_context("local", "chat-3"):
+            reset_step_event_history(session_id="session-3")
+            publish_orchestration_step_event(
+                session_id="session-3",
+                title="调用专家代理",
+                detail="正在调用 `ImageGenerationAgent` 处理当前步骤。",
+                stage="expert_execution",
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(len(self.messages), 1)
+        self.assertEqual(self.messages[0].metadata["stage_title"], "调用专家代理")
+        self.assertIn("正在调用 `ImageGenerationAgent`", self.messages[0].text)
+
+    async def test_plugin_and_orchestration_events_share_same_history(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-4")
+        tool = SimpleNamespace(name="read_file")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-4",
+            session=SimpleNamespace(id="session-4"),
+        )
+
+        with route_context("local", "chat-4"):
+            reset_step_event_history(session_id="session-4")
+            publish_orchestration_step_event(
+                session_id="session-4",
+                title="调用专家代理",
+                detail="正在调用 `KnowledgeAgent` 处理当前步骤。",
+                stage="expert_execution",
+            )
+            await asyncio.sleep(0)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"path": "README.md"},
+                tool_context=tool_context,
+            )
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertIn("1. 调用专家代理", self.messages[1].text)
+        self.assertIn("2. read_file", self.messages[1].text)

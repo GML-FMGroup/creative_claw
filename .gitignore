@@ -181,5 +181,4 @@ cython_debug/
 outputs
 uploads
 logs
-
-test.py
+workspace
