@@ -2,13 +2,14 @@ import unittest
 from types import SimpleNamespace
 
 from google.adk.artifacts import InMemoryArtifactService
+from google.genai.types import Content
 from google.adk.sessions import InMemorySessionService
 
-from src.agents.orchestrator.orchestrator_agent import Orchestrator
+from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrator_before_model_callback
 
 
 class OrchestratorTests(unittest.TestCase):
-    def test_instruction_mentions_skill_workflow_and_no_global_plan(self) -> None:
+    def test_instruction_mentions_skill_workflow_and_single_step_json_plan(self) -> None:
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
@@ -20,21 +21,63 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("Do not create a full upfront plan", instruction)
         self.assertIn("list_skills", instruction)
         self.assertIn("read_skill", instruction)
-        self.assertIn("run_expert", instruction)
         self.assertIn("web_fetch", instruction)
         self.assertIn("web_search", instruction)
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)
         self.assertIn("image_flip", instruction)
+        self.assertIn("exactly one JSON object", instruction)
+        self.assertIn('"next_agent"', instruction)
+        self.assertIn("cannot execute them directly", instruction)
         self.assertIn("keep changes small and reviewable", instruction.lower())
         self.assertIn("re-check the latest state", instruction.lower())
-        self.assertIn("reverse prompt extraction", instruction)
+        self.assertIn("ImageToPromptAgent", instruction)
         self.assertIn("aspect_ratio", instruction)
         self.assertIn("resolution", instruction)
         self.assertIn("nano_banana", instruction)
         self.assertIn("seedream", instruction)
         self.assertIn("<skills>", instruction)
         self.assertIn("planning-with-files", instruction)
+        self.assertIn("workspace file history", instruction)
+        self.assertIn("input_path", instruction)
+
+    def test_normalize_step_plan_accepts_known_expert(self) -> None:
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_runners={"KnowledgeAgent": object()},
+        )
+
+        plan = orchestrator._normalize_step_plan(
+            {
+                "next_agent": "KnowledgeAgent",
+                "parameters": {"topic": "desert"},
+                "summary": "先让知识专家整理方案。",
+            }
+        )
+
+        self.assertEqual(plan["next_agent"], "KnowledgeAgent")
+        self.assertEqual(plan["parameters"], {"topic": "desert"})
+        self.assertEqual(plan["summary"], "先让知识专家整理方案。")
+
+    def test_normalize_step_plan_maps_null_like_values_to_finish(self) -> None:
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_runners={},
+        )
+
+        plan = orchestrator._normalize_step_plan(
+            {
+                "next_agent": "null",
+                "parameters": {},
+                "summary": "",
+            }
+        )
+
+        self.assertEqual(plan["next_agent"], "FINISH")
+        self.assertEqual(plan["parameters"], {})
+        self.assertIn("完成", plan["summary"])
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
@@ -121,6 +164,43 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("alpha", summary)
         self.assertIn("结尾", summary)
         self.assertIn("delta", summary)
+
+class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_before_model_callback_includes_workspace_file_history_without_new_upload(self) -> None:
+        callback_context = SimpleNamespace(
+            state={
+                "workflow_status": "running",
+                "step": 2,
+                "user_prompt": "把这个图像上下颠倒一下给我",
+                "input_files": [],
+                "summary_history": ["调用 `ImageGenerationAgent` 生成图片"],
+                "message_history": [
+                    "ImageGenerationAgent has completed 1 image generation tasks: "
+                    "image generation task1 success, output file: step1_generation_output0.png"
+                ],
+                "files_history": [
+                    [
+                        {
+                            "name": "step1_generation_output0.png",
+                            "path": "generated/session_1/step1_generation_output0.png",
+                            "description": "generated image from previous step",
+                        }
+                    ]
+                ],
+                "new_files": [],
+            }
+        )
+        llm_request = SimpleNamespace(contents=[])
+
+        await orchestrator_before_model_callback(callback_context, llm_request)
+
+        self.assertEqual(len(llm_request.contents), 1)
+        self.assertIsInstance(llm_request.contents[0], Content)
+        prompt_text = "\n".join(
+            part.text for part in llm_request.contents[0].parts if getattr(part, "text", None)
+        )
+        self.assertIn("step1_generation_output0.png", prompt_text)
+        self.assertIn("Most recent available output files", prompt_text)
 
 
 if __name__ == "__main__":

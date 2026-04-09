@@ -55,29 +55,29 @@ class ImageUnderstandingAgent(BaseAgent):
 
         logger.info(f"[{self.name}] Starting understanding images.")
         current_parameters = ctx.session.state.get('current_parameters', {})
-        if ('input_name' not in current_parameters) or ('mode' not in current_parameters):
-            error_text = f"Missing parameters provided to {self.name}, must include: input_name, mode"
+        if ('input_path' not in current_parameters and 'input_paths' not in current_parameters) or ('mode' not in current_parameters):
+            error_text = f"Missing parameters provided to {self.name}, must include: input_path or input_paths, mode"
             current_output = {"status": "error", "message": error_text}
             logger.error(error_text)
 
             yield self.format_event(error_text, {"current_output":current_output})
             return
 
-        input_name = current_parameters['input_name']
-        if isinstance(input_name, str):
-            input_name = [input_name]
-        count = len(input_name)
+        input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
+        if isinstance(input_paths, str):
+            input_paths = [input_paths]
+        count = len(input_paths)
 
-        tasks = [image_to_text_tool(ToolContext(ctx), name) for name in input_name]
+        tasks = [image_to_text_tool(ToolContext(ctx), path) for path in input_paths]
         result_list = await asyncio.gather(*tasks)
 
         sucess_message_list = []
         error_message_list = []
-        for name, result in zip(input_name, result_list):
+        for path, result in zip(input_paths, result_list):
             if result['status'] == 'success':
-                sucess_message_list.append(f"image{name} description: {result['message']}\n")
+                sucess_message_list.append(f"image {path} description: {result['message']}\n")
             elif result['status'] == 'error':
-                error_message_list.append(f"image{name} description failed, reason: {result['message']}\n")
+                error_message_list.append(f"image {path} description failed, reason: {result['message']}\n")
 
         if len(error_message_list) == count:
             error_text = f"All {count} images description failed:\n\n" + '\n'.join(error_message_list)

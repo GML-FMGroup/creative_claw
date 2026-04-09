@@ -5,10 +5,11 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.tools import ToolContext
-from google.genai.types import Part, Content, Blob
+from google.genai.types import Part, Content
 
 from src.logger import logger
 from src.agents.experts.image_editing import tool as editing_tools
+from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
 class ImageEditingAgent(BaseAgent):
     """A custom agent that orchestrates a sequence of agents to generate an image from text."""
@@ -51,8 +52,9 @@ class ImageEditingAgent(BaseAgent):
         """
         current_parameters = ctx.session.state.get('current_parameters', {})
 
-        if ('input_name' not in current_parameters) or ('prompt' not in current_parameters):
-            error_text = f"Missing parameters for {self.name}. Required fields: input_name, prompt"
+        input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
+        if input_paths is None or ('prompt' not in current_parameters):
+            error_text = f"Missing parameters for {self.name}. Required fields: input_path or input_paths, prompt"
             current_output = {"status": "error", "message": error_text}
             logger.error(error_text)
 
@@ -87,23 +89,36 @@ class ImageEditingAgent(BaseAgent):
                 if not message:
                     text += f"\nImage {i+1} editing failed. Prompt: {prompt}."
 
-                artifact_name = f"step{ctx.session.state.get('step')+1}_editing_output{i}.png"
-                artifact_part = Part(inline_data=Blob(mime_type='image/png', data=message))
-
-                await ctx.artifact_service.save_artifact(
-                    app_name=ctx.session.app_name, user_id=ctx.session.user_id, session_id=ctx.session.id, filename=artifact_name, artifact=artifact_part
+                output_path = save_binary_output(
+                    message,
+                    session_id=ctx.session.id,
+                    step=ctx.session.state.get('step') + 1,
+                    output_type="editing",
+                    index=i,
+                    extension=".png",
                 )
+                artifact_name = output_path.name
 
-                text += f"\nImage {i+1} editing succeeded. Output artifact: {artifact_name}"
-                description = f"new image edited based on the original image: {current_parameters['input_name']}, the editing instruction is: {prompt}"
+                text += f"\nImage {i+1} editing succeeded. Output file: {artifact_name}"
+                description = (
+                    f"new image edited based on the original workspace files: "
+                    f"{input_paths}, the editing instruction is: {prompt}"
+                )
                 
-                output_artifacts.append({'name': artifact_name, 'description':description})
+                output_artifacts.append(
+                    build_workspace_file_record(
+                        output_path,
+                        description=description,
+                        source="expert",
+                        name=artifact_name,
+                    )
+                )
 
             # output event
             current_output = {
                 "status": "success",
                 "message": text,
-                "output_artifacts": output_artifacts
+                "output_files": output_artifacts
             }
             yield self.format_event(text, {'current_output':current_output})
             return

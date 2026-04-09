@@ -1,7 +1,6 @@
 from typing import AsyncGenerator, List, Optional, Any, Dict
 import json, uuid
 import re
-import os.path as osp
 
 from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
@@ -15,6 +14,7 @@ from src.logger import logger
 from google.adk.agents import LlmAgent
 from conf.system import SYS_CONFIG
 from conf.agent import experts_list
+from src.runtime.workspace import build_workspace_file_record, normalize_file_references, resolve_workspace_path
 
 avaliable_agents: str = '\n'.join([str(expert) for expert in experts_list if expert.enable])
 
@@ -177,17 +177,85 @@ class Executor:
 
         await self.session_service.append_event(current_session, event)
 
-    async def save_artifact(self, art_name: str, current_uid:str, current_sid:str):
-        art_part = await self.artifact_service.load_artifact(
-            app_name=self.app_name, user_id=self.uid, session_id=self.sid, filename=art_name
-        )
+    @staticmethod
+    def _resolve_named_files(state: Dict[str, Any], names: list[str]) -> list[str]:
+        """Resolve legacy file names against recorded workspace file history."""
+        available_files = list(state.get("input_files", []))
+        for file_group in state.get("files_history", []):
+            available_files.extend(file_group)
 
-        art_name = f"{current_uid}_{current_sid}_{art_name}"
-        art_path = osp.join(self.save_dir, art_name)
-        with open(art_path, mode='wb') as f:
-            f.write(art_part.inline_data.data)
-        return art_path
-    
+        resolved_paths: list[str] = []
+        for raw_name in names:
+            target_name = str(raw_name or "").strip()
+            if not target_name:
+                continue
+            matched = next(
+                (
+                    str(file_info.get("path", "")).strip()
+                    for file_info in reversed(available_files)
+                    if str(file_info.get("name", "")).strip() == target_name
+                ),
+                "",
+            )
+            if not matched:
+                raise ValueError(
+                    f"Executor got an unknown workspace file name: '{target_name}'."
+                )
+            resolved_paths.append(matched)
+        return resolved_paths
+
+    @classmethod
+    def _normalize_input_paths(
+        cls,
+        state: Dict[str, Any],
+        parameters: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Normalize expert parameters into workspace-file inputs."""
+        normalized = dict(parameters)
+        if "input_path" in normalized or "input_paths" in normalized:
+            input_paths = normalize_file_references(
+                normalized.get("input_paths", normalized.get("input_path"))
+            )
+        elif "input_name" in normalized:
+            raw_value = normalized.get("input_name")
+            if isinstance(raw_value, str):
+                input_names = [raw_value]
+            elif isinstance(raw_value, list):
+                input_names = [str(item) for item in raw_value]
+            else:
+                raise ValueError("current plan parameters['input_name'] must be a string or a list")
+            input_paths = cls._resolve_named_files(state, input_names)
+            normalized.pop("input_name", None)
+        else:
+            input_paths = []
+
+        if input_paths:
+            for path in input_paths:
+                resolved = resolve_workspace_path(path)
+                if not resolved.exists():
+                    raise ValueError(f"Executor got a missing workspace file: '{path}'.")
+            normalized["input_paths"] = input_paths
+            if len(input_paths) == 1:
+                normalized["input_path"] = input_paths[0]
+        return normalized
+
+    @staticmethod
+    def _normalize_output_files(output_files: list[dict[str, Any]]) -> list[dict[str, str]]:
+        """Normalize expert output file records before saving them into session state."""
+        normalized_files: list[dict[str, str]] = []
+        for file_info in output_files:
+            path = str(file_info.get("path", "")).strip()
+            if not path:
+                continue
+            normalized_files.append(
+                build_workspace_file_record(
+                    path,
+                    description=str(file_info.get("description", "")).strip(),
+                    source=str(file_info.get("source", "expert")).strip() or "expert",
+                    name=str(file_info.get("name", "")).strip() or None,
+                )
+            )
+        return normalized_files
 
 
     async def execute_plan(self):
@@ -211,7 +279,7 @@ class Executor:
         plan = current_session.state.get('current_plan')
 
         next_agent_name = plan.get("next_agent")
-        params_for_expert = plan.get("parameters", {})
+        params_for_expert = dict(plan.get("parameters", {}))
         final_summary = plan.get("summary", {})
 
         if next_agent_name not in self.expert_runners:
@@ -221,30 +289,13 @@ class Executor:
             await self.add_event(text=error_text)
             return
         
-        # check if artifact name exists
-        if 'input_name' in params_for_expert:
-            art_list = await self.artifact_service.list_artifact_keys(
-                app_name=self.app_name, user_id=self.uid, session_id=self.sid
-            )
-            input_names = []
-            if isinstance(params_for_expert['input_name'], str):
-                input_names = [params_for_expert['input_name']]
-            elif isinstance(params_for_expert['input_name'], list):
-                input_names = params_for_expert['input_name']
-            else:
-                error_text = "current plan parameters['input_name'] must be a string or a list"
-                logger.error(error_text)
-                await self.add_event(text=error_text)
-                return         
-            
-            for name in input_names:
-                if name in art_list:
-                    continue
-                error_text = f"Executor got an unknown artifact: '{name}', which is not in the artifact list."
-                logger.error(error_text)
-
-                await self.add_event(text=error_text)
-                return
+        try:
+            params_for_expert = self._normalize_input_paths(current_session.state, params_for_expert)
+        except ValueError as exc:
+            error_text = str(exc)
+            logger.error(error_text)
+            await self.add_event(text=error_text)
+            return
 
         # write current parameters to state
         await self.add_event(state_delta={'current_parameters': params_for_expert})
@@ -260,16 +311,16 @@ class Executor:
         )
 
         # write output to state after finishing execution
-        # Output location: state['current_output'] = {'state', 'output_artifacts', 'message'}
+        # Output location: state['current_output'] = {'status', 'output_files', 'message'}
         current_session = await self.session_service.get_session(
             app_name=self.app_name, user_id=self.uid, session_id=self.sid
         )
         current_step = current_session.state.get('step')
         current_output = current_session.state.get('current_output')
-        artifacts_history = current_session.state.get('artifacts_history')
-        text_history = current_session.state.get('text_history')
-        message_history = current_session.state.get('message_history')
-        summary_history = current_session.state.get('summary_history')
+        files_history = current_session.state.get('files_history') or []
+        text_history = current_session.state.get('text_history') or []
+        message_history = current_session.state.get('message_history') or []
+        summary_history = current_session.state.get('summary_history') or []
 
         if not current_output:
             current_output = {'status': 'pending'}
@@ -278,26 +329,16 @@ class Executor:
             'step': current_step+1,
         }
 
-        # save new artifact to local
-        if current_output['status'] == 'success' and 'output_artifacts' in current_output:
-            for art in current_output['output_artifacts']:
-                current_sid = current_session.state['sid']
-                current_uid = current_session.state['uid']
-                logger.info(f"saving artifact {art['name']}")
-                art_path = await self.save_artifact(art['name'], current_uid, current_sid)
-                art['path'] = art_path
-
-                logger.info(f"saved to {art_path}")
-
         # generate an event and append it to session
         if current_output['status'] == 'success':
-            # save output_artifacts and artifacts_history
-            if 'output_artifacts' in current_output:
-                state_delta['new_artifacts'] = current_output['output_artifacts']
-                state_delta['artifacts_history'] = artifacts_history+[current_output['output_artifacts']]
+            # save output files and files history
+            if 'output_files' in current_output:
+                normalized_files = self._normalize_output_files(current_output['output_files'])
+                state_delta['new_files'] = normalized_files
+                state_delta['files_history'] = files_history + [normalized_files]
             else:
-                state_delta['new_artifacts'] = []
-                state_delta['artifacts_history'] = artifacts_history+[[]]
+                state_delta['new_files'] = []
+                state_delta['files_history'] = files_history + [[]]
 
             # save text_history
             if 'output_text' in current_output:
@@ -314,8 +355,8 @@ class Executor:
             await self.add_event(text=f"Round{current_step+1} execution has been completed. The original target of this step: `{final_summary}`, the summary after execution: `{current_output['message']}`", state_delta=state_delta)
 
         elif current_output['status'] == 'error':
-            state_delta['new_artifacts'] = []
-            state_delta['artifacts_history'] = artifacts_history+[[]]
+            state_delta['new_files'] = []
+            state_delta['files_history'] = files_history + [[]]
             state_delta['text_history'] = text_history + [None]
             state_delta['message_history'] = message_history + [current_output['message']]
             state_delta['summary_history'] = summary_history + [final_summary]
@@ -344,14 +385,14 @@ You are the executing AI of the art creation pipeline. Your task is to continuou
 
 **Key instructions: **
 1.  **End signal**: If you determine that current task has been completely completed, you must set the value of 'next_agent' to 'null' or 'FINISH'. This is the only way to terminate the loop.
-2.  **Pay attention ot intermediate products**: You must check the output file names generated by other agents in the previous steps, and use these outputs to prepare the parameters for the next step.
+2.  **Pay attention ot intermediate products**: You must check the workspace file paths generated by other agents in the previous steps, and use these outputs to prepare the parameters for the next step.
 3.  **Accurate task assignment**: For image generation and editing, special attention should be paid to the user's intention. Some image generation tasks require reference, such as images input by the user or images output from previous steps, or when the user mentions "generation based on or reference ***", an agent with reference image generation function is needed instead of purely generation through prompt text.
 
 **Workflow:**
 
 1.  **Analyze the current status**:
     - Carefully read the user input task: `{user_prompt}`.
-    - If the file that needs to be operated on is provided, you need to review the provided file and check if it has achieved the planning goals of the previous step.
+    - If the file that needs to be operated on is provided, you need to review the provided workspace file and check if it has achieved the planning goals of the previous step.
 
 2.  **Decision making and parameter preparation**:
     - If the previous planning step is not completed, consider the reasons for the failure and re-execute it using improved methods.

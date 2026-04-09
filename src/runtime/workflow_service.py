@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import mimetypes
-import os.path as osp
 import uuid
-from pathlib import Path
 
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-from google.genai.types import Blob, Content, Part
+from google.genai.types import Content, Part
 
 from conf.system import SYS_CONFIG
 from src.agents.experts import (
@@ -23,10 +20,19 @@ from src.agents.experts import (
     KnowledgeAgent,
     SearchAgent,
 )
+from src.agents.executor.executor_agent import Executor
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
 from src.runtime.models import InboundMessage, WorkflowEvent
-from src.runtime.step_events import step_event_streaming_active
+from src.runtime.step_events import reset_step_event_history, step_event_streaming_active
+from src.runtime.workspace import (
+    build_workspace_file_record,
+    generated_root,
+    stage_attachment_into_workspace,
+    workspace_relative_path,
+    resolve_workspace_path,
+    workspace_root,
+)
 
 _HELP_TEXT = (
     "CreativeClaw commands:\n"
@@ -129,12 +135,8 @@ class CreativeClawRuntime:
             for name, agent in self.expert_agents.items()
         }
 
-        self.outputs_path = Path(SYS_CONFIG.base_dir) / "outputs"
-        self.images_dir = self.outputs_path / "images"
-        self.videos_dir = self.outputs_path / "videos"
-        self.uploads_dir = self.outputs_path / "uploads"
-        for path in (self.outputs_path, self.images_dir, self.videos_dir, self.uploads_dir):
-            path.mkdir(parents=True, exist_ok=True)
+        self.workspace_root = workspace_root()
+        self.generated_dir = generated_root()
 
     async def run_message(self, inbound: InboundMessage):
         """Execute one inbound message and yield workflow events."""
@@ -166,6 +168,7 @@ class CreativeClawRuntime:
             session_id=session_id,
             stage="started",
         )
+        reset_step_event_history(session_id=session_id)
         for attachment in inbound.attachments:
             yield _build_progress_event(
                 f"已收到附件：{attachment.name}",
@@ -186,10 +189,20 @@ class CreativeClawRuntime:
             artifact_service=self.artifact_service,
             expert_runners=self.expert_runners,
             app_name=SYS_CONFIG.app_name,
-            save_dir=str(self.images_dir),
+            save_dir=str(self.generated_dir),
         )
         orchestrator_agent.uid = user_id
         orchestrator_agent.sid = session_id
+        executor_agent = Executor(
+            session_service=self.session_service,
+            artifact_service=self.artifact_service,
+            expert_runners=self.expert_runners,
+            app_name=SYS_CONFIG.app_name,
+            save_dir=str(self.generated_dir),
+            execute_enabled=False,
+        )
+        executor_agent.uid = user_id
+        executor_agent.sid = session_id
 
         try:
             final_summary = "task workflow has started."
@@ -207,30 +220,22 @@ class CreativeClawRuntime:
                     json.dumps(current_session.state, indent=2, ensure_ascii=False),
                 )
 
-                step_result = await orchestrator_agent.run_step()
+                step_result = await orchestrator_agent.generate_step_plan()
                 workflow_status = step_result.get("workflow_status", "running")
                 response_text = step_result.get("last_response", "")
                 output_message = step_result.get("last_output_message", "")
                 orchestration_events = list(step_result.get("new_orchestration_events", []))
+                current_plan = step_result.get("current_plan", {})
+                next_agent = str(current_plan.get("next_agent", "")).strip()
                 if step_event_streaming_active():
-                    orchestration_events = [
-                        step_event
-                        for step_event in orchestration_events
-                        if str(step_event.get("title", "")).strip()
-                        not in {
-                            "list_dir",
-                            "read_file",
-                            "write_file",
-                            "edit_file",
-                            "image_crop",
-                            "image_rotate",
-                            "image_flip",
-                            "exec_command",
-                            "web_search",
-                            "web_fetch",
-                        }
-                    ]
-                final_summary = step_result.get("final_summary") or output_message or response_text or final_summary
+                    orchestration_events = []
+                final_summary = (
+                    step_result.get("final_summary")
+                    or str(current_plan.get("summary", "")).strip()
+                    or output_message
+                    or response_text
+                    or final_summary
+                )
 
                 for step_event in orchestration_events:
                     orchestration_history.append(step_event)
@@ -238,28 +243,23 @@ class CreativeClawRuntime:
                     progress_event.text = _render_orchestration_history(orchestration_history)
                     yield progress_event
 
-                progress_text = ""
-                if output_message and workflow_status != "finished" and not orchestration_events:
-                    progress_text = _summarize_step_output(output_message)
-                elif (
-                    not output_message
-                    and response_text
-                    and workflow_status != "finished"
-                    and index == 0
-                    and not orchestration_events
-                ):
-                    progress_text = "正在继续处理，请稍等。"
-
-                if progress_text:
-                    yield _build_progress_event(
-                        progress_text,
-                        session_id=session_id,
-                        stage="in_progress",
-                    )
-
                 if workflow_status == "finished":
                     logger.info("Workflow finished. summary={}", final_summary)
                     break
+
+                if not next_agent:
+                    raise ValueError("Orchestrator did not provide `next_agent` in the current plan.")
+
+                current_output = await executor_agent.execute_plan()
+                output_message = str((current_output or {}).get("message", "")).strip()
+                if output_message:
+                    yield _build_progress_event(
+                        _summarize_step_output(output_message),
+                        session_id=session_id,
+                        stage="expert_execution",
+                        stage_title=f"{next_agent} 已返回",
+                    )
+                    final_summary = output_message or final_summary
             else:
                 final_summary = (
                     f"Workflow has reached the max iteration ({max_loops}) and has been terminated."
@@ -329,38 +329,42 @@ class CreativeClawRuntime:
         state_delta["sid"] = session_id
         state_delta["user_prompt"] = inbound.text
         state_delta["step"] = current_session.state.get("step", 0)
-        state_delta["input_artifacts"] = []
+        state_delta["input_files"] = []
         state_delta["workflow_status"] = "running"
         state_delta["final_summary"] = ""
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
+        state_delta["current_plan"] = None
         state_delta["current_output"] = None
 
         for index, attachment in enumerate(inbound.attachments, start=1):
-            artifact_name = attachment.name or osp.basename(attachment.path)
-            description = attachment.description or f"user input attachment {index}"
-            state_delta["input_artifacts"].append(
-                {
-                    "name": artifact_name,
-                    "path": attachment.path,
-                    "description": description,
-                }
-            )
-            state_delta["user_prompt"] += f"\nInput attachment {index} name is {artifact_name}"
-            await self.artifact_service.save_artifact(
-                app_name=SYS_CONFIG.app_name,
-                user_id=user_id,
+            saved_path = stage_attachment_into_workspace(
+                attachment.path,
+                channel=inbound.channel,
                 session_id=session_id,
-                filename=artifact_name,
-                artifact=_load_file_as_part(attachment.path, attachment.mime_type),
+                preferred_name=attachment.name,
+            )
+            file_name = attachment.name or saved_path.name
+            description = attachment.description or f"user input attachment {index}"
+            state_delta["input_files"].append(
+                build_workspace_file_record(
+                    saved_path,
+                    description=description,
+                    source="channel",
+                    name=file_name,
+                )
+            )
+            state_delta["user_prompt"] += (
+                f"\nInput file {index}: name={file_name}, "
+                f"path={workspace_relative_path(saved_path)}"
             )
 
-        state_delta["artifacts_history"] = current_session.state.get("artifacts_history", [])
+        state_delta["files_history"] = current_session.state.get("files_history", [])
         state_delta["summary_history"] = current_session.state.get("summary_history", [])
         state_delta["text_history"] = current_session.state.get("text_history", [])
         state_delta["message_history"] = current_session.state.get("message_history", [])
-        state_delta["new_artifacts"] = state_delta["input_artifacts"]
+        state_delta["new_files"] = state_delta["input_files"]
         state_delta["orchestration_events"] = current_session.state.get("orchestration_events", [])
 
         event = Event(
@@ -399,8 +403,8 @@ class CreativeClawRuntime:
                 metadata={"session_id": session_id},
             )
 
-        artifacts_history = final_session.state.get("artifacts_history") or []
-        final_artifacts = _select_latest_artifacts(artifacts_history)
+        files_history = final_session.state.get("files_history") or []
+        final_files = _select_latest_files(files_history)
 
         text_history = final_session.state.get("text_history") or []
         if text_history and text_history[-1]:
@@ -415,9 +419,9 @@ class CreativeClawRuntime:
                 final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 
         artifact_paths = [
-            str(artifact.get("path", "")).strip()
-            for artifact in final_artifacts
-            if str(artifact.get("path", "")).strip()
+            str(resolve_workspace_path(file_info.get("path", "")).resolve())
+            for file_info in final_files
+            if str(file_info.get("path", "")).strip()
         ]
         return WorkflowEvent(
             event_type="final",
@@ -427,17 +431,9 @@ class CreativeClawRuntime:
         )
 
 
-def _load_file_as_part(file_path: str, explicit_mime_type: str = "") -> Part:
-    """Load a local file as a generic ADK artifact part."""
-    mime_type = explicit_mime_type or mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-    with open(file_path, "rb") as file_obj:
-        file_bytes = file_obj.read()
-    return Part(inline_data=Blob(mime_type=mime_type, data=file_bytes))
-
-
-def _select_latest_artifacts(artifacts_history: list[list[dict]]) -> list[dict]:
-    """Return the latest non-empty artifact batch from history."""
-    for artifact_group in reversed(artifacts_history):
-        if artifact_group:
-            return artifact_group
+def _select_latest_files(files_history: list[list[dict]]) -> list[dict]:
+    """Return the latest non-empty file batch from history."""
+    for file_group in reversed(files_history):
+        if file_group:
+            return file_group
     return []

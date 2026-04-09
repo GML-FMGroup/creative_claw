@@ -7,17 +7,20 @@ from openai import AsyncOpenAI
 from conf.api import API_CONFIG
 from src.logger import logger
 from src.utils import binary_to_base64
+from src.runtime.workspace import resolve_workspace_path
 
 
-async def image_to_text_tool(tool_context: ToolContext, input_name: str, mode: str = 'description') -> Dict[str, Any]:
+async def image_to_text_tool(tool_context: ToolContext, input_path: str, mode: str = 'description') -> Dict[str, Any]:
     """
     Using the Qwen2.5-VL model to analyze local images and generate relevant text
     """
     tool_name_for_log = "image_to_text_tool"
     
-    # Load the artifact and convert it to base64.
-    artifact_part = await tool_context.load_artifact(filename=input_name)
-    image_base64 = binary_to_base64(artifact_part.inline_data.data, artifact_part.inline_data.mime_type)
+    resolved_path = resolve_workspace_path(input_path)
+    mime_type = "image/png"
+    if resolved_path.suffix:
+        mime_type = f"image/{resolved_path.suffix.lstrip('.')}"
+    image_base64 = binary_to_base64(resolved_path.read_bytes(), mime_type)
 
     # API-KEY
     DASHSCOPE_API_KEY = API_CONFIG.DASHSCOPE_API_KEY
@@ -44,7 +47,7 @@ async def image_to_text_tool(tool_context: ToolContext, input_name: str, mode: s
 
     # call Qwen-VL
     try:
-        logger.info(f"[{tool_name_for_log}] called: name='{input_name}', mode='{mode}'")
+        logger.info(f"[{tool_name_for_log}] called: path='{input_path}', mode='{mode}'")
         async with AsyncOpenAI(
             api_key=DASHSCOPE_API_KEY,
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",

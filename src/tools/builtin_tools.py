@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -15,13 +14,12 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
-from conf.system import SYS_CONFIG
+from src.runtime.workspace import workspace_root
 
 
 def _default_workspace() -> Path:
     """Return the default workspace root."""
-    workspace_env = os.getenv("CREATIVE_CLAW_WORKSPACE")
-    return Path(workspace_env).expanduser().resolve() if workspace_env else Path(SYS_CONFIG.base_dir).resolve()
+    return workspace_root()
 
 
 @dataclass(slots=True)

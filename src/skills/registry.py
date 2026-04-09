@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from conf.system import SYS_CONFIG
+from src.runtime.workspace import workspace_root
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +28,8 @@ class SkillRegistry:
         workspace: Path | None = None,
         builtin_skills_dir: Path | None = None,
     ) -> None:
-        cwd = Path.cwd() if workspace is None else workspace
-        self.workspace = cwd.resolve()
+        root = workspace_root() if workspace is None else workspace
+        self.workspace = root.resolve()
         self.workspace_skills_dir = self.workspace / "skills"
         self.builtin_skills_dir = (
             Path(SYS_CONFIG.base_dir) / "skills"
@@ -114,12 +114,8 @@ class SkillRegistry:
 
 
 def get_skill_registry() -> SkillRegistry:
-    """Build a registry from optional environment overrides."""
-    workspace_env = os.getenv("CREATIVE_CLAW_WORKSPACE")
-    builtin_env = os.getenv("CREATIVE_CLAW_BUILTIN_SKILLS_DIR")
-    workspace = Path(workspace_env).expanduser() if workspace_env else None
-    builtin_skills_dir = Path(builtin_env).expanduser() if builtin_env else None
-    return SkillRegistry(workspace=workspace, builtin_skills_dir=builtin_skills_dir)
+    """Build a registry rooted in the fixed workspace."""
+    return SkillRegistry()
 
 
 def _xml_escape(text: str) -> str:

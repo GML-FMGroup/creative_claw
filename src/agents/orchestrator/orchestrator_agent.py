@@ -1,14 +1,14 @@
-"""Single-orchestrator runtime for Creative Claw."""
+"""Planning-oriented orchestrator runtime for Creative Claw."""
 
 from __future__ import annotations
 
 import json
-import os.path as osp
 from typing import Any, Optional
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.artifacts import InMemoryArtifactService
+from google.adk.events import Event, EventActions
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.tool_context import ToolContext
@@ -18,8 +18,17 @@ from google.genai.types import Content, Part
 from conf.agent import experts_list
 from conf.system import SYS_CONFIG
 from src.logger import logger
-from src.runtime.step_events import CreativeClawStepEventPlugin, step_event_streaming_active
+from src.runtime.step_events import (
+    CreativeClawStepEventPlugin,
+    publish_orchestration_step_event,
+    step_event_streaming_active,
+)
 from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
+from src.runtime.workspace import (
+    build_workspace_file_record,
+    load_local_file_part,
+    looks_like_image,
+)
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
     BuiltinToolbox,
@@ -30,7 +39,7 @@ async def orchestrator_before_model_callback(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
 ) -> None:
-    """Inject compact runtime state and recent artifacts into the model request."""
+    """Inject compact runtime state and recent workspace files into the model request."""
     state = callback_context.state
     step = state.get("step", 0)
     workflow_status = state.get("workflow_status", "running")
@@ -41,11 +50,15 @@ async def orchestrator_before_model_callback(
         f"# User task:\n{state.get('user_prompt', '')}",
     ]
 
-    input_artifacts = state.get("input_artifacts", [])
-    if input_artifacts:
-        summary_lines.append("# Original input artifacts:")
+    input_files = state.get("input_files") or state.get("input_artifacts", [])
+    if input_files:
+        summary_lines.append("# Original input files in workspace:")
         summary_lines.extend(
-            f"- {artifact['name']}: {artifact.get('description', '')}" for artifact in input_artifacts
+            (
+                f"- {file_info['name']}: path={file_info.get('path', '')}; "
+                f"description={file_info.get('description', '')}"
+            )
+            for file_info in input_files
         )
 
     summary_history = state.get("summary_history", [])
@@ -55,32 +68,67 @@ async def orchestrator_before_model_callback(
         for index, (summary, message) in enumerate(zip(summary_history, message_history), start=1):
             summary_lines.append(f"- Step {index}: target={summary}; result={message}")
 
+    files_history = state.get("files_history") or state.get("artifacts_history", [])
+    if files_history:
+        summary_lines.append("# Workspace file history:")
+        for step_index, file_group in enumerate(files_history, start=1):
+            if not file_group:
+                summary_lines.append(f"- Step {step_index}: no output artifact")
+                continue
+            file_summaries = []
+            for file_index, file_info in enumerate(file_group, start=1):
+                file_name = str(file_info.get("name", "")).strip() or f"file_{file_index}"
+                file_path = str(file_info.get("path", "")).strip()
+                file_description = str(file_info.get("description", "")).strip()
+                if file_description:
+                    file_summaries.append(
+                        f"file {file_index}: name={file_name}; path={file_path}; description={file_description}"
+                    )
+                else:
+                    file_summaries.append(f"file {file_index}: name={file_name}; path={file_path}")
+            summary_lines.append(f"- Step {step_index}: {' | '.join(file_summaries)}")
+
+        latest_file_group = next(
+            (file_group for file_group in reversed(files_history) if file_group),
+            [],
+        )
+        if latest_file_group:
+            latest_paths = ", ".join(
+                str(file_info.get("path", "")).strip()
+                for file_info in latest_file_group
+                if str(file_info.get("path", "")).strip()
+            )
+            if latest_paths:
+                summary_lines.append(f"# Most recent available output files: {latest_paths}")
+
     llm_request.contents.append(
         Content(role="user", parts=[Part(text="\n".join(summary_lines))])
     )
 
-    new_artifacts = state.get("new_artifacts", [])
-    if not new_artifacts:
+    new_files = state.get("new_files") or state.get("new_artifacts", [])
+    if not new_files:
         return
 
-    artifact_parts = [Part(text="Recent artifacts for reference:\n")]
-    for index, artifact in enumerate(new_artifacts, start=1):
-        artifact_parts.append(
+    file_parts = [Part(text="Recent workspace files for reference:\n")]
+    for index, file_info in enumerate(new_files, start=1):
+        file_parts.append(
             Part(
                 text=(
-                    f"Artifact {index}: {artifact['name']}. "
-                    f"Description: {artifact.get('description', '')}\n"
+                    f"File {index}: {file_info['name']}. "
+                    f"Path: {file_info.get('path', '')}. "
+                    f"Description: {file_info.get('description', '')}\n"
                 )
             )
         )
-        artifact_part = await callback_context.load_artifact(filename=artifact["name"])
-        artifact_parts.append(artifact_part)
+        file_path = str(file_info.get("path", "")).strip()
+        if file_path and looks_like_image(file_path):
+            file_parts.append(load_local_file_part(file_path))
 
-    llm_request.contents.append(Content(role="user", parts=artifact_parts))
+    llm_request.contents.append(Content(role="user", parts=file_parts))
 
 
 class Orchestrator:
-    """Drive one-step-at-a-time execution with skills and tools."""
+    """Plan one workflow step at a time with skills and builtin tools."""
 
     def __init__(
         self,
@@ -99,7 +147,7 @@ class Orchestrator:
         self.uid = ""
         self.sid = ""
         self.skill_registry = get_skill_registry()
-        self.toolbox = BuiltinToolbox(SYS_CONFIG.base_dir)
+        self.toolbox = BuiltinToolbox()
 
         model_name = llm_model or SYS_CONFIG.llm_model
         logger.info("OrchestratorAgent: using llm: {}", model_name)
@@ -122,8 +170,6 @@ class Orchestrator:
                 self.exec_command,
                 self.web_search,
                 self.web_fetch,
-                self.run_expert,
-                self.finish_task,
             ],
         )
         self.runner = Runner(
@@ -135,7 +181,7 @@ class Orchestrator:
         )
 
     def _build_instruction(self) -> str:
-        """Build one compact system instruction for the orchestrator."""
+        """Build the planner instruction for the orchestrator."""
         available_experts = "\n".join(
             str(expert) for expert in experts_list if expert.enable
         )
@@ -144,29 +190,39 @@ class Orchestrator:
         return f"""
 You are Creative Claw's single orchestrator.
 
-Your job is to solve the user's task by executing the next best step directly.
+Your job is to inspect the current state, use skills and built-in tools when needed, and then decide exactly one next workflow step.
 Do not create a full upfront plan unless the user explicitly asks for one.
 
-You can use three kinds of capabilities:
+You can use four kinds of capabilities:
 1. Skills from local markdown files
-2. Built-in local file tools
+2. Built-in local file tools inside the fixed workspace
 3. Built-in shell and web tools
-4. Existing expert agents through `run_expert`
+4. Existing expert agents, but you cannot execute them directly in this invocation
 
 Rules:
 - When a skill seems relevant, call `list_skills` first and then `read_skill`.
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
-- Use built-in tools for local project work: `list_dir`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec`, `web_search`, `web_fetch`.
+- Use built-in tools for local workspace work: `list_dir`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec`, `web_search`, `web_fetch`.
+- All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
 - Inspect local files with `list_dir` and `read_file` before changing them when the path or contents are uncertain.
 - Use local image tools for lightweight preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
 - Keep changes small and reviewable, and re-check the latest state after each meaningful action.
-- Use `run_expert` for image generation, image editing, image understanding, reverse prompt extraction, search, and prompt refinement.
+- When planning expert parameters, pass workspace file paths with `input_path` or `input_paths` instead of artifact names.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
-- Call `finish_task` when the task is complete.
-- If you are not done yet, execute only one meaningful step in this turn.
+- When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
+- At the end of the turn, output exactly one JSON object and nothing else.
+- The JSON schema must be:
+  {{
+    "next_agent": "AgentName or FINISH",
+    "parameters": {{}},
+    "summary": "One short sentence describing the chosen next step"
+  }}
+- If the task is complete, set `"next_agent"` to `"FINISH"` and keep `"parameters"` empty.
+- If the task is not complete, choose exactly one expert agent for the next step.
+- Do not output markdown fences or any explanatory text outside the JSON object.
 
 Available skills:
 {skills_summary}
@@ -182,17 +238,29 @@ Available expert agents:
         title: str,
         detail: str,
         stage: str = "orchestrating",
+        session_id: str = "",
     ) -> None:
         """Append one structured orchestrator step event into session state."""
+        normalized_title = title.strip() or "处理中"
+        normalized_detail = detail.strip() or "正在处理当前步骤。"
+        normalized_stage = stage.strip() or "orchestrating"
         events = list(state.get("orchestration_events", []))
         events.append(
             {
-                "title": title.strip() or "处理中",
-                "detail": detail.strip() or "正在处理当前步骤。",
-                "stage": stage.strip() or "orchestrating",
+                "title": normalized_title,
+                "detail": normalized_detail,
+                "stage": normalized_stage,
             }
         )
         state["orchestration_events"] = events
+        resolved_session_id = session_id.strip() or str(state.get("sid", "")).strip()
+        if resolved_session_id:
+            publish_orchestration_step_event(
+                session_id=resolved_session_id,
+                title=normalized_title,
+                detail=normalized_detail,
+                stage=normalized_stage,
+            )
 
     @staticmethod
     def _stringify_value(value: Any, max_chars: int = 180) -> str:
@@ -225,6 +293,12 @@ Available expert agents:
             stage=stage,
         )
 
+    @staticmethod
+    def _resolve_tool_context_session_id(tool_context: ToolContext | None) -> str:
+        """Safely extract one session id from a tool context-like object."""
+        session = getattr(tool_context, "session", None)
+        return str(getattr(session, "id", "") or "").strip()
+
     def _record_tool_finished(
         self,
         state: dict[str, Any],
@@ -247,6 +321,54 @@ Available expert agents:
             stage=stage,
         )
 
+    @staticmethod
+    def _record_workspace_files(
+        state: dict[str, Any],
+        *,
+        paths: list[str],
+        description: str,
+        source: str,
+    ) -> None:
+        """Persist tool-produced workspace files into session state."""
+        if not paths:
+            return
+        file_records = [
+            build_workspace_file_record(path, description=description, source=source)
+            for path in paths
+        ]
+        history = list(state.get("files_history", []))
+        history.append(file_records)
+        state["new_files"] = file_records
+        state["files_history"] = history
+
+    def _maybe_record_tool_files(
+        self,
+        state: dict[str, Any],
+        *,
+        tool_name: str,
+        args: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Persist workspace file outputs produced by builtin tools."""
+        if isinstance(result, str) and result.startswith("Error"):
+            return
+        if tool_name in {"image_crop", "image_rotate", "image_flip"} and isinstance(result, str):
+            self._record_workspace_files(
+                state,
+                paths=[result],
+                description=f"Workspace image generated by builtin tool `{tool_name}`.",
+                source="builtin_tool",
+            )
+        elif tool_name in {"write_file", "edit_file"}:
+            path = str(args.get("path", "")).strip()
+            if path:
+                self._record_workspace_files(
+                    state,
+                    paths=[path],
+                    description=f"Workspace file updated by builtin tool `{tool_name}`.",
+                    source="builtin_tool",
+                )
+
     def _run_tool_with_events(
         self,
         *,
@@ -257,17 +379,144 @@ Available expert agents:
         runner,
     ):
         """Execute one tool and record its start and finish events when context exists."""
-        if tool_context is None or step_event_streaming_active():
+        if tool_context is None:
             return runner()
-        self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
+        if not step_event_streaming_active():
+            self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
         result = runner()
-        self._record_tool_finished(tool_context.state, tool_name=tool_name, args=args, result=result, stage=stage)
+        self._maybe_record_tool_files(tool_context.state, tool_name=tool_name, args=args, result=result)
+        if not step_event_streaming_active():
+            self._record_tool_finished(
+                tool_context.state,
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                stage=stage,
+            )
         return result
 
     @staticmethod
     def build_runner_message(instruction: str) -> Content:
         """Create an ADK-compatible user message for one orchestrator turn."""
         return Content(role="user", parts=[Part(text=instruction)])
+
+    @staticmethod
+    def _parse_json_response(response_text: str) -> dict[str, Any]:
+        """Parse one JSON object from the model response."""
+        stripped = str(response_text or "").strip()
+        if not stripped:
+            raise ValueError("Orchestrator returned an empty response.")
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            stripped = "\n".join(lines).strip()
+        start_index = stripped.find("{")
+        if start_index < 0:
+            raise ValueError(f"Orchestrator did not return JSON: {response_text}")
+        decoder = json.JSONDecoder()
+        plan, _ = decoder.raw_decode(stripped[start_index:])
+        if not isinstance(plan, dict):
+            raise ValueError(f"Orchestrator returned a non-object plan: {response_text}")
+        return plan
+
+    def _normalize_step_plan(self, raw_plan: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize one single-step plan."""
+        raw_next_agent = raw_plan.get("next_agent")
+        next_agent = str(raw_next_agent or "").strip()
+        if next_agent.upper() in {"", "NONE", "NULL", "FINISH"}:
+            next_agent = "FINISH"
+        elif next_agent not in self.expert_runners:
+            raise ValueError(f"Orchestrator selected an unknown expert: {next_agent}")
+
+        parameters = raw_plan.get("parameters") or {}
+        if not isinstance(parameters, dict):
+            raise ValueError("Plan field `parameters` must be a JSON object.")
+
+        summary = str(raw_plan.get("summary") or "").strip()
+        if not summary:
+            if next_agent == "FINISH":
+                summary = "当前任务已经完成。"
+            else:
+                summary = f"下一步调用 `{next_agent}` 处理当前任务。"
+
+        return {
+            "next_agent": next_agent,
+            "parameters": parameters,
+            "summary": summary,
+        }
+
+    async def _persist_step_plan(
+        self,
+        *,
+        normalized_plan: dict[str, Any],
+        final_response: str,
+        previous_event_count: int,
+    ) -> dict[str, Any]:
+        """Persist one normalized plan into session state and return planner output."""
+        session = await self.session_service.get_session(
+            app_name=self.app_name,
+            user_id=self.uid,
+            session_id=self.sid,
+        )
+        if session is None:
+            raise ValueError(f"Session {self.sid} not found for user {self.uid}")
+
+        state = session.state
+        next_agent = normalized_plan["next_agent"]
+        summary = normalized_plan["summary"]
+        parameters = normalized_plan["parameters"]
+
+        if next_agent == "FINISH":
+            self._append_step_event(
+                state,
+                title="整理最终结果",
+                detail="正在整理最终回复内容。",
+                stage="finalizing",
+                session_id=self.sid,
+            )
+            state_delta = {
+                "current_plan": normalized_plan,
+                "workflow_status": "finished",
+                "final_summary": summary,
+                "last_output_message": summary,
+                "last_orchestrator_response": final_response,
+                "current_parameters": {},
+                "orchestration_events": list(state.get("orchestration_events", [])),
+            }
+        else:
+            self._append_step_event(
+                state,
+                title="调用专家代理",
+                detail=f"下一步将调用 `{next_agent}`。目标：{summary}",
+                stage="expert_execution",
+                session_id=self.sid,
+            )
+            state_delta = {
+                "current_plan": normalized_plan,
+                "workflow_status": "running",
+                "last_output_message": "",
+                "last_orchestrator_response": final_response,
+                "current_parameters": parameters,
+                "orchestration_events": list(state.get("orchestration_events", [])),
+            }
+
+        await self.session_service.append_event(
+            session,
+            Event(author="api_server", actions=EventActions(state_delta=state_delta)),
+        )
+
+        orchestration_events = list(state_delta["orchestration_events"])
+        return {
+            "workflow_status": state_delta["workflow_status"],
+            "final_summary": state_delta.get("final_summary", ""),
+            "last_response": final_response,
+            "last_output_message": state_delta["last_output_message"],
+            "new_orchestration_events": orchestration_events[previous_event_count:],
+            "current_plan": normalized_plan,
+        }
 
     def list_skills(self, tool_context: ToolContext | None = None) -> str:
         """List available skills in JSON format."""
@@ -277,6 +526,7 @@ Available expert agents:
                 title="查看技能列表",
                 detail="正在检查当前可用的技能。",
                 stage="planning",
+                session_id=self._resolve_tool_context_session_id(tool_context),
             )
         payload = [
             {
@@ -296,6 +546,7 @@ Available expert agents:
                 title="读取技能说明",
                 detail=f"正在读取技能 `{name}` 的说明。",
                 stage="planning",
+                session_id=self._resolve_tool_context_session_id(tool_context),
             )
         return self.skill_registry.read_skill(name)
 
@@ -450,8 +701,8 @@ Available expert agents:
                     final_response_text = text_part
         return final_response_text
 
-    async def run_step(self) -> dict:
-        """Run one orchestrator turn and return current workflow state."""
+    async def generate_step_plan(self) -> dict:
+        """Run one planner turn and persist one normalized single-step plan."""
         current_session = await self.session_service.get_session(
             app_name=self.app_name,
             user_id=self.uid,
@@ -465,135 +716,13 @@ Available expert agents:
             user_id=self.uid,
             session_id=self.sid,
             new_message=self.build_runner_message(
-                "Review the current state, perform the next best action, and finish if the task is already complete."
+                "Review the current state, use built-in tools if needed, and then output the next single-step plan as JSON."
             ),
         )
-
-        session = await self.session_service.get_session(
-            app_name=self.app_name,
-            user_id=self.uid,
-            session_id=self.sid,
+        raw_plan = self._parse_json_response(final_response)
+        normalized_plan = self._normalize_step_plan(raw_plan)
+        return await self._persist_step_plan(
+            normalized_plan=normalized_plan,
+            final_response=final_response,
+            previous_event_count=previous_event_count,
         )
-        state = session.state
-        state["last_orchestrator_response"] = final_response
-        orchestration_events = list(state.get("orchestration_events", []))
-        return {
-            "workflow_status": state.get("workflow_status", "running"),
-            "final_summary": state.get("final_summary", ""),
-            "last_response": final_response,
-            "last_output_message": state.get("last_output_message", ""),
-            "new_orchestration_events": orchestration_events[previous_event_count:],
-        }
-
-    async def run_expert(
-        self,
-        agent_name: str,
-        parameters: dict,
-        tool_context: ToolContext,
-    ) -> dict:
-        """Run one existing expert agent and persist its result into session state."""
-        if agent_name not in self.expert_runners:
-            return {"status": "error", "message": f"Unknown expert agent: {agent_name}"}
-
-        self._append_step_event(
-            tool_context.state,
-            title="调用专家代理",
-            detail=f"正在调用 `{agent_name}` 处理当前步骤。",
-            stage="expert_execution",
-        )
-        tool_context.state["current_parameters"] = parameters
-        tool_context.state["current_agent_name"] = agent_name
-        tool_context.state["workflow_status"] = "running"
-
-        expert_runner = self.expert_runners[agent_name]
-        final_response_text = ""
-        async for event in expert_runner.run_async(
-            user_id=tool_context.user_id,
-            session_id=tool_context.session.id,
-            new_message=self.build_runner_message(
-                f"Execute the current step with agent {agent_name} using parameters stored in session state."
-            ),
-        ):
-            logger.debug(
-                "[{}] Event: {}",
-                agent_name,
-                event.model_dump_json(indent=2, exclude_none=True),
-            )
-            if event.is_final_response() and event.content and event.content.parts:
-                text_part = next((part.text for part in event.content.parts if part.text), None)
-                if text_part:
-                    final_response_text = text_part
-
-        current_session = await self.session_service.get_session(
-            app_name=self.app_name,
-            user_id=tool_context.user_id,
-            session_id=tool_context.session.id,
-        )
-        current_output = current_session.state.get("current_output") or {
-            "status": "error",
-            "message": f"{agent_name} produced no current_output.",
-        }
-
-        step = current_session.state.get("step", 0)
-        summary_history = current_session.state.get("summary_history", [])
-        message_history = current_session.state.get("message_history", [])
-        text_history = current_session.state.get("text_history", [])
-        artifacts_history = current_session.state.get("artifacts_history", [])
-        step_summary = f"{agent_name} with parameters {json.dumps(parameters, ensure_ascii=False)}"
-
-        tool_context.state["step"] = step + 1
-        tool_context.state["summary_history"] = summary_history + [step_summary]
-        tool_context.state["message_history"] = message_history + [current_output.get("message", "")]
-        tool_context.state["last_output_message"] = current_output.get("message", "")
-        tool_context.state["last_expert_response"] = final_response_text
-
-        output_text = current_output.get("output_text")
-        tool_context.state["text_history"] = text_history + [output_text]
-
-        output_artifacts = current_output.get("output_artifacts", [])
-        if output_artifacts:
-            for artifact in output_artifacts:
-                artifact["path"] = await self._save_artifact(
-                    art_name=artifact["name"],
-                    user_id=tool_context.user_id,
-                    session_id=tool_context.session.id,
-                )
-            tool_context.state["new_artifacts"] = output_artifacts
-            tool_context.state["artifacts_history"] = artifacts_history + [output_artifacts]
-        else:
-            tool_context.state["new_artifacts"] = []
-            tool_context.state["artifacts_history"] = artifacts_history + [[]]
-
-        return {
-            "status": current_output.get("status", "error"),
-            "message": current_output.get("message", ""),
-            "output_text": output_text,
-            "output_artifacts": output_artifacts,
-        }
-
-    async def finish_task(self, summary: str, tool_context: ToolContext) -> dict:
-        """Mark the workflow as completed with one final summary."""
-        self._append_step_event(
-            tool_context.state,
-            title="整理最终结果",
-            detail="正在整理最终回复内容。",
-            stage="finalizing",
-        )
-        tool_context.state["workflow_status"] = "finished"
-        tool_context.state["final_summary"] = summary
-        tool_context.state["last_output_message"] = summary
-        return {"status": "success", "message": f"Task marked as finished: {summary}"}
-
-    async def _save_artifact(self, art_name: str, user_id: str, session_id: str) -> str:
-        """Persist one session artifact into the configured output directory."""
-        artifact_part = await self.artifact_service.load_artifact(
-            app_name=self.app_name,
-            user_id=user_id,
-            session_id=session_id,
-            filename=art_name,
-        )
-        output_name = f"{user_id}_{session_id}_{art_name}"
-        output_path = osp.join(self.save_dir, output_name)
-        with open(output_path, "wb") as file_obj:
-            file_obj.write(artifact_part.inline_data.data)
-        return output_path

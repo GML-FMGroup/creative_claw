@@ -12,6 +12,7 @@ from typing import Any
 
 from src.logger import logger
 from src.runtime import InboundMessage, MessageAttachment
+from src.runtime.workspace import channel_inbox_dir
 
 from .base import BaseChannel
 from .events import OutboundMessage
@@ -555,7 +556,7 @@ class FeishuChannel(BaseChannel):
         file_bytes = getattr(response, "file", None)
         if file_bytes is None:
             file_bytes = getattr(response, "raw", b"")
-        destination = Path("outputs") / "uploads" / f"feishu_{message_id}_{image_key}.png"
+        destination = channel_inbox_dir("feishu", message_id) / f"{image_key}.png"
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(bytes(file_bytes))
         return destination
@@ -575,7 +576,7 @@ class FeishuChannel(BaseChannel):
         if file_bytes is None:
             file_bytes = getattr(response, "raw", b"")
         target_name = Path(file_name).name if file_name else f"{file_key}.bin"
-        destination = Path("outputs") / "uploads" / f"feishu_{message_id}_{target_name}"
+        destination = channel_inbox_dir("feishu", message_id) / target_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(bytes(file_bytes))
         return destination

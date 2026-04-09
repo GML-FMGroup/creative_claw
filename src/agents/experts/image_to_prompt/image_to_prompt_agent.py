@@ -47,29 +47,29 @@ class ImageToPromptAgent(BaseAgent):
         """
         current_parameters = ctx.session.state.get("current_parameters", {})
 
-        if "input_name" not in current_parameters:
-            error_text = f"Missing parameters provided to {self.name}, must include: input_name"
+        if "input_path" not in current_parameters and "input_paths" not in current_parameters:
+            error_text = f"Missing parameters provided to {self.name}, must include: input_path or input_paths"
             current_output = {"status": "error", "message": error_text}
             logger.error(error_text)
             yield self.format_event(error_text, {"current_output": current_output})
             return
 
-        input_name = current_parameters["input_name"]
-        if isinstance(input_name, str):
-            input_name = [input_name]
+        input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
+        if isinstance(input_paths, str):
+            input_paths = [input_paths]
 
-        tasks = [image_to_prompt_tool(ctx, img_name) for img_name in input_name]
+        tasks = [image_to_prompt_tool(ctx, img_path) for img_path in input_paths]
         results = await asyncio.gather(*tasks)
 
         success_message_list = []
         error_message_list = []
-        count = len(input_name)
-        for name, result in zip(input_name, results):
+        count = len(input_paths)
+        for file_path, result in zip(input_paths, results):
             if result["status"] == "success":
-                success_message_list.append(f"Image {name} prompt:\n{result['message']}\n---\n")
+                success_message_list.append(f"Image {file_path} prompt:\n{result['message']}\n---\n")
             elif result["status"] == "error":
                 error_message_list.append(
-                    f"Image {name} prompt generation failed: {result['message']}\n---\n"
+                    f"Image {file_path} prompt generation failed: {result['message']}\n---\n"
                 )
 
         if len(error_message_list) == count:

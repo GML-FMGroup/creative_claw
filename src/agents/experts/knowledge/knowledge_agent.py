@@ -16,24 +16,26 @@ from google.genai.types import Content
 
 from conf.system import SYS_CONFIG
 from src.logger import logger
+from src.runtime.workspace import load_local_file_part
 
 async def knowledge_before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest):
     current_parameters = callback_context.state.get('current_parameters', {})
     
     llm_request.contents.append(Content(role='user', parts=[Part(text=f"Current task is: {current_parameters['prompt']}")]))
 
-    if len(current_parameters.get('input_name', []))==0:
+    input_paths = current_parameters.get("input_paths", current_parameters.get("input_path", []))
+    if isinstance(input_paths, str):
+        input_paths = [input_paths]
+
+    if len(input_paths) == 0:
         return
     
-    # load artifact
-    input_name = current_parameters.get('input_name', [])
-    artifact_parts = [Part(text="Here are some pictures you can refer to: \n")]
-    for i, art_name in enumerate(input_name):
-        artifact_parts.append(Part(text=f"image{i+1}, name: {art_name}"))
-        art_part = await callback_context.load_artifact(filename=art_name)
-        artifact_parts.append(art_part)
+    file_parts = [Part(text="Here are some workspace pictures you can refer to: \n")]
+    for i, file_path in enumerate(input_paths):
+        file_parts.append(Part(text=f"image{i+1}, path: {file_path}"))
+        file_parts.append(load_local_file_part(file_path))
     
-    llm_request.contents.append(Content(role='user', parts=artifact_parts))
+    llm_request.contents.append(Content(role='user', parts=file_parts))
 
     return
 

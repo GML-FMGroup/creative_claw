@@ -14,6 +14,7 @@ from google.adk.tools import ToolContext
 from google.genai.types import Blob, Content, Part
 
 from src.logger import logger
+from src.runtime.workspace import resolve_workspace_path
  
 
 def parse_usage_obj(_obj: Any) -> None:
@@ -138,8 +139,7 @@ def parse_usage_obj(_obj: Any) -> None:
 #         return {"status": "error", "message": f"{str(e)}"}
 async def nano_banana_image_edit_tool(tool_context: ToolContext, enhance_prompt_list) -> AsyncGenerator[Dict, None]:
     current_parameters = tool_context.state.get("current_parameters", {})
-    # input_name为一个list
-    input_name = current_parameters.get("input_name")
+    input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
     # tool_name_log = "segmind_GPT_image_1_tool"
     # original_prompt = current_parameters.get("prompt")
     # prompt = current_parameters.get("enhanced_prompt")
@@ -149,7 +149,8 @@ async def nano_banana_image_edit_tool(tool_context: ToolContext, enhance_prompt_
 
     count = len(prompt)
 
-    if isinstance(input_name, str): input_name = [input_name]
+    if isinstance(input_paths, str):
+        input_paths = [input_paths]
     if isinstance(prompt, str): prompt = [prompt]
 
     invocation_ctx = getattr(tool_context, "_invocation_context", None)
@@ -157,9 +158,8 @@ async def nano_banana_image_edit_tool(tool_context: ToolContext, enhance_prompt_
         return {"status": "error", "message": "ToolContext missing invocation context"}
 
     img_binary_list = []
-    for name in input_name:
-        art_part = await tool_context.load_artifact(name)
-        img_binary_list.append(art_part.inline_data.data)
+    for file_path in input_paths or []:
+        img_binary_list.append(resolve_workspace_path(file_path).read_bytes())
 
     try:
         # result_list = []
@@ -246,8 +246,7 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
     logger.info("calling seedream for image editing ...")
 
     current_parameters = tool_context.state.get("current_parameters", {})
-    # input_name为一个list
-    input_name = current_parameters.get("input_name")
+    input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
     # tool_name_log = "segmind_GPT_image_1_tool"
     # original_prompt = current_parameters.get("prompt")
     # prompt = current_parameters.get("enhanced_prompt")
@@ -257,16 +256,16 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
 
     count = len(prompt)
 
-    if isinstance(input_name, str): input_name = [input_name]
+    if isinstance(input_paths, str):
+        input_paths = [input_paths]
     if isinstance(prompt, str): prompt = [prompt]
 
 
     img_bs64_list = []
-    for name in input_name:
-        art_part = await tool_context.load_artifact(name)
-        ext = name.split(".")[-1]
-
-        img_bin = art_part.inline_data.data
+    for file_path in input_paths or []:
+        resolved_path = resolve_workspace_path(file_path)
+        ext = resolved_path.suffix.lstrip(".") or "png"
+        img_bin = resolved_path.read_bytes()
         data = base64.b64encode(img_bin).decode()
         data_bs64 = "data:image/{ext};base64,{data}".format(ext=ext, data=data)
         img_bs64_list.append(data_bs64)

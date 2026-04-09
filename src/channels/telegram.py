@@ -12,6 +12,7 @@ import requests
 
 from src.logger import logger
 from src.runtime import InboundMessage, MessageAttachment
+from src.runtime.workspace import channel_inbox_dir
 
 from .base import BaseChannel
 from .events import OutboundMessage
@@ -261,7 +262,7 @@ class TelegramChannel(BaseChannel):
 
         target_name = preferred_name.strip() or Path(file_path).name
         safe_name = Path(target_name).name
-        destination = Path("outputs") / "uploads" / f"telegram_{safe_name}"
+        destination = channel_inbox_dir("telegram", safe_name) / safe_name
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         download_url = f"{self.api_base}/file/bot{self.token}/{file_path}"

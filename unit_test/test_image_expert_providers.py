@@ -1,19 +1,11 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from google.genai.types import Blob, Part
-
 from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
 from src.agents.experts.image_generation.image_generation_agent import ImageGenerationAgent
-
-
-class _FakeArtifactService:
-    def __init__(self) -> None:
-        self.saved: list[dict] = []
-
-    async def save_artifact(self, **kwargs) -> None:
-        self.saved.append(kwargs)
+from src.runtime.workspace import workspace_root
 
 
 def _build_ctx(state: dict) -> SimpleNamespace:
@@ -24,7 +16,6 @@ def _build_ctx(state: dict) -> SimpleNamespace:
             user_id="user_1",
             id="session_1",
         ),
-        artifact_service=_FakeArtifactService(),
     )
 
 
@@ -37,6 +28,10 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "src.agents.experts.image_generation.image_generation_agent.generation_tools.prompt_enhancement_tool",
                 new=AsyncMock(return_value={"status": "success", "message": "enhanced cat"}),
+            ),
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_generation_output0.png",
             ),
             patch(
                 "src.agents.experts.image_generation.image_generation_agent.generation_tools.nano_banana_image_generation_tool",
@@ -72,6 +67,10 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value={"status": "success", "message": "enhanced cat"}),
             ),
             patch(
+                "src.agents.experts.image_generation.image_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_generation_output0.png",
+            ),
+            patch(
                 "src.agents.experts.image_generation.image_generation_agent.generation_tools.nano_banana_image_generation_tool",
                 new=AsyncMock(),
             ) as nano_mock,
@@ -93,13 +92,55 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         seedream_mock.assert_awaited_once_with("enhanced cat")
         nano_mock.assert_not_called()
 
+    async def test_image_generation_reports_output_artifact_name_in_message(self) -> None:
+        agent = ImageGenerationAgent(name="ImageGenerationAgent")
+        ctx = _build_ctx({"current_parameters": {"prompt": "draw a cat"}, "step": 0})
+
+        with (
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.prompt_enhancement_tool",
+                new=AsyncMock(return_value={"status": "success", "message": "enhanced cat"}),
+            ),
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_generation_output0.png",
+            ),
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.nano_banana_image_generation_tool",
+                new=AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "message": b"png-data",
+                        "provider": "gemini",
+                        "model_name": "gemini-3.1-flash-image-preview",
+                    }
+                ),
+            ),
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertIn("step1_generation_output0.png", current_output["message"])
+        self.assertEqual(current_output["output_files"][0]["path"], "generated/session_1/step1_generation_output0.png")
+
     async def test_image_editing_uses_nano_banana_by_default(self) -> None:
         agent = ImageEditingAgent(name="ImageEditingAgent")
         ctx = _build_ctx(
-            {"current_parameters": {"input_name": ["a.png"], "prompt": ["make it blue"]}, "step": 0}
+            {
+                "current_parameters": {
+                    "input_paths": ["inbox/local/session_1/a.png"],
+                    "prompt": ["make it blue"],
+                },
+                "step": 0,
+            }
         )
 
         with (
+            patch(
+                "src.agents.experts.image_editing.image_editing_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_editing_output0.png",
+            ),
             patch(
                 "src.agents.experts.image_editing.image_editing_agent.editing_tools.nano_banana_image_edit_tool",
                 new=AsyncMock(return_value={"status": "success", "message": [b"png-data"]}),
@@ -120,7 +161,7 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         ctx = _build_ctx(
             {
                 "current_parameters": {
-                    "input_name": ["a.png"],
+                    "input_paths": ["inbox/local/session_1/a.png"],
                     "prompt": ["make it blue"],
                     "provider": "seedream",
                 },
@@ -129,6 +170,10 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch(
+                "src.agents.experts.image_editing.image_editing_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_editing_output0.png",
+            ),
             patch(
                 "src.agents.experts.image_editing.image_editing_agent.editing_tools.nano_banana_image_edit_tool",
                 new=AsyncMock(),

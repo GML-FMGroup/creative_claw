@@ -4,13 +4,14 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest
-from google.genai.types import Blob, Content, Part
+from google.genai.types import Content, Part
 
 from src.logger import logger
+from src.runtime.workspace import load_local_file_part
 
 
-async def image_to_prompt_tool(ctx: InvocationContext, input_name: str) -> dict:
-    """Generate one reverse prompt description for a saved artifact image."""
+async def image_to_prompt_tool(ctx: InvocationContext, input_path: str) -> dict:
+    """Generate one reverse prompt description for a workspace image."""
     system_prompt = """
 ## 系统角色设定
 
@@ -91,15 +92,10 @@ async def image_to_prompt_tool(ctx: InvocationContext, input_name: str) -> dict:
 ## 输出要求
  - 只输出prompt即可以，不用解释。也不用其他说明。
 
-"""
+    """
 
     try:
-        artifact_part = await ctx.artifact_service.load_artifact(
-            filename=input_name,
-            app_name=ctx.session.app_name,
-            user_id=ctx.session.user_id,
-            session_id=ctx.session.id,
-        )
+        image_part = load_local_file_part(input_path)
 
         def before_model_callback(
             callback_context: CallbackContext,
@@ -110,12 +106,7 @@ async def image_to_prompt_tool(ctx: InvocationContext, input_name: str) -> dict:
                 Content(
                     role="user",
                     parts=[
-                        Part(
-                            inline_data=Blob(
-                                mime_type=artifact_part.inline_data.mime_type,
-                                data=artifact_part.inline_data.data,
-                            )
-                        ),
+                        image_part,
                         Part(text=system_prompt),
                     ],
                 )

@@ -83,6 +83,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state["final_summary"], "")
         self.assertEqual(session.state["current_parameters"], {})
         self.assertIsNone(session.state["current_output"])
+        self.assertEqual(session.state["input_files"], [])
+        self.assertEqual(session.state["new_files"], [])
 
     async def test_run_message_uses_natural_progress_messages(self) -> None:
         runtime = CreativeClawRuntime()
@@ -98,15 +100,30 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 self.uid = ""
                 self.sid = ""
 
-            async def run_step(self) -> dict:
+            async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
                     "final_summary": "图片已经生成好了。",
                     "last_response": "Internal orchestrator log",
-                    "last_output_message": "Internal step result",
+                    "last_output_message": "图片已经生成好了。",
+                    "current_plan": {
+                        "next_agent": "FINISH",
+                        "parameters": {},
+                        "summary": "图片已经生成好了。",
+                    },
                 }
 
-        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+        class _FakeExecutor:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                raise AssertionError("Executor should not run when the planner finishes directly.")
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
             events = [event async for event in runtime.run_message(inbound)]
 
         self.assertEqual(events[0].event_type, "status")
@@ -132,12 +149,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 self.uid = ""
                 self.sid = ""
 
-            async def run_step(self) -> dict:
+            async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
                     "final_summary": "已经整理好了。",
                     "last_response": "internal",
                     "last_output_message": "internal-output",
+                    "current_plan": {
+                        "next_agent": "FINISH",
+                        "parameters": {},
+                        "summary": "已经整理好了。",
+                    },
                     "new_orchestration_events": [
                         {
                             "title": "查看技能列表",
@@ -152,7 +174,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
 
-        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+        class _FakeExecutor:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                raise AssertionError("Executor should not run when the planner finishes directly.")
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
@@ -178,12 +210,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 self.uid = ""
                 self.sid = ""
 
-            async def run_step(self) -> dict:
+            async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
                     "final_summary": "完成。",
                     "last_response": "",
                     "last_output_message": "",
+                    "current_plan": {
+                        "next_agent": "FINISH",
+                        "parameters": {},
+                        "summary": "完成。",
+                    },
                     "new_orchestration_events": [
                         {
                             "title": "read_file",
@@ -198,7 +235,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
 
-        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+        class _FakeExecutor:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                raise AssertionError("Executor should not run when the planner finishes directly.")
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
@@ -219,12 +266,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 self.uid = ""
                 self.sid = ""
 
-            async def run_step(self) -> dict:
+            async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
                     "final_summary": "完成。",
                     "last_response": "",
                     "last_output_message": "",
+                    "current_plan": {
+                        "next_agent": "FINISH",
+                        "parameters": {},
+                        "summary": "完成。",
+                    },
                     "new_orchestration_events": [
                         {
                             "title": "list_dir",
@@ -239,12 +291,101 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
 
-        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+        class _FakeExecutor:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                raise AssertionError("Executor should not run when the planner finishes directly.")
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
         self.assertIn("共 3 个条目", progress_events[-1].text)
         self.assertIn("README.md", progress_events[-1].text)
+
+    async def test_run_message_executes_one_expert_via_executor(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="帮我先分析方案再出图",
+        )
+
+        class _FakeOrchestrator:
+            call_count = 0
+
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def generate_step_plan(self) -> dict:
+                type(self).call_count += 1
+                if type(self).call_count == 1:
+                    return {
+                        "workflow_status": "running",
+                        "final_summary": "",
+                        "last_response": '{"next_agent":"KnowledgeAgent","parameters":{"topic":"battle"},"summary":"先让知识专家整理方案。"}',
+                        "last_output_message": "",
+                        "current_plan": {
+                            "next_agent": "KnowledgeAgent",
+                            "parameters": {"topic": "battle"},
+                            "summary": "先让知识专家整理方案。",
+                        },
+                        "new_orchestration_events": [
+                            {
+                                "title": "调用专家代理",
+                                "detail": "下一步将调用 `KnowledgeAgent`。目标：先让知识专家整理方案。",
+                                "stage": "expert_execution",
+                            }
+                        ],
+                    }
+                return {
+                    "workflow_status": "finished",
+                    "final_summary": "任务已经完成。",
+                    "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"任务已经完成。"}',
+                    "last_output_message": "任务已经完成。",
+                    "current_plan": {
+                        "next_agent": "FINISH",
+                        "parameters": {},
+                        "summary": "任务已经完成。",
+                    },
+                    "new_orchestration_events": [
+                        {
+                            "title": "整理最终结果",
+                            "detail": "正在整理最终回复内容。",
+                            "stage": "finalizing",
+                        }
+                    ],
+                }
+
+        class _FakeExecutor:
+            call_count = 0
+
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                type(self).call_count += 1
+                return {"status": "success", "message": "KnowledgeAgent 已返回方案。"}
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
+            events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(_FakeOrchestrator.call_count, 2)
+        self.assertEqual(_FakeExecutor.call_count, 1)
+        progress_events = [event for event in events if event.event_type == "status"]
+        self.assertTrue(any(event.metadata["stage_title"] == "KnowledgeAgent 已返回" for event in progress_events))
+        self.assertEqual(events[-1].event_type, "final")
+        self.assertEqual(events[-1].text, "任务已经完成。")
 
 
 if __name__ == "__main__":

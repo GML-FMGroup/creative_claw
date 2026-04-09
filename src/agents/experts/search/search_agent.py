@@ -9,11 +9,12 @@ from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.adk.tools import ToolContext
-from google.genai.types import Part, Blob
+from google.genai.types import Part
 from src.logger import logger
 
 from conf.system import SYS_CONFIG
 from src.agents.experts.search.tool import retrieve_image_by_text, DDGS_search
+from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
 class SearchAgent(BaseAgent):
     """
@@ -98,8 +99,8 @@ class SearchAgent(BaseAgent):
                     'status': 'success',
                     'message': image_output['message']
                 }
-                if image_output['status']=='success' and 'output_artifacts' in image_output:
-                    current_output['output_artifacts'] = image_output['output_artifacts']
+                if image_output['status']=='success' and 'output_files' in image_output:
+                    current_output['output_files'] = image_output['output_files']
 
                 # text_output(search result) is usually very long, so it is not included in message to avoid too long text displayed for user.
                 if text_output['status']=='success':
@@ -122,24 +123,34 @@ class SearchAgent(BaseAgent):
             return current_output
         else:
             # save image:
-            output_artifacts = []
+            output_files = []
             for i, img_binary in enumerate(rsp['message']):
-                artifact_name = f"step{ctx.session.state.get('step')+1}_search_output{i}.png"
-                artifact_part = Part(inline_data=Blob(mime_type='image/png', data=img_binary))
+                output_path = save_binary_output(
+                    img_binary,
+                    session_id=ctx.session.id,
+                    step=ctx.session.state.get('step') + 1,
+                    output_type="search",
+                    index=i,
+                    extension=".png",
+                )
+                artifact_name = output_path.name
 
-                await ctx.artifact_service.save_artifact(
-                    app_name=ctx.session.app_name, user_id=ctx.session.user_id, session_id=ctx.session.id, filename=artifact_name, artifact=artifact_part
+                output_files.append(
+                    build_workspace_file_record(
+                        output_path,
+                        description=f"The search result of {self.name} based on query: {ctx.session.state['current_parameters']['query']}",
+                        source="expert",
+                        name=artifact_name,
+                    )
                 )
 
-                output_artifacts.append({'name': artifact_name, 'description': f"The search result of {self.name} based on query: {ctx.session.state['current_parameters']['query']}"})
-
             # Emit the result event.
-            text = f"{self.name} has completed image searching with {len(rsp['message'])} results. The image name of results: {[','.join(art['name'] for art in output_artifacts)]}"
+            text = f"{self.name} has completed image searching with {len(rsp['message'])} results. The image name of results: {[','.join(file_info['name'] for file_info in output_files)]}"
 
             current_output = {
                 "status": "success",
                 "message": text,
-                "output_artifacts": output_artifacts
+                "output_files": output_files
             }
             
             return current_output
@@ -159,7 +170,6 @@ class SearchAgent(BaseAgent):
                 "message": text
             }
             return current_output
-
 
 
 
