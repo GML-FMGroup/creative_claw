@@ -1,8 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from conf.system import SYS_CONFIG
-from src.runtime.models import InboundMessage
+from src.runtime.models import InboundMessage, MessageAttachment
 from src.runtime.workflow_service import CreativeClawRuntime
 
 
@@ -86,6 +88,39 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state["input_files"], [])
         self.assertEqual(session.state["new_files"], [])
 
+    async def test_initial_state_persists_uploaded_files_in_history(self) -> None:
+        runtime = CreativeClawRuntime()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            upload_path = Path(tmpdir) / "demo.png"
+            upload_path.write_bytes(b"fake-image")
+            inbound = InboundMessage(
+                channel="local",
+                sender_id="local-user",
+                chat_id="terminal",
+                text="describe this image",
+                attachments=[
+                    MessageAttachment(
+                        path=str(upload_path),
+                        name="demo.png",
+                        mime_type="image/png",
+                        description="uploaded test image",
+                    )
+                ],
+            )
+
+            user_id, session_id = await runtime._ensure_session(inbound)
+            await runtime._set_initial_state(user_id, session_id, inbound)
+            session = await runtime.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+        self.assertEqual(len(session.state["input_files"]), 1)
+        self.assertEqual(len(session.state["files_history"]), 1)
+        self.assertEqual(session.state["files_history"][0][0]["source"], "channel")
+        self.assertTrue(session.state["input_files"][0]["path"].startswith("inbox/local/"))
+
     async def test_run_message_uses_natural_progress_messages(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
@@ -134,6 +169,25 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("user instruction:" not in event.text for event in events))
         self.assertTrue(all("Orchestrator response:" not in event.text for event in events))
         self.assertTrue(all("Step result:" not in event.text for event in events))
+
+    async def test_run_message_surfaces_init_exception_type_in_error_event(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="hello",
+        )
+
+        async def _boom(*_args, **_kwargs) -> None:
+            raise FileNotFoundError("missing upload")
+
+        with patch.object(runtime, "_set_initial_state", _boom):
+            events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(events[-1].event_type, "error")
+        self.assertIn("Init state failed", events[-1].text)
+        self.assertIn("FileNotFoundError: missing upload", events[-1].text)
 
     async def test_run_message_emits_granular_orchestration_events(self) -> None:
         runtime = CreativeClawRuntime()
@@ -386,6 +440,106 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.metadata["stage_title"] == "KnowledgeAgent 已返回" for event in progress_events))
         self.assertEqual(events[-1].event_type, "final")
         self.assertEqual(events[-1].text, "任务已经完成。")
+
+    async def test_run_message_surfaces_round_and_agent_for_executor_failure(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="描述一下这个图像",
+        )
+
+        class _FakeOrchestrator:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def generate_step_plan(self) -> dict:
+                return {
+                    "workflow_status": "running",
+                    "final_summary": "",
+                    "last_response": "",
+                    "last_output_message": "",
+                    "current_plan": {
+                        "next_agent": "ImageUnderstandingAgent",
+                        "parameters": {"input_path": "inbox/demo.png", "mode": "description"},
+                        "summary": "描述这张图。",
+                    },
+                    "new_orchestration_events": [
+                        {
+                            "title": "调用专家代理",
+                            "detail": "下一步将调用 `ImageUnderstandingAgent`。目标：描述这张图。",
+                            "stage": "expert_execution",
+                        }
+                    ],
+                }
+
+        class _FakeExecutor:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def execute_plan(self):
+                raise KeyError("error")
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+            "src.runtime.workflow_service.Executor", _FakeExecutor
+        ):
+            events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(events[-1].event_type, "error")
+        self.assertIn("Workflow failed", events[-1].text)
+        self.assertIn("round=1", events[-1].text)
+        self.assertIn("next_agent=ImageUnderstandingAgent", events[-1].text)
+        self.assertIn("KeyError: 'error'", events[-1].text)
+
+    async def test_run_message_does_not_resend_channel_only_upload_as_final_artifact(self) -> None:
+        runtime = CreativeClawRuntime()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            upload_path = Path(tmpdir) / "demo.png"
+            upload_path.write_bytes(b"fake-image")
+            inbound = InboundMessage(
+                channel="local",
+                sender_id="local-user",
+                chat_id="terminal",
+                text="描述一下这个图像",
+                attachments=[MessageAttachment(path=str(upload_path), name="demo.png", mime_type="image/png")],
+            )
+
+            class _FakeOrchestrator:
+                def __init__(self, **_kwargs) -> None:
+                    self.uid = ""
+                    self.sid = ""
+
+                async def generate_step_plan(self) -> dict:
+                    return {
+                        "workflow_status": "finished",
+                        "final_summary": "图像描述完成。",
+                        "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"图像描述完成。"}',
+                        "last_output_message": "图像描述完成。",
+                        "current_plan": {
+                            "next_agent": "FINISH",
+                            "parameters": {},
+                            "summary": "图像描述完成。",
+                        },
+                    }
+
+            class _FakeExecutor:
+                def __init__(self, **_kwargs) -> None:
+                    self.uid = ""
+                    self.sid = ""
+
+                async def execute_plan(self):
+                    raise AssertionError("Executor should not run when the planner finishes directly.")
+
+            with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
+                "src.runtime.workflow_service.Executor", _FakeExecutor
+            ):
+                events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(events[-1].event_type, "final")
+        self.assertEqual(events[-1].artifact_paths, [])
 
 
 if __name__ == "__main__":

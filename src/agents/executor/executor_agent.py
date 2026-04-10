@@ -155,19 +155,13 @@ class Executor:
                     )
         return final_response_text
     
-    async def add_event(self, text:str='', state_delta:Dict=None):
-
+    async def add_event(self, text: str = '', state_delta: Dict | None = None):
+        """Append one synthetic executor event into the current session."""
+        event = Event(author='api_server')
         if text:
-            event = Event(
-                author='api_server',
-                content=Content(role='model', parts=[Part(text=text)]),
-                actions=EventActions(state_delta=state_delta)
-            )
-        else:
-            event = Event(
-                author='api_server',
-                actions=EventActions(state_delta=state_delta)
-            )
+            event.content = Content(role='model', parts=[Part(text=text)])
+        if state_delta is not None:
+            event.actions = EventActions(state_delta=state_delta)
 
         current_session = await self.session_service.get_session(
             app_name=self.app_name,
@@ -224,7 +218,11 @@ class Executor:
                 input_names = [str(item) for item in raw_value]
             else:
                 raise ValueError("current plan parameters['input_name'] must be a string or a list")
-            input_paths = cls._resolve_named_files(state, input_names)
+            direct_paths = normalize_file_references(input_names)
+            if direct_paths and cls._all_workspace_paths_exist(direct_paths):
+                input_paths = direct_paths
+            else:
+                input_paths = cls._resolve_named_files(state, input_names)
             normalized.pop("input_name", None)
         else:
             input_paths = []
@@ -238,6 +236,14 @@ class Executor:
             if len(input_paths) == 1:
                 normalized["input_path"] = input_paths[0]
         return normalized
+
+    @staticmethod
+    def _all_workspace_paths_exist(paths: list[str]) -> bool:
+        """Return whether every normalized workspace path currently exists."""
+        try:
+            return all(resolve_workspace_path(path).exists() for path in paths)
+        except Exception:
+            return False
 
     @staticmethod
     def _normalize_output_files(output_files: list[dict[str, Any]]) -> list[dict[str, str]]:

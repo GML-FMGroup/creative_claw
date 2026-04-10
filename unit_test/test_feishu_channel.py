@@ -1,11 +1,30 @@
+import io
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from src.channels.events import OutboundMessage
 from src.channels.feishu import FeishuChannel, _build_status_card, _should_use_interactive_card
 from src.runtime import InboundMessage
+
+
+def _make_download_response(payload: bytes, *, file_name: str) -> SimpleNamespace:
+    response = SimpleNamespace(
+        code=0,
+        msg="",
+        file=io.BytesIO(payload),
+        file_name=file_name,
+        raw=SimpleNamespace(headers={}),
+    )
+    response.success = lambda: True
+    return response
+
+
+def _record_and_return(calls: list, request: object, response: object) -> object:
+    calls.append(request)
+    return response
 
 
 class _TestFeishuChannel(FeishuChannel):
@@ -56,6 +75,86 @@ class _TestFeishuChannel(FeishuChannel):
 
 
 class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
+    def test_download_file_sync_prefers_message_resource(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+        message_resource_api = SimpleNamespace(
+            calls=[],
+            get=lambda request: _record_and_return(
+                message_resource_api.calls,
+                request,
+                _make_download_response(b"image-bytes", file_name="uploaded.jpg"),
+            ),
+        )
+        legacy_file_api = SimpleNamespace(
+            calls=[],
+            get=lambda request: _record_and_return(
+                legacy_file_api.calls,
+                request,
+                _make_download_response(b"legacy-bytes", file_name="legacy.bin"),
+            ),
+        )
+        channel._client = SimpleNamespace(
+            im=SimpleNamespace(
+                v1=SimpleNamespace(
+                    message_resource=message_resource_api,
+                    file=legacy_file_api,
+                )
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir, patch(
+            "src.channels.feishu.channel_inbox_dir",
+            return_value=Path(tmp_dir),
+        ):
+            output_path = channel._download_file_sync(
+                "file_v3_demo",
+                "nmrl8j_demo.jpg",
+                "om_message_1",
+            )
+            self.assertEqual(output_path.name, "uploaded.jpg")
+            self.assertEqual(output_path.read_bytes(), b"image-bytes")
+
+        self.assertEqual(len(message_resource_api.calls), 1)
+        self.assertEqual(message_resource_api.calls[0].message_id, "om_message_1")
+        self.assertEqual(message_resource_api.calls[0].file_key, "file_v3_demo")
+        self.assertEqual(message_resource_api.calls[0].type, "file")
+        self.assertEqual(legacy_file_api.calls, [])
+
+    def test_download_file_sync_falls_back_to_legacy_file_api(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+        legacy_file_api = SimpleNamespace(
+            calls=[],
+            get=lambda request: _record_and_return(
+                legacy_file_api.calls,
+                request,
+                _make_download_response(b"legacy-bytes", file_name="fallback.bin"),
+            ),
+        )
+        channel._client = SimpleNamespace(
+            im=SimpleNamespace(
+                v1=SimpleNamespace(
+                    file=legacy_file_api,
+                )
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir, patch(
+            "src.channels.feishu.channel_inbox_dir",
+            return_value=Path(tmp_dir),
+        ), patch("src.channels.feishu.GetMessageResourceRequest", None):
+            output_path = channel._download_file_sync(
+                "file_v3_demo",
+                "demo.bin",
+                "om_message_2",
+            )
+            self.assertEqual(output_path.name, "fallback.bin")
+            self.assertEqual(output_path.read_bytes(), b"legacy-bytes")
+
+        self.assertEqual(len(legacy_file_api.calls), 1)
+        self.assertEqual(legacy_file_api.calls[0].file_key, "file_v3_demo")
+
     def test_build_status_card_uses_final_header(self) -> None:
         card = _build_status_card("图片已经生成好了。", {"display_style": "final"})
 
@@ -214,6 +313,38 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(inbound_messages), 1)
         self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_3_img_v2_1.png")
+
+    async def test_on_post_message_downloads_embedded_image_attachment(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_4",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="post",
+                    content=(
+                        '{"zh_cn":{"content":[['
+                        '{"tag":"text","text":"请描述这张图"},'
+                        '{"tag":"img","image_key":"img_post_1"}'
+                        ']]}}'
+                    ),
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(inbound_messages[0].text, "请描述这张图")
+        self.assertEqual(len(inbound_messages[0].attachments), 1)
+        self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_4_img_post_1.png")
 
 
 if __name__ == "__main__":

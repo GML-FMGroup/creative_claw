@@ -40,6 +40,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("planning-with-files", instruction)
         self.assertIn("workspace file history", instruction)
         self.assertIn("input_path", instruction)
+        self.assertIn("`input_name` is legacy", instruction)
 
     def test_normalize_step_plan_accepts_known_expert(self) -> None:
         orchestrator = Orchestrator(

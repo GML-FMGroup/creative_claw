@@ -98,7 +98,11 @@ class TelegramChannel(BaseChannel):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error("Telegram polling iteration failed: {}", exc, exc_info=True)
+                logger.opt(exception=exc).error(
+                    "Telegram polling iteration failed: error_type={} error={!r}",
+                    type(exc).__name__,
+                    exc,
+                )
                 await asyncio.sleep(2)
 
     async def _poll_once(self) -> None:

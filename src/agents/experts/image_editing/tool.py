@@ -231,7 +231,11 @@ async def nano_banana_image_edit_tool(tool_context: ToolContext, enhance_prompt_
 
     except Exception as e:
         error_msg = f"[nano_banana_image_edit_tool] 发生异常: {e}"
-        logger.error("[nano_banana_image_edit_tool] 发生异常: {}", e, exc_info=True)
+        logger.opt(exception=e).error(
+            "[nano_banana_image_edit_tool] exception: error_type={} error={!r}",
+            type(e).__name__,
+            e,
+        )
         return {"status": "error", "message": error_msg}
 
 def read_image(filename):
@@ -327,5 +331,9 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
 
     except Exception as e:
         error_msg = f"[seedream_image_edit_tool] 发生异常: {e}"
-        logger.error("[seedream_image_edit_tool] 发生异常: {}", e, exc_info=True)
+        logger.opt(exception=e).error(
+            "[seedream_image_edit_tool] exception: error_type={} error={!r}",
+            type(e).__name__,
+            e,
+        )
         return {"status": "error", "message": error_msg}

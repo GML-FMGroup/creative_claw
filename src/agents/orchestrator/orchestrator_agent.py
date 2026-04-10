@@ -209,10 +209,12 @@ Rules:
 - Use local image tools for lightweight preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
 - Keep changes small and reviewable, and re-check the latest state after each meaningful action.
 - When planning expert parameters, pass workspace file paths with `input_path` or `input_paths` instead of artifact names.
+- `input_name` is legacy and should not be used unless compatibility fallback is absolutely required.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
+- Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
 - At the end of the turn, output exactly one JSON object and nothing else.
 - The JSON schema must be:
   {{

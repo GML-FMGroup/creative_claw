@@ -218,7 +218,11 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
             model_name="doubao-seedream-4-0-250828",
         )
     except Exception as exc:
-        logger.error("seedream exception: {}", exc, exc_info=True)
+        logger.opt(exception=exc).error(
+            "seedream exception: error_type={} error={!r}",
+            type(exc).__name__,
+            exc,
+        )
         return ImageGenerationResult(
             status="error",
             message=f"seedream exception: {exc}",

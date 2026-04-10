@@ -1,18 +1,19 @@
 import asyncio
 from typing_extensions import override
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, Any
 
-from google.adk.agents import LlmAgent
-from google.adk.agents import BaseAgent, LlmAgent
+from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
-from google.adk.tools import ToolContext
 from google.genai.types import Part
 from google.genai.types import Content
 
-from conf.system import SYS_CONFIG
 from src.agents.experts.image_understanding.tool import image_to_text_tool
 from src.logger import logger
+
+
+_SUPPORTED_MODES = {"description", "style", "ocr", "all"}
+
 
 class ImageUnderstandingAgent(BaseAgent):
     """
@@ -30,7 +31,8 @@ class ImageUnderstandingAgent(BaseAgent):
             description = description
         )
 
-    def format_event(self, content_text: str=None, state_delta: Dict=None):
+    def format_event(self, content_text: str = "", state_delta: dict[str, Any] | None = None):
+        """Build one ADK event with optional text content and state updates."""
         event = Event(author=self.name)
         if state_delta:
             event.actions = EventActions(state_delta=state_delta)
@@ -66,34 +68,119 @@ class ImageUnderstandingAgent(BaseAgent):
         input_paths = current_parameters.get("input_paths", current_parameters.get("input_path"))
         if isinstance(input_paths, str):
             input_paths = [input_paths]
+        input_paths = [str(path).strip() for path in (input_paths or []) if str(path).strip()]
+        if not input_paths:
+            error_text = f"Missing image inputs provided to {self.name}."
+            current_output = {"status": "error", "message": error_text}
+            logger.error(error_text)
+            yield self.format_event(error_text, {"current_output": current_output})
+            return
+
+        raw_modes = current_parameters.get("mode")
+        if isinstance(raw_modes, str):
+            modes = [raw_modes.strip().lower()] * len(input_paths)
+        elif isinstance(raw_modes, list):
+            modes = [str(mode).strip().lower() for mode in raw_modes if str(mode).strip()]
+            if len(modes) == 1 and len(input_paths) > 1:
+                modes = modes * len(input_paths)
+        else:
+            modes = []
+
+        if len(modes) != len(input_paths):
+            error_text = (
+                f"Invalid parameters provided to {self.name}: `mode` must contain exactly one value "
+                f"or match the number of input images ({len(input_paths)})."
+            )
+            current_output = {"status": "error", "message": error_text}
+            logger.error(error_text)
+            yield self.format_event(error_text, {"current_output": current_output})
+            return
+
+        invalid_modes = [mode for mode in modes if mode not in _SUPPORTED_MODES]
+        if invalid_modes:
+            error_text = (
+                f"Invalid mode provided to {self.name}: {invalid_modes}. "
+                f"Supported modes are: {sorted(_SUPPORTED_MODES)}."
+            )
+            current_output = {"status": "error", "message": error_text}
+            logger.error(error_text)
+            yield self.format_event(error_text, {"current_output": current_output})
+            return
+
         count = len(input_paths)
+        tasks = [image_to_text_tool(ctx, path, mode) for path, mode in zip(input_paths, modes)]
+        result_list = await asyncio.gather(*tasks, return_exceptions=True)
 
-        tasks = [image_to_text_tool(ToolContext(ctx), path) for path in input_paths]
-        result_list = await asyncio.gather(*tasks)
-
-        sucess_message_list = []
+        success_message_list = []
         error_message_list = []
-        for path, result in zip(input_paths, result_list):
-            if result['status'] == 'success':
-                sucess_message_list.append(f"image {path} description: {result['message']}\n")
-            elif result['status'] == 'error':
-                error_message_list.append(f"image {path} description failed, reason: {result['message']}\n")
+        structured_results: list[dict[str, Any]] = []
+        for path, mode, result in zip(input_paths, modes, result_list):
+            if isinstance(result, Exception):
+                structured_results.append(
+                    {
+                        "input_path": path,
+                        "mode": mode,
+                        "status": "error",
+                        "message": f"{type(result).__name__}: {result}",
+                    }
+                )
+                error_message_list.append(
+                    f"image {path} {mode} failed, reason: {type(result).__name__}: {result}\n"
+                )
+                continue
+            status = str(result.get("status", "")).strip().lower()
+            message = str(result.get("message", "")).strip()
+            structured_results.append(
+                {
+                    "input_path": str(result.get("input_path", path)).strip() or path,
+                    "mode": str(result.get("mode", mode)).strip() or mode,
+                    "status": status or "error",
+                    "message": message,
+                    "analysis_text": str(result.get("analysis_text", "")).strip(),
+                    "basic_info": str(result.get("basic_info", "")).strip(),
+                    "provider": str(result.get("provider", "")).strip(),
+                    "model_name": str(result.get("model_name", "")).strip(),
+                }
+            )
+            if status == 'success':
+                success_message_list.append(f"image {path} {mode}: {message}\n")
+            else:
+                error_message_list.append(f"image {path} {mode} failed, reason: {message}\n")
 
         if len(error_message_list) == count:
             error_text = f"All {count} images description failed:\n\n" + '\n'.join(error_message_list)
-            current_output = {"status": "error", "message": error_text}
+            current_output = {
+                "status": "error",
+                "message": error_text,
+                "message_for_user": error_text,
+                "results": structured_results,
+            }
             logger.error(error_text)
-            yield self.format_event(error_text, {"current_output":current_output})
+            yield self.format_event(
+                error_text,
+                {
+                    "current_output": current_output,
+                    "image_understanding_results": structured_results,
+                },
+            )
             return
 
-        message = f"Finishing describe {count} images with {len(sucess_message_list)} images successfully described\n\n"
-        output_text = message + '\n'.join(sucess_message_list+error_message_list)      
+        message = f"Finished understanding {count} images with {len(success_message_list)} successful analyses.\n\n"
+        output_text = message + '\n'.join(success_message_list + error_message_list)
 
         current_output = {
             "status": "success",
-            "message":message,
-            'output_text':output_text
+            "message": message,
+            "message_for_user": message.strip(),
+            'output_text': output_text,
+            "results": structured_results,
         }
 
-        yield self.format_event(output_text, {'current_output':current_output})
+        yield self.format_event(
+            output_text,
+            {
+                'current_output': current_output,
+                "image_understanding_results": structured_results,
+            },
+        )
         return

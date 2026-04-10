@@ -30,7 +30,7 @@ try:
         CreateMessageReactionRequestBody,
         Emoji,
         GetFileRequest,
-        GetImageRequest,
+        GetMessageResourceRequest,
         PatchMessageRequest,
         PatchMessageRequestBody,
         P2ImMessageReceiveV1,
@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - environment dependent
     CreateMessageReactionRequestBody = None
     Emoji = None
     GetFileRequest = None
-    GetImageRequest = None
+    GetMessageResourceRequest = None
     PatchMessageRequest = None
     PatchMessageRequestBody = None
     P2ImMessageReceiveV1 = None
@@ -108,6 +108,39 @@ def _should_use_interactive_card(text: str, metadata: dict[str, Any] | None = No
     if display_style in {"progress", "final"}:
         return True
     return len(str(text or "").strip()) > 180
+
+
+def _iter_post_lang_payloads(content_json: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return all language-specific payload blocks for one Feishu post message."""
+    payloads: list[dict[str, Any]] = []
+    if isinstance(content_json.get("content"), list):
+        payloads.append(content_json)
+    for lang_key in ("zh_cn", "en_us", "ja_jp"):
+        lang = content_json.get(lang_key)
+        if isinstance(lang, dict) and isinstance(lang.get("content"), list):
+            payloads.append(lang)
+    return payloads
+
+
+def _extract_post_image_keys(content_json: dict[str, Any]) -> list[str]:
+    """Extract all unique image keys embedded inside one Feishu post payload."""
+    image_keys: list[str] = []
+    for lang in _iter_post_lang_payloads(content_json):
+        blocks = lang.get("content", [])
+        if not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            if not isinstance(block, list):
+                continue
+            for element in block:
+                if not isinstance(element, dict):
+                    continue
+                if element.get("tag") not in {"img", "image"}:
+                    continue
+                image_key = str(element.get("image_key", "")).strip()
+                if image_key:
+                    image_keys.append(image_key)
+    return list(dict.fromkeys(image_keys))
 
 
 class FeishuChannel(BaseChannel):
@@ -463,12 +496,32 @@ class FeishuChannel(BaseChannel):
             chat_type = str(getattr(message, "chat_type", "") or "")
             msg_type = str(getattr(message, "message_type", "") or "")
             raw_content = str(getattr(message, "content", "") or "")
+            logger.debug(
+                "Feishu inbound message received: message_id={} chat_id={} chat_type={} msg_type={} content={}",
+                message_id,
+                chat_id,
+                chat_type,
+                msg_type,
+                raw_content,
+            )
             text, attachments = await self._extract_inbound_content(
                 msg_type=msg_type,
                 raw_content=raw_content,
                 message_id=message_id,
             )
+            logger.debug(
+                "Feishu inbound normalized: message_id={} msg_type={} text_len={} attachment_count={}",
+                message_id,
+                msg_type,
+                len(text or ""),
+                len(attachments),
+            )
             if not text and not attachments:
+                logger.debug(
+                    "Feishu inbound ignored because no supported content was extracted: message_id={} msg_type={}",
+                    message_id,
+                    msg_type,
+                )
                 return
 
             target_chat_id = chat_id if chat_type == "group" else sender_id
@@ -500,7 +553,36 @@ class FeishuChannel(BaseChannel):
         if msg_type == "text":
             return self._extract_text(raw_content), []
         if msg_type == "post":
-            return self._extract_post_text(raw_content), []
+            payload = self._parse_json_dict(raw_content)
+            text_content = self._extract_post_text(raw_content)
+            image_keys = _extract_post_image_keys(payload) if payload else []
+            attachments: list[MessageAttachment] = []
+            image_errors: list[str] = []
+            for image_key in image_keys:
+                try:
+                    local_path = await self._download_image(image_key, message_id)
+                except Exception as exc:
+                    logger.exception(
+                        "Failed downloading Feishu post image: message_id={} image_key={}",
+                        message_id,
+                        image_key,
+                    )
+                    image_errors.append(f"{image_key}: {exc}")
+                    continue
+                attachments.append(
+                    MessageAttachment(
+                        path=str(local_path),
+                        name=Path(local_path).name,
+                        mime_type=_guess_mime_type(str(local_path)),
+                        description="feishu post image attachment",
+                    )
+                )
+            parts: list[str] = []
+            if text_content:
+                parts.append(text_content)
+            if image_errors:
+                parts.append("Failed downloading images:\n" + "\n".join(image_errors))
+            return "\n\n".join(parts).strip(), attachments
         if msg_type == "image":
             payload = self._parse_json_dict(raw_content)
             image_key = str(payload.get("image_key", "")).strip()
@@ -530,6 +612,22 @@ class FeishuChannel(BaseChannel):
                     description="feishu file attachment",
                 )
             ]
+        if msg_type in {"audio", "voice"}:
+            payload = self._parse_json_dict(raw_content)
+            file_key = str(payload.get("file_key", "") or payload.get("audio_key", "")).strip()
+            file_name = str(payload.get("file_name", "") or payload.get("name", "")).strip()
+            if not file_key:
+                return "Received an audio message without file_key.", []
+            local_path = await self._download_file(file_key, file_name or f"{file_key}.opus", message_id)
+            return "Received audio attachment.", [
+                MessageAttachment(
+                    path=str(local_path),
+                    name=file_name or Path(local_path).name,
+                    mime_type=_guess_mime_type(file_name or str(local_path)),
+                    description="feishu audio attachment",
+                )
+            ]
+        logger.debug("Feishu inbound message type is not yet supported: msg_type={} content={}", msg_type, raw_content)
         return "", []
 
     async def _download_image(self, image_key: str, message_id: str) -> Path:
@@ -544,42 +642,97 @@ class FeishuChannel(BaseChannel):
 
     def _download_image_sync(self, image_key: str, message_id: str) -> Path:
         """Download one Feishu image resource."""
-        if not self._client or GetImageRequest is None:
-            raise RuntimeError("Feishu image download API is unavailable.")
-        request = (
-            GetImageRequest.builder()
-            .image_key(image_key)
-            .build()
+        return self._download_resource_sync(
+            resource_key=image_key,
+            message_id=message_id,
+            resource_type="image",
+            suggested_name=f"{image_key}.png",
+            default_suffix=".png",
+            allow_legacy_file_api=False,
         )
-        response = self._client.im.v1.image.get(request)
-        self._ensure_success(response, "image download")
-        file_bytes = getattr(response, "file", None)
-        if file_bytes is None:
-            file_bytes = getattr(response, "raw", b"")
-        destination = channel_inbox_dir("feishu", message_id) / f"{image_key}.png"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(bytes(file_bytes))
-        return destination
 
     def _download_file_sync(self, file_key: str, file_name: str, message_id: str) -> Path:
         """Download one Feishu file resource."""
-        if not self._client or GetFileRequest is None:
-            raise RuntimeError("Feishu file download API is unavailable.")
-        request = (
-            GetFileRequest.builder()
-            .file_key(file_key)
-            .build()
+        return self._download_resource_sync(
+            resource_key=file_key,
+            message_id=message_id,
+            resource_type="file",
+            suggested_name=file_name or f"{file_key}.bin",
+            default_suffix=".bin",
+            allow_legacy_file_api=True,
         )
-        response = self._client.im.v1.file.get(request)
-        self._ensure_success(response, "file download")
-        file_bytes = getattr(response, "file", None)
-        if file_bytes is None:
-            file_bytes = getattr(response, "raw", b"")
-        target_name = Path(file_name).name if file_name else f"{file_key}.bin"
+
+    def _download_resource_sync(
+        self,
+        *,
+        resource_key: str,
+        message_id: str,
+        resource_type: str,
+        suggested_name: str,
+        default_suffix: str,
+        allow_legacy_file_api: bool,
+    ) -> Path:
+        """Download one inbound Feishu message resource into the channel inbox."""
+        if not self._client:
+            raise RuntimeError("Feishu client is unavailable.")
+
+        response: Any
+        message_resource_api = getattr(getattr(getattr(self._client, "im", None), "v1", None), "message_resource", None)
+        if GetMessageResourceRequest is not None and message_resource_api is not None:
+            request = (
+                GetMessageResourceRequest.builder()
+                .type(resource_type)
+                .message_id(message_id)
+                .file_key(resource_key)
+                .build()
+            )
+            response = message_resource_api.get(request)
+            self._ensure_success(response, f"{resource_type} download")
+        elif allow_legacy_file_api and GetFileRequest is not None:
+            request = (
+                GetFileRequest.builder()
+                .file_key(resource_key)
+                .build()
+            )
+            response = self._client.im.v1.file.get(request)
+            self._ensure_success(response, "file download")
+        else:
+            raise RuntimeError("Feishu resource download API is unavailable.")
+
+        file_bytes = self._read_downloaded_bytes(response)
+        target_name = Path(str(getattr(response, "file_name", "") or suggested_name)).name
+        if not Path(target_name).suffix:
+            target_name = f"{target_name}{default_suffix}"
         destination = channel_inbox_dir("feishu", message_id) / target_name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(bytes(file_bytes))
+        destination.write_bytes(file_bytes)
         return destination
+
+    @staticmethod
+    def _read_downloaded_bytes(response: Any) -> bytes:
+        """Read binary bytes from one Feishu download response."""
+        file_obj = getattr(response, "file", None)
+        if file_obj is not None:
+            if hasattr(file_obj, "seek"):
+                file_obj.seek(0)
+            if hasattr(file_obj, "read"):
+                data = file_obj.read()
+            else:
+                data = file_obj
+        else:
+            raw = getattr(response, "raw", b"")
+            if hasattr(raw, "content"):
+                data = raw.content
+            else:
+                data = raw
+
+        if isinstance(data, bytes):
+            return data
+        if isinstance(data, bytearray):
+            return bytes(data)
+        if isinstance(data, str):
+            return data.encode("utf-8")
+        raise RuntimeError(f"Unexpected Feishu download payload type: {type(data)!r}")
 
     @staticmethod
     def _extract_text(raw_content: str) -> str:

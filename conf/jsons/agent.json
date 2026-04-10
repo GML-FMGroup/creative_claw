@@ -10,26 +10,26 @@
         {
             "name": "ImageEditingAgent",
             "enable": true,
-            "description": "Edit one or more existing images. `input_name` can include the image to edit plus optional reference images. If multiple input images are provided, the prompt should explain their order. This agent supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly.",
-            "parameters": "`{'input_name': ['image name1', ...], 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}`"
+            "description": "Edit one or more existing images. `input_path` or `input_paths` should point to workspace files for the image to edit plus optional reference images. If multiple input images are provided, the prompt should explain their order. This agent supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly.",
+            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}` or `{'input_paths': ['workspace/path1.png', ...], 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}`"
         },
         {
             "name": "KnowledgeAgent",
             "enable": true,
             "description": "Perform art design and text optimization. Given the original task and optional reference images, this agent generates a professional design plan and image generation prompts derived from those inputs. It is best suited for tasks that need specialized visual design, promotional marketing effects, or detailed analysis of reference images for precise image generation. Ordinary image generation does not require this agent. This agent can complete more than one design and prompt at the same time, but the task must clearly specify how many designs and prompts are required.",
-            "parameters": "`{'prompt': 'original task', 'input_name': ['image name1', ...](optional)}`"
+            "parameters": "`{'prompt': 'original task', 'input_path': 'workspace/path.png'(optional)}` or `{'prompt': 'original task', 'input_paths': ['workspace/path1.png', ...](optional)}`"
         },
         {
             "name": "ImageUnderstandingAgent",
             "enable": true,
-            "description": "Analyze the image and output text, has three modes: description, style, ocr, the respective functions are: Analyzing image content; Analyze the artistic style of images; Analyze the text in the image",
-            "parameters": "`{'input_name': 'name', 'mode': 'description|style|ocr'}`"
+            "description": "Analyze one or more workspace images and return structured understanding results plus user-readable text. Supported modes are `description`, `style`, `ocr`, and `all`. You may pass one mode string to reuse across all input images, or a mode list whose length matches `input_paths`.",
+            "parameters": "`{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'ocr']}`"
         },
         {
             "name": "ImageToPromptAgent",
             "enable": true,
             "description": "Reverse engineer one or more input images into detailed image-generation prompts. Use this when the goal is to infer a likely creation prompt for later reuse, variation, or recreation, rather than just describing the image contents.",
-            "parameters": "`{'input_name': 'name'}` or `{'input_name': ['name1', 'name2']}`"
+            "parameters": "`{'input_path': 'workspace/path.png'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png']}`"
         },
         {
             "name": "SearchAgent",

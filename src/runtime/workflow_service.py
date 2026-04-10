@@ -55,6 +55,14 @@ _PROGRESS_STAGE_TITLES = {
 }
 
 
+def _format_exception_summary(exc: Exception) -> str:
+    """Return a concise exception summary that always includes the exception type."""
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
 def _build_progress_event(
     text: str,
     *,
@@ -179,8 +187,15 @@ class CreativeClawRuntime:
         try:
             await self._set_initial_state(user_id, session_id, inbound)
         except Exception as exc:
-            error_text = f"Init state failed: {exc}"
-            logger.error(error_text, exc_info=True)
+            error_summary = _format_exception_summary(exc)
+            error_text = f"Init state failed (session_id={session_id}): {error_summary}"
+            logger.opt(exception=exc).error(
+                "Init state failed: session_id={} channel={} sender_id={} error_summary={}",
+                session_id,
+                inbound.channel,
+                inbound.sender_id or SYS_CONFIG.user_id_default,
+                error_summary,
+            )
             yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
             return
 
@@ -208,7 +223,10 @@ class CreativeClawRuntime:
             final_summary = "task workflow has started."
             max_loops = SYS_CONFIG.max_iterations_orchestrator
             orchestration_history: list[dict[str, str]] = []
+            current_round = 0
+            current_agent = ""
             for index in range(max_loops):
+                current_round = index + 1
                 logger.info("--- workflow: round {}/{} ---", index + 1, max_loops)
                 current_session = await self.session_service.get_session(
                     app_name=SYS_CONFIG.app_name,
@@ -250,6 +268,7 @@ class CreativeClawRuntime:
                 if not next_agent:
                     raise ValueError("Orchestrator did not provide `next_agent` in the current plan.")
 
+                current_agent = next_agent
                 current_output = await executor_agent.execute_plan()
                 output_message = str((current_output or {}).get("message", "")).strip()
                 if output_message:
@@ -268,8 +287,20 @@ class CreativeClawRuntime:
             final_event = await self._build_final_event(user_id, session_id, final_summary)
             yield final_event
         except Exception as exc:
-            error_text = f"Workflow failed: {exc}"
-            logger.error(error_text, exc_info=True)
+            error_summary = _format_exception_summary(exc)
+            context_parts = [f"session_id={session_id}"]
+            if current_round:
+                context_parts.append(f"round={current_round}")
+            if current_agent:
+                context_parts.append(f"next_agent={current_agent}")
+            error_text = f"Workflow failed ({', '.join(context_parts)}): {error_summary}"
+            logger.opt(exception=exc).error(
+                "Workflow failed: session_id={} round={} next_agent={} error_summary={}",
+                session_id,
+                current_round or "-",
+                current_agent or "-",
+                error_summary,
+            )
             yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
 
     async def reset_session(self, inbound: InboundMessage) -> tuple[str, str]:
@@ -360,7 +391,12 @@ class CreativeClawRuntime:
                 f"path={workspace_relative_path(saved_path)}"
             )
 
-        state_delta["files_history"] = current_session.state.get("files_history", [])
+        existing_files_history = current_session.state.get("files_history", [])
+        state_delta["files_history"] = (
+            existing_files_history + [state_delta["input_files"]]
+            if state_delta["input_files"]
+            else existing_files_history
+        )
         state_delta["summary_history"] = current_session.state.get("summary_history", [])
         state_delta["text_history"] = current_session.state.get("text_history", [])
         state_delta["message_history"] = current_session.state.get("message_history", [])
@@ -404,7 +440,7 @@ class CreativeClawRuntime:
             )
 
         files_history = final_session.state.get("files_history") or []
-        final_files = _select_latest_files(files_history)
+        final_files = _select_latest_output_files(files_history)
 
         text_history = final_session.state.get("text_history") or []
         if text_history and text_history[-1]:
@@ -431,9 +467,9 @@ class CreativeClawRuntime:
         )
 
 
-def _select_latest_files(files_history: list[list[dict]]) -> list[dict]:
-    """Return the latest non-empty file batch from history."""
+def _select_latest_output_files(files_history: list[list[dict]]) -> list[dict]:
+    """Return the latest non-channel file batch from history."""
     for file_group in reversed(files_history):
-        if file_group:
+        if file_group and any(str(file_info.get("source", "")).strip() != "channel" for file_info in file_group):
             return file_group
     return []
