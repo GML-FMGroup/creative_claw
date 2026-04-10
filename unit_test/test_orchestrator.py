@@ -41,6 +41,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("workspace file history", instruction)
         self.assertIn("input_path", instruction)
         self.assertIn("`input_name` is legacy", instruction)
+        self.assertIn("aligned with the user's language", instruction)
+        self.assertIn("If the user mixes languages", instruction)
 
     def test_normalize_step_plan_accepts_known_expert(self) -> None:
         orchestrator = Orchestrator(

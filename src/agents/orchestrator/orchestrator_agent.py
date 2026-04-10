@@ -215,6 +215,9 @@ Rules:
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
+- Keep the language of any user-facing summary or reply aligned with the user's language.
+- If the user primarily writes in Chinese, reply in Chinese. If the user primarily writes in English, reply in English.
+- If the user mixes languages, follow the primary language of the user's latest message.
 - At the end of the turn, output exactly one JSON object and nothing else.
 - The JSON schema must be:
   {{
