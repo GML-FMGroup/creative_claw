@@ -6,6 +6,10 @@ python-dotenv
 pydantic
 requests
 loguru
+flask
+dds-cloudapi-sdk
+opencv-python
+opencv-contrib-python
 
 # Tools
 dashscope

@@ -176,6 +176,7 @@ cython_debug/
 # IDE
 .vscode
 .idea
+.DS_Store
 
 # Output dir && Temp dir
 outputs
