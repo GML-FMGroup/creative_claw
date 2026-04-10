@@ -1,8 +1,0 @@
-{
-  "llm_model": "openai/gpt-5.4",
-  "api_port": 9501,
-  "app_name": "ArtisticAgentSystem",
-  "user_id_default": "art_user_001",
-  "session_id_default_prefix": "art_session_",
-  "max_iterations_orchestrator": 100
-}
