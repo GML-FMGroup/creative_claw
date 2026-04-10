@@ -1,25 +1,11 @@
 {
-  "plan_enabled": true,
-  "execute_enabled": false,
   "llm_model": "openai/gpt-5.4",
-  "api_port": "9501",
   "app_name": "CreativeClaw",
   "user_id_default": "art_user_001",
   "session_id_default_prefix": "art_session_",
   "max_iterations_orchestrator": 10,
-  "image_output_dir": "outputs/images",
-  "video_output_dir": "outputs/videos",
-  "upload_dir": "uploads/",
   "log_level": "DEBUG",
   "log_file": "artistic_agent_system_{time}.log",
   "retention": "7 days",
-  "rotation": "10 MB",
-  "password": {
-    "user001": "agi@gmlab274",
-    "user002": "agi@gmlab298",
-    "user003": "agi@gmlab109",
-    "user004": "agi@gmlab412",
-    "user005": "agi@gmlab582"
-  },
-  "secret_key": "auto-creative-agent"
+  "rotation": "10 MB"
 }
