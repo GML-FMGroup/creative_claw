@@ -88,6 +88,7 @@ class ImageEditingAgent(BaseAgent):
             for i,(prompt, message) in enumerate(zip(prompt_list, rsp['message'])):
                 if not message:
                     text += f"\nImage {i+1} editing failed. Prompt: {prompt}."
+                    continue
 
                 output_path = save_binary_output(
                     message,
@@ -113,6 +114,13 @@ class ImageEditingAgent(BaseAgent):
                         name=artifact_name,
                     )
                 )
+
+            if not output_artifacts:
+                error_text = f"round{step+1}: {self.name} execution failed: all edited images were empty."
+                current_output = {"status": "error", "message": error_text}
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": current_output})
+                return
 
             # output event
             current_output = {

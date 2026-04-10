@@ -224,13 +224,13 @@ async def nano_banana_image_edit_tool(tool_context: ToolContext, enhance_prompt_
 
 
         if success_num == 0:
-            result['message'] = f"{count}张图片全部生成失败，原因包括：{','.join(fail_message)}"
+            result['message'] = f"All {count} image editing attempts failed. Reasons: {','.join(fail_message)}"
             result['status'] = 'error'
 
         return result
 
     except Exception as e:
-        error_msg = f"[nano_banana_image_edit_tool] 发生异常: {e}"
+        error_msg = f"[nano_banana_image_edit_tool] exception occurred: {e}"
         logger.opt(exception=e).error(
             "[nano_banana_image_edit_tool] exception: error_type={} error={!r}",
             type(e).__name__,
@@ -317,20 +317,20 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
                 result['message'].append(None)
                 result['usage_list'].append(parse_usage_obj(imagesResponse))
             else:
-                img_bs64_data = imagesResponse.data[0].b64_json # 暂时支持一个prompt 只生成一个图像
+                img_bs64_data = imagesResponse.data[0].b64_json # Currently supports one generated image per prompt.
                 img_bin_data = base64.b64decode(img_bs64_data)
                 result['message'].append(img_bin_data)
                 result['usage_list'].append(parse_usage_obj(imagesResponse))
                 success_num = success_num + 1
 
         if success_num == 0:
-            result['message'] = f"{count}张图片全部生成失败，原因包括：{','.join(fail_message)}"
+            result['message'] = f"All {count} image editing attempts failed. Reasons: {','.join(fail_message)}"
             result['status'] = 'error'
 
         return result
 
     except Exception as e:
-        error_msg = f"[seedream_image_edit_tool] 发生异常: {e}"
+        error_msg = f"[seedream_image_edit_tool] exception occurred: {e}"
         logger.opt(exception=e).error(
             "[seedream_image_edit_tool] exception: error_type={} error={!r}",
             type(e).__name__,

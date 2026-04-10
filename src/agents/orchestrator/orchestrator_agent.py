@@ -246,8 +246,8 @@ Available expert agents:
         session_id: str = "",
     ) -> None:
         """Append one structured orchestrator step event into session state."""
-        normalized_title = title.strip() or "处理中"
-        normalized_detail = detail.strip() or "正在处理当前步骤。"
+        normalized_title = title.strip() or "In Progress"
+        normalized_detail = detail.strip() or "Processing the current step."
         normalized_stage = stage.strip() or "orchestrating"
         events = list(state.get("orchestration_events", []))
         events.append(
@@ -294,7 +294,7 @@ Available expert agents:
         self._append_step_event(
             state,
             title=tool_name,
-            detail=f"状态：开始\n参数：{self._format_tool_args(args)}",
+            detail=f"Status: started\nArgs: {self._format_tool_args(args)}",
             stage=stage,
         )
 
@@ -319,9 +319,9 @@ Available expert agents:
             state,
             title=tool_name,
             detail=(
-                f"状态：{'成功' if status == 'success' else '异常'}\n"
-                f"参数：{self._format_tool_args(args)}\n"
-                f"结果：{summary}"
+                f"Status: {'success' if status == 'success' else 'error'}\n"
+                f"Args: {self._format_tool_args(args)}\n"
+                f"Result: {summary}"
             ),
             stage=stage,
         )
@@ -443,9 +443,9 @@ Available expert agents:
         summary = str(raw_plan.get("summary") or "").strip()
         if not summary:
             if next_agent == "FINISH":
-                summary = "当前任务已经完成。"
+                summary = "The current task is complete."
             else:
-                summary = f"下一步调用 `{next_agent}` 处理当前任务。"
+                summary = f"Call `{next_agent}` for the next step."
 
         return {
             "next_agent": next_agent,
@@ -477,8 +477,8 @@ Available expert agents:
         if next_agent == "FINISH":
             self._append_step_event(
                 state,
-                title="整理最终结果",
-                detail="正在整理最终回复内容。",
+                title="Finalize Result",
+                detail="Preparing the final reply.",
                 stage="finalizing",
                 session_id=self.sid,
             )
@@ -494,8 +494,8 @@ Available expert agents:
         else:
             self._append_step_event(
                 state,
-                title="调用专家代理",
-                detail=f"下一步将调用 `{next_agent}`。目标：{summary}",
+                title="Call Expert Agent",
+                detail=f"Next step will call `{next_agent}`. Goal: {summary}",
                 stage="expert_execution",
                 session_id=self.sid,
             )
@@ -528,8 +528,8 @@ Available expert agents:
         if tool_context is not None:
             self._append_step_event(
                 tool_context.state,
-                title="查看技能列表",
-                detail="正在检查当前可用的技能。",
+                title="List Skills",
+                detail="Checking the currently available skills.",
                 stage="planning",
                 session_id=self._resolve_tool_context_session_id(tool_context),
             )
@@ -548,8 +548,8 @@ Available expert agents:
         if tool_context is not None:
             self._append_step_event(
                 tool_context.state,
-                title="读取技能说明",
-                detail=f"正在读取技能 `{name}` 的说明。",
+                title="Read Skill",
+                detail=f"Reading the documentation for skill `{name}`.",
                 stage="planning",
                 session_id=self._resolve_tool_context_session_id(tool_context),
             )

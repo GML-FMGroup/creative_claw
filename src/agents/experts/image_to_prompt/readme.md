@@ -1,2 +1,2 @@
-从图像反推出prompt。
-适合文生图生成的图像。不太适合截图。
+Reverse prompts from images.
+Best for generated images and less suitable for screenshots.

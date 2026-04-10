@@ -1,118 +1,88 @@
-import asyncio
-from loguru import logger
-import sys
-import os
-import json
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
-from src.agents.experts import (
-    prompt_enhancement_agent,
-)
+from src.runtime.workspace import workspace_root
 
 
-# --- Constants ---
-APP_NAME = "editing_test_app"
-USER_ID = "test_user"
-SESSION_ID = "test_session"
-
-# --- Configure Logging ---
-logger.remove()
-logger.level("DEBUG", color="<blue>")
-logger.level("INFO", color="<white>")
-logger.add(
-    sys.stderr,
-    level="INFO",
-    colorize=True,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-)
-
-
-# --- Create the custom agent instance ---
-editing_agent = ImageEditingAgent(
-    name="ImageEditingAgent",
-    prompt_enhancement_agent=prompt_enhancement_agent,
-)
-
-
-# --- Setup Runner and Session ---
-async def setup_session_and_runner(initial_state: dict = {}):
-    """Sets up the session service and runner for the agent."""
-    session_service = InMemorySessionService()
-    session = await session_service.create_session(
-        app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID, state=initial_state
+def _build_ctx(state: dict) -> SimpleNamespace:
+    return SimpleNamespace(
+        session=SimpleNamespace(
+            state=state,
+            app_name="test_app",
+            user_id="user_1",
+            id="session_1",
+        ),
     )
-    logger.info(f"Initial session state: {session.state}")
-    runner = Runner(
-        agent=editing_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-    )
-    return session_service, runner
 
 
-# --- Function to Interact with the Agent ---
-async def call_agent_async(user_input: str, image_path: str, editing_function: str):
-    """Sends user input to the agent and runs the workflow."""
-    session_service, runner = await setup_session_and_runner(
-        initial_state={
-            "prompt_to_enhance": user_input,
-            "image_editing_base_image_path": image_path,
-            "image_editing_function": editing_function
+class ImageEditingAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_rejects_missing_required_parameters(self) -> None:
+        agent = ImageEditingAgent(name="ImageEditingAgent")
+        ctx = _build_ctx({"current_parameters": {"input_path": "inbox/session/a.png"}, "step": 0})
+
+        events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "error")
+        self.assertIn("Required fields: input_path or input_paths, prompt", current_output["message"])
+
+    async def test_agent_skips_empty_partial_results_and_keeps_successful_outputs(self) -> None:
+        agent = ImageEditingAgent(name="ImageEditingAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "input_paths": ["inbox/session/a.png"],
+                    "prompt": ["make it blue", "make it red"],
+                },
+                "step": 0,
             }
-    )
+        )
 
-    content = types.Content(
-        role="user", parts=[types.Part(text=f"Editing an image about: {user_input}")]
-    )
-    events = runner.run_async(
-        user_id=USER_ID, session_id=SESSION_ID, new_message=content
-    )
+        with (
+            patch(
+                "src.agents.experts.image_editing.image_editing_agent.editing_tools.nano_banana_image_edit_tool",
+                new=AsyncMock(return_value={"status": "success", "message": [b"png-data", None]}),
+            ),
+            patch(
+                "src.agents.experts.image_editing.image_editing_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_editing_output0.png",
+            ) as save_mock,
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
 
-    final_response = "No final response captured."
-    async for event in events:
-        logger.debug(f"Event: {event}")
-        if event.is_final_response() and event.content and event.content.parts:
-            logger.info(
-                f"Potential final response from [{event.author}]: {event.content.parts[0].text}"
-            )
-            final_response = event.content.parts[0].text
+        save_mock.assert_called_once()
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "success")
+        self.assertEqual(len(current_output["output_files"]), 1)
+        self.assertEqual(current_output["output_files"][0]["path"], "generated/session_1/step1_editing_output0.png")
+        self.assertIn("Image 1 editing succeeded", current_output["message"])
+        self.assertIn("Image 2 editing failed. Prompt: make it red.", current_output["message"])
 
-    logger.info("\n--- Agent Interaction Result ---")
-    logger.info(f"Agent Final Response: {final_response}")
+    async def test_agent_returns_error_when_all_edit_results_are_empty(self) -> None:
+        agent = ImageEditingAgent(name="ImageEditingAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "input_paths": ["inbox/session/a.png"],
+                    "prompt": ["make it blue"],
+                },
+                "step": 1,
+            }
+        )
 
-    final_session = await session_service.get_session(
-        app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-    )
-    logger.info("Final Session State:")
+        with patch(
+            "src.agents.experts.image_editing.image_editing_agent.editing_tools.nano_banana_image_edit_tool",
+            new=AsyncMock(return_value={"status": "success", "message": [None]}),
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
 
-    logger.info(json.dumps(final_session.state, indent=2))  # type: ignore
-    logger.info("-------------------------------\n")
-
-
-# --- Main execution loop ---
-async def main() -> None:
-    """Main function to run the command-line chat interface."""
-    logger.info("Start Conversation. Type 'exit' to quit.")
-    while True:
-        try:
-            user_input = input("You: ")
-            if user_input.lower() == "exit":
-                logger.info("Exiting conversation.")
-                break
-            await call_agent_async(user_input)
-        except (KeyboardInterrupt, EOFError):
-            logger.info("\nExiting conversation.")
-            break
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "error")
+        self.assertIn("all edited images were empty", current_output["message"])
 
 
 if __name__ == "__main__":
-    asyncio.run(call_agent_async(
-        user_input="Change the model's top to blue",
-        image_path="/data/yanglingxiao/code/model2.png",
-        editing_function="description_edit"
-    ))
+    unittest.main()

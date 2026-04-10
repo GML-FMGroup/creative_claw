@@ -156,24 +156,24 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(legacy_file_api.calls[0].file_key, "file_v3_demo")
 
     def test_build_status_card_uses_final_header(self) -> None:
-        card = _build_status_card("图片已经生成好了。", {"display_style": "final"})
+        card = _build_status_card("The image is ready.", {"display_style": "final"})
 
-        self.assertEqual(card["header"]["title"]["content"], "处理结果")
+        self.assertEqual(card["header"]["title"]["content"], "Result")
         self.assertEqual(card["header"]["template"], "green")
-        self.assertIn("图片已经生成好了。", card["elements"][0]["content"])
+        self.assertIn("The image is ready.", card["elements"][0]["content"])
 
     def test_should_use_interactive_card_for_progress_messages(self) -> None:
-        self.assertTrue(_should_use_interactive_card("我先处理一下你的请求。", {"display_style": "progress"}))
-        self.assertTrue(_should_use_interactive_card("处理完成。", {"display_style": "final"}))
+        self.assertTrue(_should_use_interactive_card("I'll start processing your request.", {"display_style": "progress"}))
+        self.assertTrue(_should_use_interactive_card("Done.", {"display_style": "final"}))
         self.assertFalse(_should_use_interactive_card("done", {}))
 
     def test_build_status_card_uses_stage_title_when_provided(self) -> None:
         card = _build_status_card(
-            "正在继续处理，请稍等。",
-            {"display_style": "progress", "stage": "in_progress", "stage_title": "正在生成图片"},
+            "Still working, please wait.",
+            {"display_style": "progress", "stage": "in_progress", "stage_title": "Generating Image"},
         )
 
-        self.assertEqual(card["header"]["title"]["content"], "正在生成图片")
+        self.assertEqual(card["header"]["title"]["content"], "Generating Image")
 
     async def test_on_message_dispatches_text_message(self) -> None:
         inbound_messages: list[InboundMessage] = []
@@ -254,7 +254,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
             OutboundMessage(
                 channel="feishu",
                 chat_id="oc_group_1",
-                text="我先处理一下你的请求。",
+                text="I'll start processing your request.",
                 metadata={"display_style": "progress", "stage": "started"},
             )
         )
@@ -262,7 +262,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel.sent_texts, [])
         self.assertEqual(len(channel.sent_cards), 1)
         self.assertEqual(channel.sent_cards[0][0], "oc_group_1")
-        self.assertEqual(channel.sent_cards[0][1]["header"]["title"]["content"], "开始处理")
+        self.assertEqual(channel.sent_cards[0][1]["header"]["title"]["content"], "Starting")
 
     async def test_send_updates_existing_progress_card_for_same_session(self) -> None:
         inbound_messages: list[InboundMessage] = []
@@ -271,13 +271,13 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         first = OutboundMessage(
             channel="feishu",
             chat_id="oc_group_1",
-            text="我先处理一下你的请求。",
+            text="I'll start processing your request.",
             metadata={"display_style": "progress", "stage": "started", "session_id": "s1"},
         )
         second = OutboundMessage(
             channel="feishu",
             chat_id="oc_group_1",
-            text="当前进展：正在生成图片。",
+            text="Current progress: Generating image.",
             metadata={"display_style": "progress", "stage": "in_progress", "session_id": "s1"},
         )
 
@@ -287,7 +287,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(channel.sent_cards), 1)
         self.assertEqual(len(channel.patched_cards), 1)
         self.assertEqual(channel.patched_cards[0][0], "om_card_1")
-        self.assertEqual(channel.patched_cards[0][1]["header"]["title"]["content"], "处理中")
+        self.assertEqual(channel.patched_cards[0][1]["header"]["title"]["content"], "In Progress")
 
     async def test_on_message_downloads_image_attachment(self) -> None:
         inbound_messages: list[InboundMessage] = []
@@ -326,8 +326,8 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
                     chat_type="group",
                     message_type="post",
                     content=(
-                        '{"zh_cn":{"content":[['
-                        '{"tag":"text","text":"请描述这张图"},'
+                        '{"en_us":{"content":[['
+                        '{"tag":"text","text":"Please describe this image"},'
                         '{"tag":"img","image_key":"img_post_1"}'
                         ']]}}'
                     ),
@@ -342,7 +342,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         await channel._on_message(data)
 
         self.assertEqual(len(inbound_messages), 1)
-        self.assertEqual(inbound_messages[0].text, "请描述这张图")
+        self.assertEqual(inbound_messages[0].text, "Please describe this image")
         self.assertEqual(len(inbound_messages[0].attachments), 1)
         self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_4_img_post_1.png")
 

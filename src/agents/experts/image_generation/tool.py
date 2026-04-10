@@ -248,7 +248,7 @@ async def nano_banana_image_generation_tool(
         resolution=resolution,
     )
     if result.status == "success" and isinstance(result.message, (bytes, bytearray)):
-        logger.info(f"nano_banana 已完成任务生成，二进制文件大小为{len(result.message)}")
+        logger.info(f"nano_banana completed image generation, binary size={len(result.message)}")
     return {
         "status": result.status,
         "message": result.message,

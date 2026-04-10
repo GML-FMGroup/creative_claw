@@ -46,9 +46,9 @@ def head_tail_preview(text: str, *, max_lines: int = 2, max_chars: int = 220) ->
     head = " | ".join(lines[:max_lines])
     tail = " | ".join(lines[-max_lines:]) if len(lines) > max_lines else ""
     if tail and tail != head:
-        preview = f"开头：{head} || 结尾：{tail}"
+        preview = f"Start: {head} || End: {tail}"
     else:
-        preview = f"开头：{head}"
+        preview = f"Start: {head}"
     return stringify_value(preview, max_chars=max_chars)
 
 
@@ -57,7 +57,7 @@ def _summarize_list_dir_result(result_text: str) -> str:
         return result_text
     entries = [line.strip() for line in result_text.splitlines() if line.strip()]
     preview = "; ".join(entries[:3])
-    return f"共 {len(entries)} 个条目。预览：{stringify_value(preview, max_chars=180)}"
+    return f"{len(entries)} entries. Preview: {stringify_value(preview, max_chars=180)}"
 
 
 def _summarize_read_file_result(result_text: str) -> str:
@@ -66,7 +66,7 @@ def _summarize_read_file_result(result_text: str) -> str:
     char_count = len(result_text)
     line_count = len(result_text.splitlines()) or 1
     preview = head_tail_preview(result_text, max_lines=2, max_chars=220)
-    return f"读取成功，约 {char_count} 个字符，{line_count} 行。{preview}"
+    return f"Read succeeded, about {char_count} characters across {line_count} lines. {preview}"
 
 
 def _summarize_exec_result(result_text: str) -> str:
@@ -82,13 +82,13 @@ def _summarize_exec_result(result_text: str) -> str:
 
     stdout_lines = [line for line in stdout_text.splitlines() if line.strip()]
     stderr_lines = [line for line in stderr_text.splitlines() if line.strip()]
-    parts = [f"命令执行完成，stdout 约 {len(stdout_lines)} 行"]
+    parts = [f"Command completed, about {len(stdout_lines)} stdout lines"]
     if stdout_lines:
-        parts.append(f"stdout 摘要：{head_tail_preview(stdout_text, max_lines=2, max_chars=180)}")
+        parts.append(f"stdout summary: {head_tail_preview(stdout_text, max_lines=2, max_chars=180)}")
     if stderr_text.strip() or stderr_lines:
-        parts.append(f"stderr 约 {len(stderr_lines)} 行")
-        parts.append(f"stderr 摘要：{head_tail_preview(stderr_text, max_lines=2, max_chars=180)}")
-    return "；".join(parts)
+        parts.append(f"about {len(stderr_lines)} stderr lines")
+        parts.append(f"stderr summary: {head_tail_preview(stderr_text, max_lines=2, max_chars=180)}")
+    return "; ".join(parts)
 
 
 def _summarize_web_search_result(result_text: str) -> str:
@@ -96,7 +96,7 @@ def _summarize_web_search_result(result_text: str) -> str:
         return result_text
     result_count = sum(1 for line in result_text.splitlines() if re.match(r"^\d+\.\s", line.strip()))
     preview = preview_lines(result_text, max_lines=4, max_chars=180)
-    return f"搜索完成，返回 {result_count} 条结果。摘要：{preview}"
+    return f"Search completed with {result_count} results. Summary: {preview}"
 
 
 def _summarize_web_fetch_result(result_text: str) -> str:
@@ -108,12 +108,12 @@ def _summarize_web_fetch_result(result_text: str) -> str:
     if not isinstance(payload, dict):
         return stringify_value(result_text, max_chars=220)
     if payload.get("error"):
-        return f"抓取失败：{payload.get('error')}"
+        return f"Fetch failed: {payload.get('error')}"
     text = str(payload.get("text", "")).strip()
     extractor = str(payload.get("extractor", "")).strip() or "unknown"
     length = payload.get("length", len(text))
     preview = head_tail_preview(text, max_lines=2, max_chars=220)
-    return f"抓取成功，extractor={extractor}，正文约 {length} 个字符。{preview}"
+    return f"Fetch succeeded, extractor={extractor}, body about {length} characters. {preview}"
 
 
 def _summarize_write_like_result(result_text: str) -> str:

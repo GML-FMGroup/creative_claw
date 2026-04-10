@@ -63,9 +63,9 @@ except ImportError:  # pragma: no cover - environment dependent
 
 
 _STAGE_TITLES = {
-    "started": "开始处理",
-    "attachment_received": "已接收输入",
-    "in_progress": "处理中",
+    "started": "Starting",
+    "attachment_received": "Attachment Received",
+    "in_progress": "In Progress",
 }
 
 
@@ -75,17 +75,17 @@ def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dic
     display_style = str(info.get("display_style", "")).strip().lower()
     stage = str(info.get("stage", "")).strip().lower()
     if display_style == "final":
-        title = "处理结果"
+        title = "Result"
         template = "green"
     else:
-        title = str(info.get("stage_title", "")).strip() or _STAGE_TITLES.get(stage, "当前进度")
+        title = str(info.get("stage_title", "")).strip() or _STAGE_TITLES.get(stage, "Current Progress")
         template = {
             "started": "blue",
             "attachment_received": "wathet",
             "in_progress": "indigo",
         }.get(stage, "blue")
 
-    body = str(text or "").strip() or "暂无内容"
+    body = str(text or "").strip() or "No content available."
     return {
         "config": {"wide_screen_mode": True, "enable_forward": True},
         "header": {

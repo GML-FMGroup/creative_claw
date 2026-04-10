@@ -61,8 +61,8 @@ def _render_outbound(channel: str, chat_id: str, event: WorkflowEvent) -> Outbou
         return None
 
     text = str(event.text or "").strip()
-    if event.event_type == "error" and text and not text.startswith("处理失败："):
-        text = f"处理失败：{text}"
+    if event.event_type == "error" and text and not text.startswith("Error: "):
+        text = f"Error: {text}"
 
     return OutboundMessage(
         channel=channel,

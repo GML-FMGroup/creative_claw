@@ -49,11 +49,11 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.messages), 2)
         self.assertEqual(self.messages[0].metadata["stage_title"], "read_file")
-        self.assertIn("状态：开始", self.messages[0].text)
-        self.assertIn("参数：path=README.md", self.messages[0].text)
+        self.assertIn("Status: started", self.messages[0].text)
+        self.assertIn("Args: path=README.md", self.messages[0].text)
         self.assertIn("1. read_file", self.messages[1].text)
         self.assertIn("2. read_file", self.messages[1].text)
-        self.assertIn("结果：读取成功", self.messages[1].text)
+        self.assertIn("Result: Read succeeded", self.messages[1].text)
 
     async def test_plugin_ignores_unknown_tool_names(self) -> None:
         plugin = CreativeClawStepEventPlugin()
@@ -80,15 +80,15 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             reset_step_event_history(session_id="session-3")
             publish_orchestration_step_event(
                 session_id="session-3",
-                title="调用专家代理",
-                detail="正在调用 `ImageGenerationAgent` 处理当前步骤。",
+                title="Call Expert Agent",
+                detail="Calling `ImageGenerationAgent` for the current step.",
                 stage="expert_execution",
             )
             await asyncio.sleep(0)
 
         self.assertEqual(len(self.messages), 1)
-        self.assertEqual(self.messages[0].metadata["stage_title"], "调用专家代理")
-        self.assertIn("正在调用 `ImageGenerationAgent`", self.messages[0].text)
+        self.assertEqual(self.messages[0].metadata["stage_title"], "Call Expert Agent")
+        self.assertIn("Calling `ImageGenerationAgent`", self.messages[0].text)
 
     async def test_plugin_and_orchestration_events_share_same_history(self) -> None:
         plugin = CreativeClawStepEventPlugin()
@@ -103,8 +103,8 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             reset_step_event_history(session_id="session-4")
             publish_orchestration_step_event(
                 session_id="session-4",
-                title="调用专家代理",
-                detail="正在调用 `KnowledgeAgent` 处理当前步骤。",
+                title="Call Expert Agent",
+                detail="Calling `KnowledgeAgent` for the current step.",
                 stage="expert_execution",
             )
             await asyncio.sleep(0)
@@ -115,5 +115,5 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(self.messages), 2)
-        self.assertIn("1. 调用专家代理", self.messages[1].text)
+        self.assertIn("1. Call Expert Agent", self.messages[1].text)
         self.assertIn("2. read_file", self.messages[1].text)

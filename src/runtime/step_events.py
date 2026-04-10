@@ -52,8 +52,8 @@ def _render_history(history: list[dict[str, str]], limit: int = 8) -> str:
     recent = history[-limit:]
     blocks: list[str] = []
     for index, step_event in enumerate(recent, start=1):
-        title = str(step_event.get("title", "")).strip() or "处理中"
-        detail = str(step_event.get("detail", "")).strip() or "正在处理当前步骤。"
+        title = str(step_event.get("title", "")).strip() or "In Progress"
+        detail = str(step_event.get("detail", "")).strip() or "Processing the current step."
         blocks.append(f"**{index}. {title}**\n{detail}")
     return "\n\n".join(blocks)
 
@@ -65,9 +65,9 @@ def _session_history_key(channel: str, chat_id: str, session_id: str) -> str:
 
 def _build_detail(*, status: str, args: dict[str, Any], result_text: str | None = None) -> str:
     """Build the detail body shown in the progress card."""
-    lines = [f"状态：{status}", f"参数：{format_tool_args(args)}"]
+    lines = [f"Status: {status}", f"Args: {format_tool_args(args)}"]
     if result_text:
-        lines.append(f"结果：{result_text}")
+        lines.append(f"Result: {result_text}")
     return "\n".join(lines)
 
 
@@ -166,7 +166,7 @@ class CreativeClawStepEventPlugin(BasePlugin):
             session_id=tool_context.session.id,
             tool_name=tool.name,
             stage=stage,
-            detail=_build_detail(status="开始", args=tool_args),
+            detail=_build_detail(status="started", args=tool_args),
         )
         return None
 
@@ -188,7 +188,7 @@ class CreativeClawStepEventPlugin(BasePlugin):
             tool_name=tool.name,
             stage=stage,
             detail=_build_detail(
-                status="成功" if status == "success" else "异常",
+                status="success" if status == "success" else "error",
                 args=tool_args,
                 result_text=summary,
             ),
@@ -211,6 +211,6 @@ class CreativeClawStepEventPlugin(BasePlugin):
             session_id=tool_context.session.id,
             tool_name=tool.name,
             stage=stage,
-            detail=_build_detail(status="异常", args=tool_args, result_text=str(error).strip()),
+            detail=_build_detail(status="error", args=tool_args, result_text=str(error).strip()),
         )
         return None

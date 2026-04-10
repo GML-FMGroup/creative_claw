@@ -23,7 +23,7 @@ class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
             {
                 "current_parameters": {
                     "input_path": "inbox/session/a.png",
-                    "prompt": "孙悟空",
+                    "prompt": "Sun Wukong",
                 }
             }
         )
@@ -33,9 +33,9 @@ class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(
                 return_value={
                     "status": "success",
-                    "message": "Detected 2 object(s) for prompt '孙悟空'.",
+                    "message": "Detected 2 object(s) for prompt 'Sun Wukong'.",
                     "input_path": "inbox/session/a.png",
-                    "prompt": "孙悟空",
+                    "prompt": "Sun Wukong",
                     "objects": [
                         {"bbox": [10.0, 20.0, 30.0, 40.0]},
                         {"bbox": [50.0, 60.0, 70.0, 80.0]},
@@ -53,7 +53,7 @@ class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
         ) as tool_mock:
             events = [event async for event in agent._run_async_impl(ctx)]
 
-        tool_mock.assert_awaited_once_with(ctx, "inbox/session/a.png", "孙悟空")
+        tool_mock.assert_awaited_once_with(ctx, "inbox/session/a.png", "Sun Wukong")
         self.assertEqual(len(events), 1)
         current_output = events[0].actions.state_delta["current_output"]
         self.assertEqual(current_output["status"], "success")

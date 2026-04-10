@@ -55,13 +55,13 @@ class OrchestratorTests(unittest.TestCase):
             {
                 "next_agent": "KnowledgeAgent",
                 "parameters": {"topic": "desert"},
-                "summary": "先让知识专家整理方案。",
+                "summary": "Let the knowledge expert organize the plan first.",
             }
         )
 
         self.assertEqual(plan["next_agent"], "KnowledgeAgent")
         self.assertEqual(plan["parameters"], {"topic": "desert"})
-        self.assertEqual(plan["summary"], "先让知识专家整理方案。")
+        self.assertEqual(plan["summary"], "Let the knowledge expert organize the plan first.")
 
     def test_normalize_step_plan_maps_null_like_values_to_finish(self) -> None:
         orchestrator = Orchestrator(
@@ -80,7 +80,7 @@ class OrchestratorTests(unittest.TestCase):
 
         self.assertEqual(plan["next_agent"], "FINISH")
         self.assertEqual(plan["parameters"], {})
-        self.assertIn("完成", plan["summary"])
+        self.assertIn("complete", plan["summary"].lower())
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
@@ -93,7 +93,7 @@ class OrchestratorTests(unittest.TestCase):
         orchestrator.list_skills(tool_context=tool_context)
 
         events = tool_context.state["orchestration_events"]
-        self.assertEqual(events[0]["title"], "查看技能列表")
+        self.assertEqual(events[0]["title"], "List Skills")
         self.assertEqual(events[0]["stage"], "planning")
 
     def test_read_file_records_orchestration_step(self) -> None:
@@ -110,8 +110,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["title"], "read_file")
         self.assertIn("path=README.md", events[0]["detail"])
-        self.assertIn("状态：开始", events[0]["detail"])
-        self.assertIn("结果：", events[1]["detail"])
+        self.assertIn("Status: started", events[0]["detail"])
+        self.assertIn("Result:", events[1]["detail"])
         self.assertIn("path=README.md", events[1]["detail"])
 
     def test_summarize_read_file_result_prefers_preview(self) -> None:
@@ -121,9 +121,9 @@ class OrchestratorTests(unittest.TestCase):
         )
 
         self.assertEqual(status, "success")
-        self.assertIn("读取成功", summary)
+        self.assertIn("Read succeeded", summary)
         self.assertIn("line one", summary)
-        self.assertIn("结尾", summary)
+        self.assertIn("End:", summary)
         self.assertIn("line four", summary)
 
     def test_summarize_list_dir_counts_entries(self) -> None:
@@ -133,7 +133,7 @@ class OrchestratorTests(unittest.TestCase):
         )
 
         self.assertEqual(status, "success")
-        self.assertIn("共 3 个条目", summary)
+        self.assertIn("3 entries", summary)
         self.assertIn("README.md", summary)
 
     def test_summarize_exec_command_counts_lines(self) -> None:
@@ -143,10 +143,10 @@ class OrchestratorTests(unittest.TestCase):
         )
 
         self.assertEqual(status, "success")
-        self.assertIn("命令执行完成", summary)
-        self.assertIn("stdout 约 3 行", summary)
-        self.assertIn("stderr 约 2 行", summary)
-        self.assertIn("stderr 摘要", summary)
+        self.assertIn("Command completed", summary)
+        self.assertIn("about 3 stdout lines", summary)
+        self.assertIn("about 2 stderr lines", summary)
+        self.assertIn("stderr summary", summary)
 
     def test_summarize_web_fetch_uses_json_fields(self) -> None:
         payload = (
@@ -165,7 +165,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(status, "success")
         self.assertIn("extractor=html", summary)
         self.assertIn("alpha", summary)
-        self.assertIn("结尾", summary)
+        self.assertIn("End:", summary)
         self.assertIn("delta", summary)
 
 class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -174,9 +174,9 @@ class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
             state={
                 "workflow_status": "running",
                 "step": 2,
-                "user_prompt": "把这个图像上下颠倒一下给我",
+                "user_prompt": "Flip this image upside down for me.",
                 "input_files": [],
-                "summary_history": ["调用 `ImageGenerationAgent` 生成图片"],
+                "summary_history": ["Call `ImageGenerationAgent` to generate an image."],
                 "message_history": [
                     "ImageGenerationAgent has completed 1 image generation tasks: "
                     "image generation task1 success, output file: step1_generation_output0.png"

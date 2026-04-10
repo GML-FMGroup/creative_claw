@@ -42,17 +42,17 @@ _HELP_TEXT = (
 )
 
 _PROGRESS_STAGE_TITLES = {
-    "started": "开始处理",
-    "attachment_received": "已接收输入",
-    "in_progress": "处理中",
-    "planning": "规划下一步",
-    "inspection": "查看上下文",
-    "editing": "修改内容",
-    "image_processing": "处理图片",
-    "execution": "执行命令",
-    "research": "查询资料",
-    "expert_execution": "调用专家代理",
-    "finalizing": "整理结果",
+    "started": "Starting",
+    "attachment_received": "Attachment Received",
+    "in_progress": "In Progress",
+    "planning": "Planning Next Step",
+    "inspection": "Inspecting Context",
+    "editing": "Editing Content",
+    "image_processing": "Processing Image",
+    "execution": "Running Command",
+    "research": "Researching",
+    "expert_execution": "Calling Expert Agent",
+    "finalizing": "Finalizing Result",
 }
 
 
@@ -79,7 +79,7 @@ def _build_progress_event(
             "session_id": session_id,
             "display_style": "progress",
             "stage": stage,
-            "stage_title": stage_title or _PROGRESS_STAGE_TITLES.get(stage, "当前进度"),
+            "stage_title": stage_title or _PROGRESS_STAGE_TITLES.get(stage, "Current Progress"),
         },
     )
 
@@ -91,14 +91,14 @@ def _summarize_step_output(output_message: str) -> str:
         return ""
     if len(text) > 160:
         text = f"{text[:157].rstrip()}..."
-    return f"当前进展：{text}"
+    return f"Current progress: {text}"
 
 
 def _build_orchestration_progress_event(step_event: dict[str, str], *, session_id: str) -> WorkflowEvent:
     """Convert one structured orchestrator step event into a progress event."""
     stage = str(step_event.get("stage", "")).strip() or "in_progress"
-    title = str(step_event.get("title", "")).strip() or _PROGRESS_STAGE_TITLES.get(stage, "当前进度")
-    detail = str(step_event.get("detail", "")).strip() or "正在处理当前步骤。"
+    title = str(step_event.get("title", "")).strip() or _PROGRESS_STAGE_TITLES.get(stage, "Current Progress")
+    detail = str(step_event.get("detail", "")).strip() or "Processing the current step."
     return _build_progress_event(
         detail,
         session_id=session_id,
@@ -112,8 +112,8 @@ def _render_orchestration_history(history: list[dict[str, str]], limit: int = 8)
     recent = history[-limit:]
     blocks: list[str] = []
     for index, step_event in enumerate(recent, start=1):
-        title = str(step_event.get("title", "")).strip() or "处理中"
-        detail = str(step_event.get("detail", "")).strip() or "正在处理当前步骤。"
+        title = str(step_event.get("title", "")).strip() or "In Progress"
+        detail = str(step_event.get("detail", "")).strip() or "Processing the current step."
         blocks.append(f"**{index}. {title}**\n{detail}")
     return "\n\n".join(blocks)
 
@@ -174,14 +174,14 @@ class CreativeClawRuntime:
         user_id, session_id = await self._ensure_session(inbound)
 
         yield _build_progress_event(
-            "我先处理一下你的请求。",
+            "I'll start processing your request.",
             session_id=session_id,
             stage="started",
         )
         reset_step_event_history(session_id=session_id)
         for attachment in inbound.attachments:
             yield _build_progress_event(
-                f"已收到附件：{attachment.name}",
+                f"Received attachment: {attachment.name}",
                 session_id=session_id,
                 stage="attachment_received",
             )
@@ -278,7 +278,7 @@ class CreativeClawRuntime:
                         _summarize_step_output(output_message),
                         session_id=session_id,
                         stage="expert_execution",
-                        stage_title=f"{next_agent} 已返回",
+                        stage_title=f"{next_agent} Returned",
                     )
                     final_summary = output_message or final_summary
             else:

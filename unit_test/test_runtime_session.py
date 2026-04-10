@@ -127,7 +127,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="帮我生成一张图",
+            text="Generate an image for me",
         )
 
         class _FakeOrchestrator:
@@ -138,13 +138,13 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "图片已经生成好了。",
+                    "final_summary": "The image is ready.",
                     "last_response": "Internal orchestrator log",
-                    "last_output_message": "图片已经生成好了。",
+                    "last_output_message": "The image is ready.",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "图片已经生成好了。",
+                        "summary": "The image is ready.",
                     },
                 }
 
@@ -162,10 +162,10 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in runtime.run_message(inbound)]
 
         self.assertEqual(events[0].event_type, "status")
-        self.assertEqual(events[0].text, "我先处理一下你的请求。")
-        self.assertEqual(events[0].metadata["stage_title"], "开始处理")
+        self.assertEqual(events[0].text, "I'll start processing your request.")
+        self.assertEqual(events[0].metadata["stage_title"], "Starting")
         self.assertEqual(events[-1].event_type, "final")
-        self.assertEqual(events[-1].text, "图片已经生成好了。")
+        self.assertEqual(events[-1].text, "The image is ready.")
         self.assertTrue(all("user instruction:" not in event.text for event in events))
         self.assertTrue(all("Orchestrator response:" not in event.text for event in events))
         self.assertTrue(all("Step result:" not in event.text for event in events))
@@ -195,7 +195,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="帮我分析目录",
+            text="Analyze this directory",
         )
 
         class _FakeOrchestrator:
@@ -206,23 +206,23 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "已经整理好了。",
+                    "final_summary": "The analysis is ready.",
                     "last_response": "internal",
                     "last_output_message": "internal-output",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "已经整理好了。",
+                        "summary": "The analysis is ready.",
                     },
                     "new_orchestration_events": [
                         {
-                            "title": "查看技能列表",
-                            "detail": "正在检查当前可用的技能。",
+                            "title": "List Skills",
+                            "detail": "Checking the currently available skills.",
                             "stage": "planning",
                         },
                         {
-                            "title": "调用专家代理",
-                            "detail": "正在调用 `KnowledgeAgent` 处理当前步骤。",
+                            "title": "Call Expert Agent",
+                            "detail": "Calling `KnowledgeAgent` for the current step.",
                             "stage": "expert_execution",
                         },
                     ],
@@ -242,13 +242,13 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
-        self.assertEqual(progress_events[1].metadata["stage_title"], "查看技能列表")
+        self.assertEqual(progress_events[1].metadata["stage_title"], "List Skills")
         self.assertEqual(progress_events[1].metadata["stage"], "planning")
-        self.assertIn("正在检查当前可用的技能。", progress_events[1].text)
-        self.assertEqual(progress_events[2].metadata["stage_title"], "调用专家代理")
+        self.assertIn("Checking the currently available skills.", progress_events[1].text)
+        self.assertEqual(progress_events[2].metadata["stage_title"], "Call Expert Agent")
         self.assertEqual(progress_events[2].metadata["stage"], "expert_execution")
-        self.assertIn("1. 查看技能列表", progress_events[2].text)
-        self.assertIn("2. 调用专家代理", progress_events[2].text)
+        self.assertIn("1. List Skills", progress_events[2].text)
+        self.assertIn("2. Call Expert Agent", progress_events[2].text)
 
     async def test_run_message_renders_tool_args_and_result_summary(self) -> None:
         runtime = CreativeClawRuntime()
@@ -256,7 +256,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="帮我查看文件",
+            text="Check this file",
         )
 
         class _FakeOrchestrator:
@@ -267,23 +267,23 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "完成。",
+                    "final_summary": "Done.",
                     "last_response": "",
                     "last_output_message": "",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "完成。",
+                        "summary": "Done.",
                     },
                     "new_orchestration_events": [
                         {
                             "title": "read_file",
-                            "detail": "状态：开始\n参数：path=README.md",
+                            "detail": "Status: started\nArgs: path=README.md",
                             "stage": "inspection",
                         },
                         {
                             "title": "read_file",
-                            "detail": "状态：成功\n参数：path=README.md\n结果：Hello world",
+                            "detail": "Status: success\nArgs: path=README.md\nResult: Hello world",
                             "stage": "inspection",
                         },
                     ],
@@ -303,8 +303,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
-        self.assertIn("参数：path=README.md", progress_events[-1].text)
-        self.assertIn("结果：Hello world", progress_events[-1].text)
+        self.assertIn("Args: path=README.md", progress_events[-1].text)
+        self.assertIn("Result: Hello world", progress_events[-1].text)
 
     async def test_run_message_keeps_smart_tool_summary_in_timeline(self) -> None:
         runtime = CreativeClawRuntime()
@@ -312,7 +312,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="帮我列目录",
+            text="List this directory",
         )
 
         class _FakeOrchestrator:
@@ -323,23 +323,23 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "完成。",
+                    "final_summary": "Done.",
                     "last_response": "",
                     "last_output_message": "",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "完成。",
+                        "summary": "Done.",
                     },
                     "new_orchestration_events": [
                         {
                             "title": "list_dir",
-                            "detail": "状态：开始\n参数：path=.",
+                            "detail": "Status: started\nArgs: path=.",
                             "stage": "inspection",
                         },
                         {
                             "title": "list_dir",
-                            "detail": "状态：成功\n参数：path=.\n结果：共 3 个条目。预览：[D] src; [F] README.md; [F] pyproject.toml",
+                            "detail": "Status: success\nArgs: path=.\nResult: 3 entries. Preview: [D] src; [F] README.md; [F] pyproject.toml",
                             "stage": "inspection",
                         },
                     ],
@@ -359,7 +359,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in runtime.run_message(inbound)]
 
         progress_events = [event for event in events if event.event_type == "status"]
-        self.assertIn("共 3 个条目", progress_events[-1].text)
+        self.assertIn("3 entries", progress_events[-1].text)
         self.assertIn("README.md", progress_events[-1].text)
 
     async def test_run_message_executes_one_expert_via_executor(self) -> None:
@@ -368,7 +368,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="帮我先分析方案再出图",
+            text="Analyze the plan before generating the image",
         )
 
         class _FakeOrchestrator:
@@ -384,35 +384,35 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     return {
                         "workflow_status": "running",
                         "final_summary": "",
-                        "last_response": '{"next_agent":"KnowledgeAgent","parameters":{"topic":"battle"},"summary":"先让知识专家整理方案。"}',
+                        "last_response": '{"next_agent":"KnowledgeAgent","parameters":{"topic":"battle"},"summary":"Let the knowledge expert organize the plan first."}',
                         "last_output_message": "",
                         "current_plan": {
                             "next_agent": "KnowledgeAgent",
                             "parameters": {"topic": "battle"},
-                            "summary": "先让知识专家整理方案。",
+                            "summary": "Let the knowledge expert organize the plan first.",
                         },
                         "new_orchestration_events": [
                             {
-                                "title": "调用专家代理",
-                                "detail": "下一步将调用 `KnowledgeAgent`。目标：先让知识专家整理方案。",
+                                "title": "Call Expert Agent",
+                                "detail": "Next step will call `KnowledgeAgent`. Goal: Let the knowledge expert organize the plan first.",
                                 "stage": "expert_execution",
                             }
                         ],
                     }
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "任务已经完成。",
-                    "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"任务已经完成。"}',
-                    "last_output_message": "任务已经完成。",
+                    "final_summary": "The task is complete.",
+                    "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"The task is complete."}',
+                    "last_output_message": "The task is complete.",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "任务已经完成。",
+                        "summary": "The task is complete.",
                     },
                     "new_orchestration_events": [
                         {
-                            "title": "整理最终结果",
-                            "detail": "正在整理最终回复内容。",
+                            "title": "Finalize Result",
+                            "detail": "Preparing the final reply.",
                             "stage": "finalizing",
                         }
                     ],
@@ -427,7 +427,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
 
             async def execute_plan(self):
                 type(self).call_count += 1
-                return {"status": "success", "message": "KnowledgeAgent 已返回方案。"}
+                return {"status": "success", "message": "KnowledgeAgent returned the plan."}
 
         with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator), patch(
             "src.runtime.workflow_service.Executor", _FakeExecutor
@@ -437,9 +437,9 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_FakeOrchestrator.call_count, 2)
         self.assertEqual(_FakeExecutor.call_count, 1)
         progress_events = [event for event in events if event.event_type == "status"]
-        self.assertTrue(any(event.metadata["stage_title"] == "KnowledgeAgent 已返回" for event in progress_events))
+        self.assertTrue(any(event.metadata["stage_title"] == "KnowledgeAgent Returned" for event in progress_events))
         self.assertEqual(events[-1].event_type, "final")
-        self.assertEqual(events[-1].text, "任务已经完成。")
+        self.assertEqual(events[-1].text, "The task is complete.")
 
     async def test_run_message_surfaces_round_and_agent_for_executor_failure(self) -> None:
         runtime = CreativeClawRuntime()
@@ -447,7 +447,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             channel="local",
             sender_id="local-user",
             chat_id="terminal",
-            text="描述一下这个图像",
+            text="Describe this image",
         )
 
         class _FakeOrchestrator:
@@ -464,12 +464,12 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     "current_plan": {
                         "next_agent": "ImageUnderstandingAgent",
                         "parameters": {"input_path": "inbox/demo.png", "mode": "description"},
-                        "summary": "描述这张图。",
+                        "summary": "Describe this image.",
                     },
                     "new_orchestration_events": [
                         {
-                            "title": "调用专家代理",
-                            "detail": "下一步将调用 `ImageUnderstandingAgent`。目标：描述这张图。",
+                            "title": "Call Expert Agent",
+                            "detail": "Next step will call `ImageUnderstandingAgent`. Goal: Describe this image.",
                             "stage": "expert_execution",
                         }
                     ],
@@ -503,7 +503,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 channel="local",
                 sender_id="local-user",
                 chat_id="terminal",
-                text="描述一下这个图像",
+                text="Describe this image",
                 attachments=[MessageAttachment(path=str(upload_path), name="demo.png", mime_type="image/png")],
             )
 
@@ -515,13 +515,13 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 async def generate_step_plan(self) -> dict:
                     return {
                         "workflow_status": "finished",
-                        "final_summary": "图像描述完成。",
-                        "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"图像描述完成。"}',
-                        "last_output_message": "图像描述完成。",
+                        "final_summary": "Image description completed.",
+                        "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"Image description completed."}',
+                        "last_output_message": "Image description completed.",
                         "current_plan": {
                             "next_agent": "FINISH",
                             "parameters": {},
-                            "summary": "图像描述完成。",
+                            "summary": "Image description completed.",
                         },
                     }
 

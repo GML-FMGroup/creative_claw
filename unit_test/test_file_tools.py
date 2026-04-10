@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -49,6 +50,12 @@ class BuiltinToolTests(unittest.TestCase):
     def test_web_fetch_rejects_invalid_scheme(self) -> None:
         result = web_fetch("file:///tmp/demo.txt")
         self.assertIn("Only http/https URLs are supported.", result)
+
+    def test_web_search_reports_missing_api_key_without_crashing(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            result = BuiltinToolbox(Path.cwd()).web_search("creative claw")
+
+        self.assertEqual(result, "Error: BRAVE_API_KEY not configured")
 
     def test_toolbox_can_use_explicit_workspace_without_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

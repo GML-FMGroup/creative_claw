@@ -63,7 +63,7 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(lines, ["处理失败：boom"])
+        self.assertEqual(lines, ["Error: boom"])
 
     async def test_manager_rejects_unknown_channel(self) -> None:
         manager = ChannelManager(runtime=_FakeRuntime())  # type: ignore[arg-type]
