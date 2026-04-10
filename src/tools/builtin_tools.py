@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import fnmatch
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
+from src.runtime.process_sessions import get_process_session_manager
 from src.runtime.workspace import workspace_root
 
 
@@ -101,6 +104,145 @@ class BuiltinToolbox:
         except Exception as exc:
             return f"Error listing directory: {exc}"
 
+    def glob(
+        self,
+        pattern: str,
+        path: str = ".",
+        max_results: int = 200,
+        entry_type: str = "files",
+    ) -> str:
+        """Find files or directories matching one glob pattern."""
+        try:
+            root = self.resolve_path(path)
+            if not root.exists():
+                return f"Error: Path not found: {path}"
+            if not root.is_dir():
+                return f"Error: Not a directory: {path}"
+
+            safe_limit = max(1, int(max_results))
+            include_files = entry_type in {"files", "both"}
+            include_dirs = entry_type in {"dirs", "both"}
+            if not include_files and not include_dirs:
+                return "Error: entry_type must be one of 'files', 'dirs', or 'both'."
+
+            matches: list[str] = []
+            for entry in _iter_entries(root, include_files=include_files, include_dirs=include_dirs):
+                rel_path = entry.relative_to(root).as_posix()
+                if not _match_glob_pattern(rel_path, entry.name, pattern):
+                    continue
+                display = rel_path + ("/" if entry.is_dir() else "")
+                matches.append(display)
+
+            if not matches:
+                return f"No paths matched pattern '{pattern}' in {path}"
+            matches.sort()
+            result = "\n".join(matches[:safe_limit])
+            if len(matches) > safe_limit:
+                result += f"\n\n(truncated, showing first {safe_limit} of {len(matches)} matches)"
+            return result
+        except Exception as exc:
+            return f"Error finding files: {exc}"
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        glob_pattern: str | None = None,
+        case_insensitive: bool = False,
+        fixed_strings: bool = False,
+        output_mode: str = "files_with_matches",
+        context_before: int = 0,
+        context_after: int = 0,
+        max_results: int = 100,
+    ) -> str:
+        """Search file contents with regex or fixed-string matching."""
+        try:
+            target = self.resolve_path(path)
+            if not target.exists():
+                return f"Error: Path not found: {path}"
+            if not (target.is_dir() or target.is_file()):
+                return f"Error: Unsupported path: {path}"
+
+            flags = re.IGNORECASE if case_insensitive else 0
+            needle = re.escape(pattern) if fixed_strings else pattern
+            try:
+                regex = re.compile(needle, flags)
+            except re.error as exc:
+                return f"Error: invalid regex pattern: {exc}"
+
+            safe_limit = max(1, int(max_results))
+            safe_before = max(0, int(context_before))
+            safe_after = max(0, int(context_after))
+            blocks: list[str] = []
+            counts: dict[str, int] = {}
+            matching_files: list[str] = []
+            root = target if target.is_dir() else target.parent
+
+            for file_path in _iter_files(target):
+                rel_path = file_path.relative_to(root).as_posix()
+                if glob_pattern and not _match_glob_pattern(rel_path, file_path.name, glob_pattern):
+                    continue
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    continue
+
+                lines = text.splitlines()
+                display = rel_path
+                file_count = 0
+                for line_no, line in enumerate(lines, start=1):
+                    if not regex.search(line):
+                        continue
+                    file_count += 1
+                    if output_mode == "files_with_matches":
+                        break
+                    if output_mode == "count":
+                        continue
+                    if len(blocks) >= safe_limit:
+                        break
+                    start = max(1, line_no - safe_before)
+                    end = min(len(lines), line_no + safe_after)
+                    block_lines = [f"{display}:{line_no}"]
+                    for current in range(start, end + 1):
+                        marker = ">" if current == line_no else " "
+                        block_lines.append(f"{marker} {current}| {lines[current - 1]}")
+                    blocks.append("\n".join(block_lines))
+                if file_count == 0:
+                    continue
+                matching_files.append(display)
+                counts[display] = file_count
+                if output_mode == "content" and len(blocks) >= safe_limit:
+                    break
+
+            if output_mode == "files_with_matches":
+                if not matching_files:
+                    return f"No matches found for pattern '{pattern}' in {path}"
+                ordered = sorted(matching_files)
+                result = "\n".join(ordered[:safe_limit])
+                if len(ordered) > safe_limit:
+                    result += f"\n\n(truncated, showing first {safe_limit} of {len(ordered)} matching files)"
+                return result
+
+            if output_mode == "count":
+                if not counts:
+                    return f"No matches found for pattern '{pattern}' in {path}"
+                ordered = sorted(counts.items())
+                result = "\n".join(f"{name}: {count}" for name, count in ordered[:safe_limit])
+                if len(ordered) > safe_limit:
+                    result += f"\n\n(truncated, showing first {safe_limit} of {len(ordered)} matching files)"
+                return result
+
+            if output_mode != "content":
+                return "Error: output_mode must be one of 'files_with_matches', 'count', or 'content'."
+            if not blocks:
+                return f"No matches found for pattern '{pattern}' in {path}"
+            result = "\n\n".join(blocks[:safe_limit])
+            if len(blocks) > safe_limit:
+                result += f"\n\n(truncated, showing first {safe_limit} matches)"
+            return result
+        except Exception as exc:
+            return f"Error searching files: {exc}"
+
     def image_crop(self, path: str, left: int, top: int, right: int, bottom: int) -> str:
         """Crop an image and save the result next to the input file."""
         try:
@@ -165,7 +307,15 @@ class BuiltinToolbox:
         except Exception as exc:
             return f"Error flipping image: {exc}"
 
-    def exec_command(self, command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+    def exec_command(
+        self,
+        command: str,
+        working_dir: str | None = None,
+        timeout: int = 60,
+        background: bool = False,
+        yield_ms: int = 1000,
+        scope_key: str | None = None,
+    ) -> str:
         """Execute one shell command and return stdout and stderr."""
         lower = command.strip().lower()
         for pattern in _DENY_PATTERNS:
@@ -174,6 +324,28 @@ class BuiltinToolbox:
 
         try:
             cwd = self.resolve_path(working_dir) if working_dir else self.workspace_root
+            if background:
+                manager = get_process_session_manager()
+                session = manager.start_session(command=command.strip(), cwd=cwd, scope_key=scope_key)
+                initial = manager.poll_session(
+                    session.session_id,
+                    timeout_ms=max(0, int(yield_ms)),
+                    scope_key=scope_key,
+                )
+                if initial and bool(initial.get("exited")):
+                    output = str(initial.get("output", "")).strip()
+                    if not output:
+                        output = "(no output)"
+                    exit_code = initial.get("exit_code")
+                    if isinstance(exit_code, int) and exit_code != 0:
+                        output = f"{output}\nExit code: {exit_code}".strip()
+                    manager.remove_session(session.session_id, scope_key=scope_key)
+                    return output
+                return (
+                    f"Command still running (session {session.session_id}, pid {session.process.pid or 'n/a'}). "
+                    "Use process_session(action='list'|'poll'|'log'|'write'|'kill'|'remove') for follow-up."
+                )
+
             completed = subprocess.run(
                 command.strip(),
                 shell=True,
@@ -200,6 +372,84 @@ class BuiltinToolbox:
         if len(result) > max_len:
             result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
         return result
+
+    def process_session(
+        self,
+        action: str = "list",
+        session_id: str | None = None,
+        input_text: str = "",
+        timeout_ms: int = 0,
+        offset: int = 0,
+        limit: int = 200,
+        scope_key: str | None = None,
+    ) -> str:
+        """Manage background sessions started by `exec_command`."""
+        manager = get_process_session_manager()
+        normalized = action.strip().lower()
+
+        if normalized == "list":
+            sessions = manager.list_sessions(scope_key=scope_key)
+            if not sessions:
+                return "No running or recent sessions."
+            now = time.time()
+            lines = []
+            for item in sessions:
+                runtime = max(0, int(now - item.started_at))
+                label = item.command.replace("\n", " ").strip()
+                if len(label) > 100:
+                    label = label[:100].rstrip() + "..."
+                lines.append(
+                    f"{item.session_id} {item.status:7} {runtime:>4}s pid={item.pid or 'n/a'} :: {label}"
+                )
+            return "\n".join(lines)
+
+        if not session_id:
+            return "Error: session_id is required for this action."
+
+        sid = session_id.strip()
+        if normalized == "poll":
+            payload = manager.poll_session(sid, timeout_ms=max(0, int(timeout_ms)), scope_key=scope_key)
+            if payload is None:
+                return f"Error: No session found for {sid}"
+            output = str(payload.get("output", "")).strip() or "(no new output)"
+            status = str(payload.get("status", "running"))
+            exit_code = payload.get("exit_code")
+            suffix = f"Status: {status}"
+            if isinstance(exit_code, int):
+                suffix += f"\nExit code: {exit_code}"
+            return f"{output}\n\n{suffix}".strip()
+
+        if normalized == "log":
+            payload = manager.get_log(
+                sid,
+                offset=max(0, int(offset)),
+                limit=max(1, int(limit)),
+                scope_key=scope_key,
+            )
+            if payload is None:
+                return f"Error: No session found for {sid}"
+            lines = payload.get("lines") or []
+            body = "\n".join(lines) if lines else "(no output yet)"
+            if payload.get("has_more"):
+                body += f"\n\n(truncated, read from offset {payload['offset'] + payload['limit']})"
+            return body
+
+        if normalized == "write":
+            if manager.write_session(sid, input_text, scope_key=scope_key):
+                return f"Sent {len(input_text)} characters to session {sid}."
+            return f"Error: Failed to write to session {sid}"
+
+        if normalized == "kill":
+            if manager.kill_session(sid, scope_key=scope_key):
+                return f"Kill signal sent to session {sid}."
+            return f"Error: Failed to kill session {sid}"
+
+        if normalized == "remove":
+            if manager.remove_session(sid, scope_key=scope_key):
+                return f"Removed session {sid}."
+            return f"Error: Failed to remove session {sid}. The session may still be running."
+
+        return "Error: action must be one of 'list', 'poll', 'log', 'write', 'kill', or 'remove'."
 
     def web_search(self, query: str, count: int = 5) -> str:
         """Search the web via Brave Search API."""
@@ -332,6 +582,36 @@ def list_dir(path: str = ".") -> str:
     return _get_default_toolbox().list_dir(path)
 
 
+def glob(pattern: str, path: str = ".", max_results: int = 200, entry_type: str = "files") -> str:
+    """Find files or directories matching one glob pattern."""
+    return _get_default_toolbox().glob(pattern, path=path, max_results=max_results, entry_type=entry_type)
+
+
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob_pattern: str | None = None,
+    case_insensitive: bool = False,
+    fixed_strings: bool = False,
+    output_mode: str = "files_with_matches",
+    context_before: int = 0,
+    context_after: int = 0,
+    max_results: int = 100,
+) -> str:
+    """Search file contents with regex or fixed-string matching."""
+    return _get_default_toolbox().grep(
+        pattern,
+        path=path,
+        glob_pattern=glob_pattern,
+        case_insensitive=case_insensitive,
+        fixed_strings=fixed_strings,
+        output_mode=output_mode,
+        context_before=context_before,
+        context_after=context_after,
+        max_results=max_results,
+    )
+
+
 def image_crop(path: str, left: int, top: int, right: int, bottom: int) -> str:
     """Crop an image and return the saved output path."""
     return _get_default_toolbox().image_crop(path, left, top, right, bottom)
@@ -359,9 +639,44 @@ _DENY_PATTERNS = [
 ]
 
 
-def exec_command(command: str, working_dir: str | None = None, timeout: int = 60) -> str:
+def exec_command(
+    command: str,
+    working_dir: str | None = None,
+    timeout: int = 60,
+    background: bool = False,
+    yield_ms: int = 1000,
+    scope_key: str | None = None,
+) -> str:
     """Execute one shell command and return stdout and stderr."""
-    return _get_default_toolbox().exec_command(command, working_dir=working_dir, timeout=timeout)
+    return _get_default_toolbox().exec_command(
+        command,
+        working_dir=working_dir,
+        timeout=timeout,
+        background=background,
+        yield_ms=yield_ms,
+        scope_key=scope_key,
+    )
+
+
+def process_session(
+    action: str = "list",
+    session_id: str | None = None,
+    input_text: str = "",
+    timeout_ms: int = 0,
+    offset: int = 0,
+    limit: int = 200,
+    scope_key: str | None = None,
+) -> str:
+    """Manage background sessions started by `exec_command`."""
+    return _get_default_toolbox().process_session(
+        action=action,
+        session_id=session_id,
+        input_text=input_text,
+        timeout_ms=timeout_ms,
+        offset=offset,
+        limit=limit,
+        scope_key=scope_key,
+    )
 
 
 def _validate_http_url(url: str) -> tuple[bool, str]:
@@ -389,3 +704,50 @@ def web_fetch(url: str, max_chars: int = 50000) -> str:
 
 # Match picobot-style tool naming when shown to the model.
 exec_command.__name__ = "exec"
+process_session.__name__ = "process"
+
+
+_IGNORE_DIR_NAMES = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".coverage",
+    "htmlcov",
+}
+
+
+def _iter_entries(root: Path, *, include_files: bool, include_dirs: bool):
+    """Yield workspace entries while skipping noisy directories."""
+    for current_root, dir_names, file_names in os.walk(root):
+        dir_names[:] = sorted(name for name in dir_names if name not in _IGNORE_DIR_NAMES)
+        current = Path(current_root)
+        if include_dirs and current != root:
+            yield current
+        if include_files:
+            for file_name in sorted(file_names):
+                yield current / file_name
+
+
+def _iter_files(target: Path):
+    """Yield text-like files below one path."""
+    if target.is_file():
+        yield target
+        return
+    for entry in _iter_entries(target, include_files=True, include_dirs=False):
+        if entry.is_file():
+            yield entry
+
+
+def _match_glob_pattern(relative_path: str, entry_name: str, pattern: str) -> bool:
+    """Match one pattern against both relative path and basename."""
+    if "/" in pattern or "**" in pattern:
+        return fnmatch.fnmatch(relative_path, pattern)
+    return fnmatch.fnmatch(entry_name, pattern) or fnmatch.fnmatch(relative_path, pattern)

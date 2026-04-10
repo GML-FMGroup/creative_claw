@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from google.adk.events import Event, EventActions
+
 from conf.system import SYS_CONFIG
 from src.runtime.models import InboundMessage, MessageAttachment
 from src.runtime.workflow_service import CreativeClawRuntime
@@ -83,6 +85,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(session.state["workflow_status"], "running")
         self.assertEqual(session.state["final_summary"], "")
+        self.assertEqual(session.state["final_response"], "")
         self.assertEqual(session.state["current_parameters"], {})
         self.assertIsNone(session.state["current_output"])
         self.assertEqual(session.state["input_files"], [])
@@ -138,13 +141,15 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def generate_step_plan(self) -> dict:
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "The image is ready.",
+                    "final_summary": "Image generation is complete.",
+                    "final_response": "The image is ready.",
                     "last_response": "Internal orchestrator log",
                     "last_output_message": "The image is ready.",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "The image is ready.",
+                        "summary": "Image generation is complete.",
+                        "final_response": "The image is ready.",
                     },
                 }
 
@@ -166,6 +171,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].metadata["stage_title"], "Starting")
         self.assertEqual(events[-1].event_type, "final")
         self.assertEqual(events[-1].text, "The image is ready.")
+        self.assertNotIn("Image generation is complete.", events[-1].text)
         self.assertTrue(all("user instruction:" not in event.text for event in events))
         self.assertTrue(all("Orchestrator response:" not in event.text for event in events))
         self.assertTrue(all("Step result:" not in event.text for event in events))
@@ -401,13 +407,15 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     }
                 return {
                     "workflow_status": "finished",
-                    "final_summary": "The task is complete.",
-                    "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"The task is complete."}',
+                    "final_summary": "All workflow steps are complete.",
+                    "final_response": "The task is complete.",
+                    "last_response": '{"next_agent":"FINISH","parameters":{},"summary":"All workflow steps are complete.","final_response":"The task is complete."}',
                     "last_output_message": "The task is complete.",
                     "current_plan": {
                         "next_agent": "FINISH",
                         "parameters": {},
-                        "summary": "The task is complete.",
+                        "summary": "All workflow steps are complete.",
+                        "final_response": "The task is complete.",
                     },
                     "new_orchestration_events": [
                         {
@@ -440,6 +448,46 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.metadata["stage_title"] == "KnowledgeAgent Returned" for event in progress_events))
         self.assertEqual(events[-1].event_type, "final")
         self.assertEqual(events[-1].text, "The task is complete.")
+
+    async def test_build_final_event_prefers_state_final_response_over_internal_summary(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="hello",
+        )
+
+        user_id, session_id = await runtime._ensure_session(inbound)
+        session = await runtime.session_service.get_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await runtime.session_service.append_event(
+            session,
+            Event(
+                author="unit_test",
+                actions=EventActions(
+                    state_delta={
+                        "files_history": [],
+                        "text_history": [],
+                        "summary_history": [],
+                        "final_summary": "Internal completion summary.",
+                        "final_response": "这是给用户看的最终回复。",
+                    }
+                ),
+            ),
+        )
+
+        final_event = await runtime._build_final_event(
+            user_id=user_id,
+            session_id=session_id,
+            final_summary="fallback reply",
+        )
+
+        self.assertEqual(final_event.event_type, "final")
+        self.assertEqual(final_event.text, "这是给用户看的最终回复。")
 
     async def test_run_message_surfaces_round_and_agent_for_executor_failure(self) -> None:
         runtime = CreativeClawRuntime()

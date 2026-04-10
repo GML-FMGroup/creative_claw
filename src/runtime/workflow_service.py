@@ -223,6 +223,7 @@ class CreativeClawRuntime:
 
         try:
             final_summary = "task workflow has started."
+            final_response = ""
             max_loops = SYS_CONFIG.max_iterations_orchestrator
             orchestration_history: list[dict[str, str]] = []
             current_round = 0
@@ -244,6 +245,7 @@ class CreativeClawRuntime:
                 workflow_status = step_result.get("workflow_status", "running")
                 response_text = step_result.get("last_response", "")
                 output_message = step_result.get("last_output_message", "")
+                final_response = str(step_result.get("final_response", "") or "").strip() or final_response
                 orchestration_events = list(step_result.get("new_orchestration_events", []))
                 current_plan = step_result.get("current_plan", {})
                 next_agent = str(current_plan.get("next_agent", "")).strip()
@@ -286,7 +288,11 @@ class CreativeClawRuntime:
                     f"Workflow has reached the max iteration ({max_loops}) and has been terminated."
                 )
 
-            final_event = await self._build_final_event(user_id, session_id, final_summary)
+            final_event = await self._build_final_event(
+                user_id,
+                session_id,
+                final_response or final_summary,
+            )
             yield final_event
         except Exception as exc:
             error_summary = _format_exception_summary(exc)
@@ -365,6 +371,7 @@ class CreativeClawRuntime:
         state_delta["input_files"] = []
         state_delta["workflow_status"] = "running"
         state_delta["final_summary"] = ""
+        state_delta["final_response"] = ""
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
@@ -448,11 +455,14 @@ class CreativeClawRuntime:
         if text_history and text_history[-1]:
             final_summary = text_history[-1]
         else:
+            state_response = final_session.state.get("final_response")
+            if state_response:
+                final_summary = state_response
             state_summary = final_session.state.get("final_summary")
-            if state_summary:
+            if state_summary and not state_response:
                 final_summary = state_summary
             summary_history = final_session.state.get("summary_history") or []
-            if summary_history and not state_summary:
+            if summary_history and not state_summary and not state_response:
                 history_text = "\n".join(f"- {summary}" for summary in summary_history)
                 final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 

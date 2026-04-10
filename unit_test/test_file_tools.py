@@ -1,3 +1,6 @@
+import re
+import shlex
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,6 +39,45 @@ class BuiltinToolTests(unittest.TestCase):
 
             self.assertIn("[D] subdir", result)
             self.assertIn("[F] demo.txt", result)
+
+    def test_glob_finds_matching_files_and_skips_ignored_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src" / "nested").mkdir(parents=True)
+            (root / "node_modules").mkdir()
+            (root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "src" / "nested" / "worker.py").write_text("print('worker')\n", encoding="utf-8")
+            (root / "node_modules" / "skip.py").write_text("print('skip')\n", encoding="utf-8")
+            toolbox = BuiltinToolbox(root)
+
+            result = toolbox.glob("*.py", path=".")
+
+            self.assertIn("src/app.py", result)
+            self.assertIn("src/nested/worker.py", result)
+            self.assertNotIn("node_modules/skip.py", result)
+
+    def test_grep_supports_glob_filter_and_content_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text(
+                "def hello():\n    return 'hello creative claw'\n",
+                encoding="utf-8",
+            )
+            (root / "notes.txt").write_text("hello from notes\n", encoding="utf-8")
+            toolbox = BuiltinToolbox(root)
+
+            result = toolbox.grep(
+                "hello",
+                path=".",
+                glob_pattern="*.py",
+                output_mode="content",
+                context_after=1,
+            )
+
+            self.assertIn("src/app.py:1", result)
+            self.assertIn("return 'hello creative claw'", result)
+            self.assertNotIn("notes.txt", result)
 
     def test_outside_workspace_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -83,6 +125,62 @@ class BuiltinToolTests(unittest.TestCase):
             self.assertTrue((root / cropped_path).exists())
             self.assertTrue((root / rotated_path).exists())
             self.assertTrue((root / flipped_path).exists())
+
+    def test_background_exec_and_process_session_follow_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            toolbox = BuiltinToolbox(root)
+            scope_key = "unit-test-process-session"
+            command = (
+                f"{shlex.quote(sys.executable)} -c "
+                "\"import time; time.sleep(0.3); print('done', flush=True)\""
+            )
+
+            start_result = toolbox.exec_command(
+                command,
+                working_dir=".",
+                background=True,
+                yield_ms=0,
+                scope_key=scope_key,
+            )
+
+            self.assertIn("Command still running", start_result)
+            match = re.search(r"session ([^,\s]+)", start_result)
+            self.assertIsNotNone(match)
+            session_id = match.group(1)
+
+            listed = toolbox.process_session(action="list", scope_key=scope_key)
+            self.assertIn(session_id, listed)
+
+            poll_result = toolbox.process_session(
+                action="poll",
+                session_id=session_id,
+                timeout_ms=1500,
+                scope_key=scope_key,
+            )
+            self.assertIn("done", poll_result)
+            if "Status: exited" not in poll_result:
+                poll_result = toolbox.process_session(
+                    action="poll",
+                    session_id=session_id,
+                    timeout_ms=500,
+                    scope_key=scope_key,
+                )
+            self.assertIn("Status: exited", poll_result)
+
+            log_result = toolbox.process_session(
+                action="log",
+                session_id=session_id,
+                scope_key=scope_key,
+            )
+            self.assertIn("done", log_result)
+
+            remove_result = toolbox.process_session(
+                action="remove",
+                session_id=session_id,
+                scope_key=scope_key,
+            )
+            self.assertEqual(remove_result, f"Removed session {session_id}.")
 
 
 if __name__ == "__main__":

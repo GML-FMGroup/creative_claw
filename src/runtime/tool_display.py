@@ -72,6 +72,12 @@ def _summarize_read_file_result(result_text: str) -> str:
 def _summarize_exec_result(result_text: str) -> str:
     if result_text.startswith("Error") or result_text.startswith("Warning"):
         return result_text
+    if result_text.startswith("Command still running (session "):
+        match = re.search(r"session ([^,\s]+), pid ([^)]+)\)", result_text)
+        if match:
+            session_id, pid = match.groups()
+            return f"Background command started in session {session_id} with pid {pid}."
+        return stringify_value(result_text, max_chars=220)
     stdout_text = result_text
     stderr_text = ""
     if "\nSTDERR:\n" in result_text:
@@ -122,6 +128,55 @@ def _summarize_write_like_result(result_text: str) -> str:
     return stringify_value(result_text, max_chars=200)
 
 
+def _summarize_glob_result(result_text: str) -> str:
+    if (
+        result_text.startswith("Error")
+        or result_text.startswith("Warning")
+        or result_text.startswith("No paths matched")
+    ):
+        return result_text
+    matches = [line.strip() for line in result_text.splitlines() if line.strip()]
+    preview = "; ".join(matches[:3])
+    return f"Found {len(matches)} matching paths. Preview: {stringify_value(preview, max_chars=180)}"
+
+
+def _summarize_grep_result(result_text: str) -> str:
+    if (
+        result_text.startswith("Error")
+        or result_text.startswith("Warning")
+        or result_text.startswith("No matches found")
+    ):
+        return result_text
+    if "\n\nStatus:" in result_text:
+        output_text, status_text = result_text.split("\n\nStatus:", 1)
+        preview = head_tail_preview(output_text, max_lines=2, max_chars=180)
+        return f"Session update received. Status:{status_text.strip()}. Output: {preview}"
+    lines = [line.strip() for line in result_text.splitlines() if line.strip()]
+    if any(re.match(r"^[^:\n]+:\d+$", line) for line in lines):
+        preview = head_tail_preview(result_text, max_lines=3, max_chars=220)
+        return f"Matched content snippets. {preview}"
+    preview = "; ".join(lines[:3])
+    return f"Found matches in {len(lines)} files or entries. Preview: {stringify_value(preview, max_chars=180)}"
+
+
+def _summarize_process_result(result_text: str) -> str:
+    if (
+        result_text.startswith("Error")
+        or result_text.startswith("Warning")
+        or result_text.startswith("No running or recent sessions.")
+    ):
+        return result_text
+    if result_text.startswith("Removed session") or result_text.startswith("Kill signal sent"):
+        return stringify_value(result_text, max_chars=200)
+    if "\n\nStatus:" in result_text:
+        output_text, status_text = result_text.split("\n\nStatus:", 1)
+        preview = head_tail_preview(output_text, max_lines=2, max_chars=180)
+        return f"Session update received. Status:{status_text.strip()}. Output: {preview}"
+    sessions = [line.strip() for line in result_text.splitlines() if line.strip()]
+    preview = "; ".join(sessions[:2])
+    return f"Listed {len(sessions)} sessions. Preview: {stringify_value(preview, max_chars=180)}"
+
+
 def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
     """Summarize one tool result into status plus short preview."""
     text = stringify_value(result, max_chars=260)
@@ -132,10 +187,13 @@ def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
         return "warning", text
     summarizers = {
         "list_dir": _summarize_list_dir_result,
+        "glob": _summarize_glob_result,
+        "grep": _summarize_grep_result,
         "read_file": _summarize_read_file_result,
         "write_file": _summarize_write_like_result,
         "edit_file": _summarize_write_like_result,
         "exec_command": _summarize_exec_result,
+        "process_session": _summarize_process_result,
         "web_search": _summarize_web_search_result,
         "web_fetch": _summarize_web_fetch_result,
     }

@@ -161,6 +161,8 @@ class Orchestrator:
                 self.list_skills,
                 self.read_skill,
                 self.list_dir,
+                self.glob,
+                self.grep,
                 self.read_file,
                 self.write_file,
                 self.edit_file,
@@ -168,6 +170,7 @@ class Orchestrator:
                 self.image_rotate,
                 self.image_flip,
                 self.exec_command,
+                self.process_session,
                 self.web_search,
                 self.web_fetch,
             ],
@@ -188,9 +191,10 @@ class Orchestrator:
         skills_summary = self.skill_registry.build_summary()
 
         return f"""
-You are Creative Claw's single orchestrator.
+You are Creative Claw's primary user-facing orchestrator.
 
-Your job is to inspect the current state, use skills and built-in tools when needed, and then decide exactly one next workflow step.
+Your job is to talk with the user naturally, inspect the current state, use skills and built-in tools when helpful, and then decide exactly one next action.
+Whenever possible, solve the user's request directly in this turn instead of delegating.
 Do not create a full upfront plan unless the user explicitly asks for one.
 
 You can use four kinds of capabilities:
@@ -200,14 +204,21 @@ You can use four kinds of capabilities:
 4. Existing expert agents, but you cannot execute them directly in this invocation
 
 Rules:
+- Treat yourself as the main conversational agent. Reply to the user's actual request, not to an internal workflow.
 - When a skill seems relevant, call `list_skills` first and then `read_skill`.
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
-- Use built-in tools for local workspace work: `list_dir`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec`, `web_search`, `web_fetch`.
+- Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
-- Inspect local files with `list_dir` and `read_file` before changing them when the path or contents are uncertain.
+- Inspect local files with `list_dir`, `glob`, `grep`, and `read_file` before changing them when the path or contents are uncertain.
 - Use local image tools for lightweight preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
 - Keep changes small and reviewable, and re-check the latest state after each meaningful action.
+- For coding, debugging, and file-editing tasks, prefer solving the task directly with built-in tools before delegating to an expert.
+- For coding tasks, you may inspect files, write or edit code, run targeted commands with `exec_command`, inspect stdout and stderr, and iterate based on the results.
+- Use `glob` to locate candidate files quickly and `grep` to find symbols, messages, and code snippets before reading full files.
+- For long-running commands, start them with `exec_command(background=true, yield_ms=...)` and then use `process_session` to list, poll, inspect logs, write stdin, kill, or remove sessions.
+- After writing or editing code, prefer running a small verification command with `exec_command` before finishing when verification is feasible.
+- For ordinary conversation, explanations, brainstorming, lightweight analysis, and tasks that built-in tools can complete, finish directly instead of delegating.
 - When planning expert parameters, pass workspace file paths with `input_path` or `input_paths` instead of artifact names.
 - `input_name` is legacy and should not be used unless compatibility fallback is absolutely required.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
@@ -215,6 +226,7 @@ Rules:
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
+- Only choose an expert agent when the task needs specialized image, search, or other expert capability that built-in tools and direct reasoning cannot handle well.
 - Keep the language of any user-facing summary or reply aligned with the user's language.
 - If the user primarily writes in Chinese, reply in Chinese. If the user primarily writes in English, reply in English.
 - If the user mixes languages, follow the primary language of the user's latest message.
@@ -223,9 +235,13 @@ Rules:
   {{
     "next_agent": "AgentName or FINISH",
     "parameters": {{}},
-    "summary": "One short sentence describing the chosen next step"
+    "summary": "One short internal sentence describing the chosen next action or completion reason",
+    "final_response": "Direct user-facing reply. Required when next_agent is FINISH; otherwise use an empty string."
   }}
 - If the task is complete, set `"next_agent"` to `"FINISH"` and keep `"parameters"` empty.
+- When `"next_agent"` is `"FINISH"`, `summary` is internal and `final_response` must contain the actual natural-language reply to the user.
+- When `"next_agent"` is not `"FINISH"`, `final_response` must be empty and `summary` should describe the next action.
+- Do not put workflow notes in `final_response`. Never say things like "the task can end here", "please directly", or other internal process commentary.
 - If the task is not complete, choose exactly one expert agent for the next step.
 - Do not output markdown fences or any explanatory text outside the JSON object.
 
@@ -447,10 +463,18 @@ Available expert agents:
             else:
                 summary = f"Call `{next_agent}` for the next step."
 
+        final_response = str(raw_plan.get("final_response") or "").strip()
+        if next_agent == "FINISH":
+            if not final_response:
+                final_response = summary
+        else:
+            final_response = ""
+
         return {
             "next_agent": next_agent,
             "parameters": parameters,
             "summary": summary,
+            "final_response": final_response,
         }
 
     async def _persist_step_plan(
@@ -472,6 +496,7 @@ Available expert agents:
         state = session.state
         next_agent = normalized_plan["next_agent"]
         summary = normalized_plan["summary"]
+        final_user_response = normalized_plan.get("final_response", "")
         parameters = normalized_plan["parameters"]
 
         if next_agent == "FINISH":
@@ -486,7 +511,8 @@ Available expert agents:
                 "current_plan": normalized_plan,
                 "workflow_status": "finished",
                 "final_summary": summary,
-                "last_output_message": summary,
+                "final_response": final_user_response,
+                "last_output_message": final_user_response,
                 "last_orchestrator_response": final_response,
                 "current_parameters": {},
                 "orchestration_events": list(state.get("orchestration_events", [])),
@@ -502,6 +528,7 @@ Available expert agents:
             state_delta = {
                 "current_plan": normalized_plan,
                 "workflow_status": "running",
+                "final_response": "",
                 "last_output_message": "",
                 "last_orchestrator_response": final_response,
                 "current_parameters": parameters,
@@ -517,6 +544,7 @@ Available expert agents:
         return {
             "workflow_status": state_delta["workflow_status"],
             "final_summary": state_delta.get("final_summary", ""),
+            "final_response": state_delta.get("final_response", ""),
             "last_response": final_response,
             "last_output_message": state_delta["last_output_message"],
             "new_orchestration_events": orchestration_events[previous_event_count:],
@@ -563,6 +591,75 @@ Available expert agents:
             stage="inspection",
             args={"path": path},
             runner=lambda: self.toolbox.list_dir(path),
+        )
+
+    def glob(
+        self,
+        pattern: str,
+        path: str = ".",
+        max_results: int = 200,
+        entry_type: str = "files",
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Find workspace paths matching one glob pattern."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="glob",
+            stage="inspection",
+            args={
+                "pattern": pattern,
+                "path": path,
+                "max_results": max_results,
+                "entry_type": entry_type,
+            },
+            runner=lambda: self.toolbox.glob(
+                pattern,
+                path=path,
+                max_results=max_results,
+                entry_type=entry_type,
+            ),
+        )
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = ".",
+        glob_pattern: str | None = None,
+        case_insensitive: bool = False,
+        fixed_strings: bool = False,
+        output_mode: str = "files_with_matches",
+        context_before: int = 0,
+        context_after: int = 0,
+        max_results: int = 100,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Search workspace file contents with regex or fixed-string matching."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="grep",
+            stage="inspection",
+            args={
+                "pattern": pattern,
+                "path": path,
+                "glob_pattern": glob_pattern,
+                "case_insensitive": case_insensitive,
+                "fixed_strings": fixed_strings,
+                "output_mode": output_mode,
+                "context_before": context_before,
+                "context_after": context_after,
+                "max_results": max_results,
+            },
+            runner=lambda: self.toolbox.grep(
+                pattern,
+                path=path,
+                glob_pattern=glob_pattern,
+                case_insensitive=case_insensitive,
+                fixed_strings=fixed_strings,
+                output_mode=output_mode,
+                context_before=context_before,
+                context_after=context_after,
+                max_results=max_results,
+            ),
         )
 
     def read_file(self, path: str, tool_context: ToolContext | None = None) -> str:
@@ -650,15 +747,66 @@ Available expert agents:
         command: str,
         working_dir: str | None = None,
         timeout: int = 60,
+        background: bool = False,
+        yield_ms: int = 1000,
         tool_context: ToolContext | None = None,
     ) -> str:
         """Execute one command and record the step."""
+        scope_key = self._resolve_tool_context_session_id(tool_context) if tool_context is not None else None
         return self._run_tool_with_events(
             tool_context=tool_context,
             tool_name="exec_command",
             stage="execution",
-            args={"command": command, "working_dir": working_dir, "timeout": timeout},
-            runner=lambda: self.toolbox.exec_command(command, working_dir, timeout),
+            args={
+                "command": command,
+                "working_dir": working_dir,
+                "timeout": timeout,
+                "background": background,
+                "yield_ms": yield_ms,
+            },
+            runner=lambda: self.toolbox.exec_command(
+                command,
+                working_dir=working_dir,
+                timeout=timeout,
+                background=background,
+                yield_ms=yield_ms,
+                scope_key=scope_key,
+            ),
+        )
+
+    def process_session(
+        self,
+        action: str = "list",
+        session_id: str | None = None,
+        input_text: str = "",
+        timeout_ms: int = 0,
+        offset: int = 0,
+        limit: int = 200,
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Manage background command sessions and inspect their outputs."""
+        scope_key = self._resolve_tool_context_session_id(tool_context) if tool_context is not None else None
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="process_session",
+            stage="execution",
+            args={
+                "action": action,
+                "session_id": session_id,
+                "input_text": input_text,
+                "timeout_ms": timeout_ms,
+                "offset": offset,
+                "limit": limit,
+            },
+            runner=lambda: self.toolbox.process_session(
+                action=action,
+                session_id=session_id,
+                input_text=input_text,
+                timeout_ms=timeout_ms,
+                offset=offset,
+                limit=limit,
+                scope_key=scope_key,
+            ),
         )
 
     def web_search(self, query: str, count: int = 5, tool_context: ToolContext | None = None) -> str:
@@ -721,7 +869,7 @@ Available expert agents:
             user_id=self.uid,
             session_id=self.sid,
             new_message=self.build_runner_message(
-                "Review the current state, use built-in tools if needed, and then output the next single-step plan as JSON."
+                "Review the current state, solve the user's request directly when possible, use built-in tools if needed, and then output the next single-action JSON plan."
             ),
         )
         raw_plan = self._parse_json_response(final_response)

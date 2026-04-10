@@ -26,11 +26,19 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)
         self.assertIn("image_flip", instruction)
+        self.assertIn("glob", instruction)
+        self.assertIn("grep", instruction)
+        self.assertIn("exec_command", instruction)
+        self.assertIn("process_session", instruction)
         self.assertIn("exactly one JSON object", instruction)
         self.assertIn('"next_agent"', instruction)
+        self.assertIn('"final_response"', instruction)
         self.assertIn("cannot execute them directly", instruction)
         self.assertIn("keep changes small and reviewable", instruction.lower())
         self.assertIn("re-check the latest state", instruction.lower())
+        self.assertIn("main conversational agent", instruction.lower())
+        self.assertIn("coding, debugging, and file-editing tasks", instruction.lower())
+        self.assertIn("background=true", instruction)
         self.assertIn("ImageToPromptAgent", instruction)
         self.assertIn("aspect_ratio", instruction)
         self.assertIn("resolution", instruction)
@@ -62,6 +70,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(plan["next_agent"], "KnowledgeAgent")
         self.assertEqual(plan["parameters"], {"topic": "desert"})
         self.assertEqual(plan["summary"], "Let the knowledge expert organize the plan first.")
+        self.assertEqual(plan["final_response"], "")
 
     def test_normalize_step_plan_maps_null_like_values_to_finish(self) -> None:
         orchestrator = Orchestrator(
@@ -81,6 +90,30 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(plan["next_agent"], "FINISH")
         self.assertEqual(plan["parameters"], {})
         self.assertIn("complete", plan["summary"].lower())
+        self.assertIn("complete", plan["final_response"].lower())
+
+    def test_normalize_step_plan_keeps_finish_final_response_separate_from_summary(self) -> None:
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_runners={},
+        )
+
+        plan = orchestrator._normalize_step_plan(
+            {
+                "next_agent": "FINISH",
+                "parameters": {},
+                "summary": "Direct reply is ready.",
+                "final_response": "你好，我是 Creative Claw，可以陪你聊天，也可以帮你完成创意任务。",
+            }
+        )
+
+        self.assertEqual(plan["next_agent"], "FINISH")
+        self.assertEqual(plan["summary"], "Direct reply is ready.")
+        self.assertEqual(
+            plan["final_response"],
+            "你好，我是 Creative Claw，可以陪你聊天，也可以帮你完成创意任务。",
+        )
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
@@ -147,6 +180,36 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("about 3 stdout lines", summary)
         self.assertIn("about 2 stderr lines", summary)
         self.assertIn("stderr summary", summary)
+
+    def test_summarize_background_exec_command_mentions_session(self) -> None:
+        status, summary = Orchestrator._summarize_tool_result(
+            "exec_command",
+            "Command still running (session abc123, pid 456). Use process_session(action='list'|'poll') for follow-up.",
+        )
+
+        self.assertEqual(status, "success")
+        self.assertIn("Background command started", summary)
+        self.assertIn("abc123", summary)
+
+    def test_summarize_glob_result_counts_matches(self) -> None:
+        status, summary = Orchestrator._summarize_tool_result(
+            "glob",
+            "src/app.py\nsrc/nested/worker.py",
+        )
+
+        self.assertEqual(status, "success")
+        self.assertIn("2 matching paths", summary)
+        self.assertIn("src/app.py", summary)
+
+    def test_summarize_process_session_result_mentions_status(self) -> None:
+        status, summary = Orchestrator._summarize_tool_result(
+            "process_session",
+            "build finished\n\nStatus: exited\nExit code: 0",
+        )
+
+        self.assertEqual(status, "success")
+        self.assertIn("Session update received", summary)
+        self.assertIn("exited", summary)
 
     def test_summarize_web_fetch_uses_json_fields(self) -> None:
         payload = (
