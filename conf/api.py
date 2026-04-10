@@ -14,12 +14,14 @@ class APIConfig(BaseModel):
     DASHSCOPE_API_KEY: str
     GOOGLE_API_KEY: str
     ARK_API_KEY: str = ""
+    DDS_API_KEY: str = ""
 
 
 # Load API keys from environment variables
 dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
 google_api_key = os.getenv("GOOGLE_API_KEY")
 ark_api_key = os.getenv("ARK_API_KEY")
+dds_api_key = os.getenv("DDS_API_KEY")
 
 # Check if the keys are set and raise an error if not
 if not dashscope_api_key:
@@ -31,4 +33,5 @@ API_CONFIG = APIConfig(
     DASHSCOPE_API_KEY=dashscope_api_key,
     GOOGLE_API_KEY=google_api_key,
     ARK_API_KEY=ark_api_key or "",
+    DDS_API_KEY=dds_api_key or "",
 )

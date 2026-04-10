@@ -2,6 +2,12 @@
     "root_agent": [],
     "expert_agents": [
         {
+            "name": "ImageGroundAgent",
+            "enable": true,
+            "description": "Ground one target description in one workspace image with the DeepDataSpace DINO-XSeek model. DINO-XSeek combines the DINO-X unified vision backbone with a multimodal large language model, so it can take a precise natural-language prompt, including position, color, and other visual attributes, and locate the matching object in the image. Input: `input_path` for one workspace image plus `prompt` for the target object phrase, with optional `model`. Output: structured grounding results containing the provider response `objects` list and a simplified `bboxes` list, where each bbox is `[x1, y1, x2, y2]` in the original image coordinate space.",
+            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-XSeek-1.0'(optional)}`"
+        },
+        {
             "name": "ImageGenerationAgent",
             "enable": true,
             "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values.",
