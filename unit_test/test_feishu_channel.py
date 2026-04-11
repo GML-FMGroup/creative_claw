@@ -346,6 +346,72 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(inbound_messages[0].attachments), 1)
         self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_4_img_post_1.png")
 
+    async def test_on_post_message_extracts_text_from_top_level_content(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_5",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="post",
+                    content=(
+                        '{"title":"Image grounding task","content":[['
+                        '{"tag":"text","text":"将这个图像里面的人物的bbox坐标输出给我一下，利用 ImageGroundingAgent 完成"},'
+                        '{"tag":"img","image_key":"img_post_2"}'
+                        ']]}'
+                    ),
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(
+            inbound_messages[0].text,
+            "Image grounding task 将这个图像里面的人物的bbox坐标输出给我一下，利用 ImageGroundingAgent 完成",
+        )
+        self.assertEqual(len(inbound_messages[0].attachments), 1)
+        self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_5_img_post_2.png")
+
+    async def test_on_post_message_falls_back_to_title_when_body_has_only_image(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_6",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="post",
+                    content=(
+                        '{"zh_cn":{"title":"请输出人物 bbox","content":[['
+                        '{"tag":"img","image_key":"img_post_3"}'
+                        ']]}}'
+                    ),
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(inbound_messages[0].text, "请输出人物 bbox")
+        self.assertEqual(len(inbound_messages[0].attachments), 1)
+        self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_6_img_post_3.png")
+
 
 if __name__ == "__main__":
     unittest.main()

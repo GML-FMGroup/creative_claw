@@ -1,4 +1,4 @@
-from src.agents.experts.dino_xseek.image_ground_agent import ImageGroundAgent
+from src.agents.experts.dino_xseek.image_grounding_agent import ImageGroundingAgent
 from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
 from src.agents.experts.image_generation.image_generation_agent import ImageGenerationAgent
 from src.agents.experts.image_to_prompt.image_to_prompt_agent import ImageToPromptAgent

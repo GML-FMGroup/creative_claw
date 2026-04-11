@@ -754,14 +754,14 @@ class FeishuChannel(BaseChannel):
             return raw_content
         if not isinstance(parsed, dict):
             return raw_content
-        for lang_key in ("zh_cn", "en_us", "ja_jp"):
-            lang = parsed.get(lang_key)
-            if not isinstance(lang, dict):
-                continue
-            blocks = lang.get("content", [])
+        for payload in _iter_post_lang_payloads(parsed):
+            parts: list[str] = []
+            title = str(payload.get("title", "")).strip()
+            if title:
+                parts.append(title)
+            blocks = payload.get("content", [])
             if not isinstance(blocks, list):
                 continue
-            parts: list[str] = []
             for block in blocks:
                 if not isinstance(block, list):
                     continue

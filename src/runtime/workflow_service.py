@@ -13,7 +13,7 @@ from google.genai.types import Content, Part
 
 from conf.system import SYS_CONFIG
 from src.agents.experts import (
-    ImageGroundAgent,
+    ImageGroundingAgent,
     ImageEditingAgent,
     ImageGenerationAgent,
     ImageToPromptAgent,
@@ -127,7 +127,7 @@ class CreativeClawRuntime:
         self._session_keys: dict[str, str] = {}
 
         self.expert_agents = {
-            "ImageGroundAgent": ImageGroundAgent(name="ImageGroundAgent"),
+            "ImageGroundingAgent": ImageGroundingAgent(name="ImageGroundingAgent"),
             "ImageGenerationAgent": ImageGenerationAgent(name="Text2ImageAgent"),
             "ImageEditingAgent": ImageEditingAgent(name="ImageEditingAgent"),
             "ImageToPromptAgent": ImageToPromptAgent(name="ImageToPromptAgent"),

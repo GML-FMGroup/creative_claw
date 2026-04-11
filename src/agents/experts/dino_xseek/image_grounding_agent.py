@@ -14,7 +14,7 @@ from src.agents.experts.dino_xseek.tool import dino_xseek_detection_tool
 from src.logger import logger
 
 
-class ImageGroundAgent(BaseAgent):
+class ImageGroundingAgent(BaseAgent):
     """Ground a natural-language target description to bbox results in one image."""
 
     model_config = {"arbitrary_types_allowed": True}

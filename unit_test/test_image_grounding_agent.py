@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from src.agents.experts.dino_xseek.image_ground_agent import ImageGroundAgent
+from src.agents.experts.dino_xseek.image_grounding_agent import ImageGroundingAgent
 
 
 def _build_ctx(state: dict) -> SimpleNamespace:
@@ -16,9 +16,9 @@ def _build_ctx(state: dict) -> SimpleNamespace:
     )
 
 
-class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
+class ImageGroundingAgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_returns_structured_bbox_results(self) -> None:
-        agent = ImageGroundAgent(name="ImageGroundAgent")
+        agent = ImageGroundingAgent(name="ImageGroundingAgent")
         ctx = _build_ctx(
             {
                 "current_parameters": {
@@ -29,7 +29,7 @@ class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "src.agents.experts.dino_xseek.image_ground_agent.dino_xseek_detection_tool",
+            "src.agents.experts.dino_xseek.image_grounding_agent.dino_xseek_detection_tool",
             new=AsyncMock(
                 return_value={
                     "status": "success",
@@ -61,7 +61,7 @@ class ImageGroundAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].actions.state_delta["image_ground_results"][0]["task_uuid"], "task-123")
 
     async def test_agent_rejects_missing_required_parameters(self) -> None:
-        agent = ImageGroundAgent(name="ImageGroundAgent")
+        agent = ImageGroundingAgent(name="ImageGroundingAgent")
         ctx = _build_ctx({"current_parameters": {"input_path": "inbox/session/a.png"}})
 
         events = [event async for event in agent._run_async_impl(ctx)]
