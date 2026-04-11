@@ -20,6 +20,7 @@ from src.agents.experts import (
     ImageUnderstandingAgent,
     KnowledgeAgent,
     SearchAgent,
+    VideoGenerationAgent,
 )
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
@@ -160,6 +161,11 @@ class CreativeClawRuntime:
             ),
             "SearchAgent": annotate_agent_origin(
                 SearchAgent(name="SearchAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "VideoGenerationAgent": annotate_agent_origin(
+                VideoGenerationAgent(name="VideoGenerationAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),

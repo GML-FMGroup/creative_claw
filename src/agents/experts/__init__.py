@@ -5,3 +5,4 @@ from src.agents.experts.image_to_prompt.image_to_prompt_agent import ImageToProm
 from src.agents.experts.search.search_agent import SearchAgent
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
+from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent

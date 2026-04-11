@@ -24,6 +24,17 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(getattr(image_to_prompt_agent, "_adk_origin_path", None))
 
+    def test_runtime_registers_video_generation_expert(self) -> None:
+        runtime = CreativeClawRuntime()
+        video_agent = runtime.expert_agents["VideoGenerationAgent"]
+
+        self.assertIn("VideoGenerationAgent", runtime.expert_agents)
+        self.assertEqual(
+            getattr(video_agent, "_adk_origin_app_name", None),
+            SYS_CONFIG.app_name,
+        )
+        self.assertIsNotNone(getattr(video_agent, "_adk_origin_path", None))
+
     def test_runtime_expert_metadata_keeps_runner_app_alignment_clean(self) -> None:
         runtime = CreativeClawRuntime()
 

@@ -119,6 +119,36 @@ _EXPERT_SPECS = {
         allowed_values={"mode": ("image", "text", "all")},
         notes="Default mode is all; optional count.",
     ),
+    "VideoGenerationAgent": ExpertSpec(
+        name="VideoGenerationAgent",
+        default_prompt_key="prompt",
+        default_parameters={
+            "provider": "seedance",
+            "mode": "prompt",
+            "aspect_ratio": "16:9",
+            "resolution": "720p",
+        },
+        required_parameters=("prompt or input_path/input_paths",),
+        required_parameter_groups=(
+            RequiredParameterGroup(
+                keys=("prompt", "input_path", "input_paths"),
+                description="prompt or input_path/input_paths",
+            ),
+        ),
+        allowed_values={
+            "provider": ("seedance", "veo"),
+            "mode": (
+                "prompt",
+                "first_frame",
+                "first_frame_and_last_frame",
+                "reference_asset",
+                "reference_style",
+            ),
+            "aspect_ratio": ("16:9", "9:16"),
+            "resolution": ("720p", "1080p"),
+        },
+        notes="Use prompt-only or image-guided video generation with optional provider, mode, aspect_ratio, and resolution.",
+    ),
 }
 
 

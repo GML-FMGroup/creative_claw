@@ -93,6 +93,19 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["aspect_ratio"], "16:9")
         self.assertEqual(parameters["resolution"], "1K")
 
+    def test_normalize_invoke_agent_parameters_uses_video_expert_defaults(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="VideoGenerationAgent",
+            prompt="make a cinematic cat video",
+            state={},
+        )
+
+        self.assertEqual(parameters["prompt"], "make a cinematic cat video")
+        self.assertEqual(parameters["provider"], "seedance")
+        self.assertEqual(parameters["mode"], "prompt")
+        self.assertEqual(parameters["aspect_ratio"], "16:9")
+        self.assertEqual(parameters["resolution"], "720p")
+
     def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_understanding(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
             normalize_invoke_agent_parameters(
@@ -106,6 +119,14 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
             normalize_invoke_agent_parameters(
                 agent_name="SearchAgent",
                 prompt='{"query":"cats","mode":"weird"}',
+                state={},
+            )
+
+    def test_normalize_invoke_agent_parameters_rejects_invalid_video_provider(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid `provider` value"):
+            normalize_invoke_agent_parameters(
+                agent_name="VideoGenerationAgent",
+                prompt='{"prompt":"cats","provider":"weird"}',
                 state={},
             )
 

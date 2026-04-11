@@ -44,7 +44,7 @@ Feature-specific capabilities require additional keys:
 | --- | --- | --- | --- |
 | `OPENAI_API_KEY` | Required for the default orchestrator model (`openai/gpt-5.4`) | Main orchestrator and any feature using the default system model | [OpenAI API keys](https://platform.openai.com/api-keys) |
 | `GOOGLE_API_KEY` | Required for Gemini-backed image features | `ImageGenerationAgent` (`nano_banana` path), `ImageEditingAgent` (`nano_banana` path), `ImageUnderstandingAgent`, `ImageToPromptAgent` | [Google AI Studio API keys](https://aistudio.google.com/app/apikey) |
-| `ARK_API_KEY` | Optional | Seedream image generation and image editing | [Volcengine Ark console](https://console.volcengine.com/ark) |
+| `ARK_API_KEY` | Optional | Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance` path) | [Volcengine Ark console](https://console.volcengine.com/ark) |
 | `DDS_API_KEY` | Optional | `ImageGroundingAgent` via DeepDataSpace DINO-XSeek | [DeepDataSpace cloud console](https://cloud.deepdataspace.com/) |
 | `SERPER_API_KEY` | Optional | `SearchAgent` image mode | [Serper](https://serper.dev/) |
 | `BRAVE_API_KEY` | Optional | Built-in `web_search` tool | [Brave Search API](https://api.search.brave.com/app/keys) |
@@ -61,6 +61,7 @@ Notes:
 - `SERPER_API_KEY` and `BRAVE_API_KEY` are different. They power different search paths.
 - `GOOGLE_API_KEY` is not required for a minimal text-only run if you keep Gemini-only experts unused.
 - With the default config, `ImageGenerationAgent` may require both `OPENAI_API_KEY` and `GOOGLE_API_KEY`: the default system model handles prompt enhancement, while Gemini returns the generated image.
+- `VideoGenerationAgent` may require `OPENAI_API_KEY` plus either `ARK_API_KEY` or `GOOGLE_API_KEY`: the default system model handles prompt enhancement, then the selected video provider performs generation.
 - If you change `conf/jsons/system.json` to a Gemini model, the orchestrator will also require `GOOGLE_API_KEY`.
 - `DASHSCOPE_API_KEY` is not required by the current tracked runtime paths and is intentionally not documented as a setup requirement.
 
@@ -81,6 +82,35 @@ ARK_API_KEY=""
 DDS_API_KEY=""
 SERPER_API_KEY=""
 BRAVE_API_KEY=""
+```
+
+## Video Generation Expert
+
+`VideoGenerationAgent` now supports two providers:
+
+- `seedance`: default provider, requires `ARK_API_KEY`
+- `veo`: Google VEO provider, requires `GOOGLE_API_KEY`
+
+Supported modes:
+
+- `prompt`: text-to-video
+- `first_frame`: animate one input image
+- `first_frame_and_last_frame`: interpolate between two input images
+- `reference_asset`: use input images as subject references
+- `reference_style`: use input images as style references
+
+Example `invoke_agent` payloads:
+
+```json
+{"prompt":"A cinematic orange cat surfing on neon waves at sunset","provider":"seedance","mode":"prompt","aspect_ratio":"16:9"}
+```
+
+```json
+{"input_path":"inbox/local/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
+```
+
+```json
+{"input_paths":["inbox/local/session_1/start.png","inbox/local/session_1/end.png"],"prompt":"Transition smoothly from the first frame to the last frame","mode":"first_frame_and_last_frame"}
 ```
 
 ## Running

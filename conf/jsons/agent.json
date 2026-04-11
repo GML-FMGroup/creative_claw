@@ -42,6 +42,12 @@
             "enable": true,
             "description": "Search the Internet for pictures or text related to the input parameter query, has three modes: image, text, all. How to choose mode: If the task requires images as a reference, choose `image`; If the task requires obtaining knowledge-based information such as design concepts, choose `text`; If both, choose `all`",
             "parameters": "`{'query': 'content need to be search', 'mode': 'image|text|all'}`"
+        },
+        {
+            "name": "VideoGenerationAgent",
+            "enable": true,
+            "description": "Generate one or more videos from a text prompt alone or from prompt-plus-image guidance. Supported providers are `seedance` and `veo`, where `seedance` is the default. Supported modes are `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, and `reference_style`. Use `input_path` or `input_paths` for workspace images when the selected mode needs image guidance.",
+            "parameters": "`{'prompt': 'make a cinematic cat video', 'provider': 'seedance|veo'(optional), 'mode': 'prompt|first_frame|first_frame_and_last_frame|reference_asset|reference_style'(optional), 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_path': 'workspace/path.png', 'prompt': 'animate this image'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame|reference_asset|reference_style', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_paths': ['workspace/first.png', 'workspace/last.png'], 'prompt': 'transition between them'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame_and_last_frame', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}`"
         }
     ]
 }
