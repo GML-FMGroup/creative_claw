@@ -1,33 +1,33 @@
 <div align="center">
   <br />
   <h1>🎨 CreativeClaw</h1>
-  <strong>A multi-agent system for autonomous artistic creation. The development is based on Google's Agent Development Kit (ADK) and Gemini Model</strong>
+  <strong>A channel-oriented creative agent system built on Google's Agent Development Kit (ADK).</strong>
   <br />
   <br />
 </div>
 
 
 #
-## **Structure: Recursive Planning-Execution Workflow**
+## **Architecture**
 
 #
-This project adopts a multi-agent architecture based on recursive planning and execution.
+CreativeClaw is a stateful, channel-oriented runtime for creative tasks.
 
-*   **Looping Workflow**: When a user enters a request, the backend starts a workflow loop based on the current session. In the loop, the orchestrator agent and execution agent recursively generate and execute plans until the task is complete.
+*   **Main Agent (`Orchestrator`)**: The orchestrator is the primary user-facing agent. It inspects the current session state, uses local tools directly, and calls expert agents only when specialized capability is needed.
 
-*   **Orchestrator Agent**: The orchestrator agent runs in each loop to analyze the current session state (`session.state`), determine the next subtask, and output the decision in JSON format. It contains three sub-agents: planner, critic, and checker. It can either generate plans through multi-round roleplay among those sub-agents or call the planner directly once.
+*   **Expert Invocation (`invoke_agent`)**: Expert calls now flow through `invoke_agent(agent_name, prompt)`. The prompt is usually a JSON string that contains the expert parameters.
 
-*   **Executor Agent**: The executor agent generates invocation parameters from the orchestrator plan in each loop, writes parameters and input files to `session.state`, and calls expert agents to execute the plan. After each step finishes, it stores the execution result, logs, and output artifacts back into the session.
+*   **Runtime Dispatcher**: `runtime/expert_dispatcher.py` normalizes expert parameters, creates a child expert session, runs the expert, and merges the useful result back into the parent session.
 
-*   **Expert Agents**: Executor agent will call the corresponding expert agents (such as image generaton experts and image editing experts). The expert agent will read the parameters from session state, perform its tasks and then write the execution result back to the session state.
+*   **Expert Agents**: Experts such as image generation, image editing, image understanding, search, and knowledge agents still read `current_parameters` from session state and write `current_output` back to session state.
 
-*   **State-Driven**: We keep all historical information and context in `session.state`.
+*   **State-Driven Execution**: Conversation history, generated files, expert results, and progress traces are stored in `session.state`.
 
-*   **Artifact Service**: Input and generated files are stored in binary form in `artifact_service`. Inside the context, we only keep file names.
+*   **Workspace-Based Files**: User uploads are staged into the workspace, and generated files are tracked with workspace-relative paths in session state.
 
-*   **Multi-turn Dialogue**: The agent supports multi-turn dialogue. The user session continues after a task is completed, so later requests can build on earlier results.
-*   **Channel-oriented Runtime**: The main interaction path is now a normalized chat-channel runtime. Local CLI is the reference channel, and other chat platforms can be added as adapters.
+*   **Multi-turn Dialogue**: Sessions persist across turns. Later requests can refer to earlier outputs in the same chat.
 
+*   **Channel Adapters**: Local CLI is the reference interface. Telegram and Feishu are supported through channel adapters.
 
 
 ## **Interactive client**
@@ -54,22 +54,43 @@ We currently provide a channel-oriented local CLI:
 
 
 ## 🛠️ **Installation and Running**
-* Environment Setup
+* Environment setup
 ```bash
 cd creative_claw
-conda create -n creativeclaw python=3.12
-conda activate creativeclaw
+source ./.venv/bin/activate
 pip install -r requirements.txt
 ```
+
+If you prefer to recreate the environment yourself, use Python 3.12+.
 
 * Set API-KEY
 ```bash
 cp .env.template .env
-# edit `.env` to fill API keys and optional channel settings
-nano .env
+# edit `.env`
 ```
 
-Channel configuration is also loaded only from `.env`. The runner scripts do not require extra command line flags for Telegram or Feishu credentials.
+The runtime loads channel and tool configuration only from `.env`.
+
+Minimum required keys at startup:
+
+```env
+GOOGLE_API_KEY=""
+DASHSCOPE_API_KEY=""
+```
+
+Recommended additional keys:
+
+```env
+SERPER_API_KEY=""
+ARK_API_KEY=""
+```
+
+Notes:
+- `GOOGLE_API_KEY` is required by the current config loader.
+- `DASHSCOPE_API_KEY` is required for enabled image and vision tools.
+- `SERPER_API_KEY` is needed for web/image search features.
+- `ARK_API_KEY` is only needed when you want to use `seedream`-based image generation or editing paths.
+- The default system model in `conf/jsons/system.json` is currently `openai/gpt-5.4`. Make sure the model provider you use is configured in your local environment as well.
 
 Suggested channel fields in `.env`:
 
@@ -99,23 +120,60 @@ The following commands are supported across the local CLI, Telegram, and Feishu 
 - `/help`: Show the built-in chat commands.
 - `/new`: Start a fresh conversation session inside the current channel chat.
 
-* Run the local channel CLI
+* Run the local channel CLI (interactive)
 ```bash
 cd creative_claw
-conda activate creativeclaw
-python apps/art_cli.py --message {your_message}
+source ./.venv/bin/activate
+python apps/art_cli.py
+```
+
+* Run the local channel CLI (single message)
+```bash
+cd creative_claw
+source ./.venv/bin/activate
+python apps/art_cli.py --message "Generate a poster-style cat image"
+```
+
+* Run the local channel CLI with attachments
+```bash
+cd creative_claw
+source ./.venv/bin/activate
+python apps/art_cli.py \
+  --message "Describe this image and write a better prompt" \
+  --img1 /absolute/path/to/image.png
 ```
 
 * Run the Telegram channel
 ```bash
 cd creative_claw
-conda activate creativeclaw
+source ./.venv/bin/activate
 python apps/run_telegram.py
 ```
 
 * Run the Feishu channel
 ```bash
 cd creative_claw
-conda activate creativeclaw
+source ./.venv/bin/activate
 python apps/run_feishu.py
+```
+
+## **Testing**
+
+Run the current core regression suite:
+
+```bash
+cd creative_claw
+source ./.venv/bin/activate
+python -m unittest unit_test.test_runtime_session unit_test.test_expert_dispatcher unit_test.test_orchestrator
+```
+
+Quick syntax check for the recently touched runtime files:
+
+```bash
+cd creative_claw
+source ./.venv/bin/activate
+python -m py_compile \
+  src/runtime/tool_context_artifact_service.py \
+  src/runtime/expert_dispatcher.py \
+  src/agents/orchestrator/orchestrator_agent.py
 ```
