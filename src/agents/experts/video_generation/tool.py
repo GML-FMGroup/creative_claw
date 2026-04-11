@@ -32,7 +32,7 @@ _SUPPORTED_MODES = {
 _SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
 _SUPPORTED_RESOLUTIONS = {"720p", "1080p"}
 _SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
-_VEO_MODEL_NAME = "veo-3.0-generate-preview"
+_VEO_MODEL_NAME = "veo-3.1-generate-preview"
 
 
 @dataclass(slots=True)
@@ -204,7 +204,7 @@ async def seedance_video_generation_tool(
         create_result = client.content_generation.tasks.create(
             model=_SEEDANCE_MODEL_NAME,
             content=content,
-            properties={"ratio": current_ratio},
+            ratio=current_ratio,
         )
         task_id = create_result.id
 

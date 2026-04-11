@@ -1,8 +1,10 @@
 import unittest
-from pathlib import Path
+import os
+import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.agents.experts.video_generation import tool as video_tools
 from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent
 from src.runtime.workspace import workspace_root
 
@@ -87,7 +89,7 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
                         "status": "success",
                         "message": b"video-data",
                         "provider": "veo",
-                        "model_name": "veo-3.0-generate-preview",
+                        "model_name": "veo-3.1-generate-preview",
                     }
                 ),
             ) as veo_mock,
@@ -138,6 +140,81 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             current_output["output_files"][0]["path"],
             "generated/session_1/step1_video_generation_output0.mp4",
         )
+
+
+class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_seedance_tool_uses_top_level_ratio_argument(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))
+        get_mock = MagicMock(return_value=SimpleNamespace(status="failed", error="mock error"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(
+                    create=create_mock,
+                    get=get_mock,
+                )
+            )
+        )
+        fake_module = SimpleNamespace(Ark=MagicMock(return_value=fake_client))
+
+        with (
+            patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False),
+            patch.dict(sys.modules, {"volcenginesdkarkruntime": fake_module}),
+        ):
+            result = await video_tools.seedance_video_generation_tool(
+                "draw a cat video",
+                aspect_ratio="9:16",
+            )
+
+        self.assertEqual(result["status"], "error")
+        fake_module.Ark.assert_called_once_with(
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key="test-key",
+        )
+        create_mock.assert_called_once()
+        self.assertEqual(
+            create_mock.call_args.kwargs,
+            {
+                "model": "doubao-seedance-1-0-pro-250528",
+                "content": [{"type": "text", "text": "draw a cat video"}],
+                "ratio": "9:16",
+            },
+        )
+
+    async def test_veo_tool_uses_updated_preview_model(self) -> None:
+        generate_videos_mock = AsyncMock(
+            return_value=SimpleNamespace(
+                done=True,
+                result=SimpleNamespace(
+                    generated_videos=[SimpleNamespace(video="video-file-id")]
+                ),
+            )
+        )
+        download_mock = AsyncMock(return_value=b"video-data")
+        fake_client = SimpleNamespace(
+            aio=SimpleNamespace(
+                models=SimpleNamespace(generate_videos=generate_videos_mock),
+                operations=SimpleNamespace(get=AsyncMock()),
+                files=SimpleNamespace(download=download_mock),
+            )
+        )
+
+        with (
+            patch.dict(os.environ, {"GOOGLE_API_KEY": "test-key"}, clear=False),
+            patch("src.agents.experts.video_generation.tool.genai.Client", return_value=fake_client),
+        ):
+            result = await video_tools.veo_video_generation_tool(
+                "draw a cat video",
+                resolution="1080p",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["model_name"], "veo-3.1-generate-preview")
+        generate_videos_mock.assert_awaited_once()
+        self.assertEqual(
+            generate_videos_mock.await_args.kwargs["model"],
+            "veo-3.1-generate-preview",
+        )
+        download_mock.assert_awaited_once_with(file="video-file-id")
 
 
 if __name__ == "__main__":
