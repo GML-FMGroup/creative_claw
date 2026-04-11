@@ -1,140 +1,110 @@
-<div align="center">
-  <br />
-  <h1>🎨 CreativeClaw</h1>
-  <strong>A channel-oriented creative agent system built on Google's Agent Development Kit (ADK).</strong>
-  <br />
-  <br />
-</div>
+# CreativeClaw
 
+CreativeClaw is a channel-oriented creative agent system built on Google's Agent Development Kit (ADK). It keeps conversation state in an ADK session, stages files into a local workspace, and lets the main orchestrator call specialized expert agents through `invoke_agent(agent_name, prompt)`.
 
-#
-## **Architecture**
+## Architecture
 
-#
-CreativeClaw is a stateful, channel-oriented runtime for creative tasks.
+- `Orchestrator`: the primary user-facing agent. It inspects session state, uses local tools directly, and invokes experts only when specialized capability is needed.
+- `invoke_agent(agent_name, prompt)`: the expert delegation entrypoint. For multi-parameter experts, the prompt is usually a JSON string that matches the expert contract.
+- `runtime/expert_dispatcher.py`: normalizes expert parameters, creates a child expert session, runs the expert, and merges the useful result back into the parent session.
+- `session.state`: stores conversation history, generated files, expert outputs, progress traces, and explicit final file selection.
+- `workspace/`: the filesystem source of truth for uploaded and generated files. User uploads are staged into `workspace/inbox/...`, and generated outputs are written into `workspace/generated/...`.
+- Channel adapters: Local CLI is the reference interface. Telegram and Feishu are supported through channel adapters.
 
-*   **Main Agent (`Orchestrator`)**: The orchestrator is the primary user-facing agent. It inspects the current session state, uses local tools directly, and calls expert agents only when specialized capability is needed.
+## Included Channels
 
-*   **Expert Invocation (`invoke_agent`)**: Expert calls now flow through `invoke_agent(agent_name, prompt)`. The prompt is usually a JSON string that contains the expert parameters.
+- Local CLI: `apps/art_cli.py`
+- Telegram long polling: `apps/run_telegram.py`
+- Feishu long connection: `apps/run_feishu.py`
 
-*   **Runtime Dispatcher**: `runtime/expert_dispatcher.py` normalizes expert parameters, creates a child expert session, runs the expert, and merges the useful result back into the parent session.
+## Environment Setup
 
-*   **Expert Agents**: Experts such as image generation, image editing, image understanding, search, and knowledge agents still read `current_parameters` from session state and write `current_output` back to session state.
-
-*   **State-Driven Execution**: Conversation history, generated files, expert results, and progress traces are stored in `session.state`.
-
-*   **Workspace-Based Files**: User uploads are staged into the workspace, and generated files are tracked with workspace-relative paths in session state.
-
-*   **Multi-turn Dialogue**: Sessions persist across turns. Later requests can refer to earlier outputs in the same chat.
-
-*   **Channel Adapters**: Local CLI is the reference interface. Telegram and Feishu are supported through channel adapters.
-
-
-## **Interactive client**
-
-We currently provide a channel-oriented local CLI:
-
-1.  **Local channel CLI (`apps/art_cli.py`)**:
-    *   Supports text dialogue through the local terminal channel.
-    *   Supports up to two local file attachments per message.
-    *   Reuses the same chat session through `user-id` and `chat-id`.
-    *   Supports `/new` to start a fresh conversation session inside the same channel chat.
-    *   Supports `/help` to show built-in chat commands.
-2.  **Telegram channel runner (`apps/run_telegram.py`)**:
-    *   Uses Telegram long polling.
-    *   Required in `.env`: `TELEGRAM_BOT_TOKEN`
-    *   Recommended in `.env`: `TELEGRAM_ALLOW_FROM`
-3.  **Feishu channel runner (`apps/run_feishu.py`)**:
-    *   Uses Feishu long connection.
-    *   Required in `.env`: `FEISHU_APP_ID`, `FEISHU_APP_SECRET`
-    *   Optional in `.env`: `FEISHU_ENCRYPT_KEY`, `FEISHU_VERIFICATION_TOKEN`
-    *   Recommended in `.env`: `FEISHU_ALLOW_FROM`
-
----
-
-
-## 🛠️ **Installation and Running**
-* Environment setup
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 pip install -r requirements.txt
-```
-
-If you prefer to recreate the environment yourself, use Python 3.12+.
-
-* Set API-KEY
-```bash
 cp .env.template .env
-# edit `.env`
 ```
 
-The runtime loads channel and tool configuration only from `.env`.
+If you prefer to recreate the environment, use Python `3.12+`.
 
-Minimum required keys at startup:
+Important:
+
+- `.env` is ignored by git and should never be committed.
+- Only `.env.template` should be committed as the public sample.
+- If any real secret was ever shared outside your machine, rotate it before publishing.
+
+## Credential Matrix
+
+The default orchestrator model in [`conf/jsons/system.json`](conf/jsons/system.json) is `openai/gpt-5.4`, so `OPENAI_API_KEY` is the only default model credential for a minimal text-only setup.
+
+Feature-specific capabilities require additional keys:
+
+| Env var | Required when | Used by | Official URL |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | Required for the default orchestrator model (`openai/gpt-5.4`) | Main orchestrator and any feature using the default system model | [OpenAI API keys](https://platform.openai.com/api-keys) |
+| `GOOGLE_API_KEY` | Required for Gemini-backed image features | `ImageGenerationAgent` (`nano_banana` path), `ImageEditingAgent` (`nano_banana` path), `ImageUnderstandingAgent`, `ImageToPromptAgent` | [Google AI Studio API keys](https://aistudio.google.com/app/apikey) |
+| `ARK_API_KEY` | Optional | Seedream image generation and image editing | [Volcengine Ark console](https://console.volcengine.com/ark) |
+| `DDS_API_KEY` | Optional | `ImageGroundingAgent` via DeepDataSpace DINO-XSeek | [DeepDataSpace cloud console](https://cloud.deepdataspace.com/) |
+| `SERPER_API_KEY` | Optional | `SearchAgent` image mode | [Serper](https://serper.dev/) |
+| `BRAVE_API_KEY` | Optional | Built-in `web_search` tool | [Brave Search API](https://api.search.brave.com/app/keys) |
+| `TELEGRAM_BOT_TOKEN` | Required only for Telegram channel | `apps/run_telegram.py` | [Telegram Bot token guide](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) |
+| `TELEGRAM_ALLOW_FROM` | Recommended for Telegram channel | Telegram allowlist | [Telegram Bot API docs](https://core.telegram.org/bots/api) |
+| `FEISHU_APP_ID` | Required only for Feishu channel | `apps/run_feishu.py` | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_APP_SECRET` | Required only for Feishu channel | `apps/run_feishu.py` | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_ENCRYPT_KEY` | Optional | Feishu event subscription security | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_VERIFICATION_TOKEN` | Optional | Feishu event subscription verification | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_ALLOW_FROM` | Recommended for Feishu channel | Feishu allowlist | [Feishu Open Platform](https://open.feishu.cn/app) |
+
+Notes:
+
+- `SERPER_API_KEY` and `BRAVE_API_KEY` are different. They power different search paths.
+- `GOOGLE_API_KEY` is not required for a minimal text-only run if you keep Gemini-only experts unused.
+- With the default config, `ImageGenerationAgent` may require both `OPENAI_API_KEY` and `GOOGLE_API_KEY`: the default system model handles prompt enhancement, while Gemini returns the generated image.
+- If you change `conf/jsons/system.json` to a Gemini model, the orchestrator will also require `GOOGLE_API_KEY`.
+- `DASHSCOPE_API_KEY` is not required by the current tracked runtime paths and is intentionally not documented as a setup requirement.
+
+## Example `.env`
+
+Use `.env.template` as the canonical sample. A practical minimal `.env` for the default text-only setup is:
 
 ```env
+OPENAI_API_KEY=""
+```
+
+If you want the common image and search paths as well:
+
+```env
+OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
-DASHSCOPE_API_KEY=""
-```
-
-Recommended additional keys:
-
-```env
-SERPER_API_KEY=""
 ARK_API_KEY=""
+DDS_API_KEY=""
+SERPER_API_KEY=""
+BRAVE_API_KEY=""
 ```
 
-Notes:
-- `GOOGLE_API_KEY` is required by the current config loader.
-- `DASHSCOPE_API_KEY` is required for enabled image and vision tools.
-- `SERPER_API_KEY` is needed for web/image search features.
-- `ARK_API_KEY` is only needed when you want to use `seedream`-based image generation or editing paths.
-- The default system model in `conf/jsons/system.json` is currently `openai/gpt-5.4`. Make sure the model provider you use is configured in your local environment as well.
+## Running
 
-Suggested channel fields in `.env`:
+### Local CLI
 
-```env
-# Telegram
-TELEGRAM_BOT_TOKEN=""
-TELEGRAM_ALLOW_FROM=""
+Interactive mode:
 
-# Feishu
-FEISHU_APP_ID=""
-FEISHU_APP_SECRET=""
-FEISHU_ENCRYPT_KEY=""
-FEISHU_VERIFICATION_TOKEN=""
-FEISHU_ALLOW_FROM=""
-```
-
-Notes:
-- For Telegram, `TELEGRAM_BOT_TOKEN` is required. `TELEGRAM_ALLOW_FROM` is strongly recommended so the bot is not open to everyone by default.
-- For Feishu long connection mode, `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are required.
-- For Feishu long connection mode, `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` can usually stay empty.
-- `FEISHU_ALLOW_FROM` is optional but recommended if you want to limit who can trigger the agent.
-
-## **Chat Commands**
-
-The following commands are supported across the local CLI, Telegram, and Feishu channels:
-
-- `/help`: Show the built-in chat commands.
-- `/new`: Start a fresh conversation session inside the current channel chat.
-
-* Run the local channel CLI (interactive)
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 python apps/art_cli.py
 ```
 
-* Run the local channel CLI (single message)
+Single message:
+
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 python apps/art_cli.py --message "Generate a poster-style cat image"
 ```
 
-* Run the local channel CLI with attachments
+Single message with attachments:
+
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
@@ -143,37 +113,59 @@ python apps/art_cli.py \
   --img1 /absolute/path/to/image.png
 ```
 
-* Run the Telegram channel
+### Telegram
+
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 python apps/run_telegram.py
 ```
 
-* Run the Feishu channel
+### Feishu
+
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 python apps/run_feishu.py
 ```
 
-## **Testing**
+## Chat Commands
 
-Run the current core regression suite:
+These commands are supported across the local CLI, Telegram, and Feishu channels:
+
+- `/help`: show built-in chat commands
+- `/new`: start a fresh conversation session in the current channel chat
+
+## Tests
+
+Focused regression suite:
 
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
-python -m unittest unit_test.test_runtime_session unit_test.test_expert_dispatcher unit_test.test_orchestrator
+python -m unittest \
+  unit_test.test_orchestrator \
+  unit_test.test_runtime_session \
+  unit_test.test_feishu_channel \
+  unit_test.test_file_tools
 ```
 
-Quick syntax check for the recently touched runtime files:
+Quick syntax check for the main touched files:
 
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
 python -m py_compile \
-  src/runtime/tool_context_artifact_service.py \
-  src/runtime/expert_dispatcher.py \
-  src/agents/orchestrator/orchestrator_agent.py
+  conf/api.py \
+  src/agents/orchestrator/orchestrator_agent.py \
+  src/agents/experts/search/tool.py \
+  unit_test/test_feishu_channel.py \
+  unit_test/test_runtime_session.py
 ```
+
+## Public Release Checklist
+
+- Keep tracked prompts, comments, and public-facing samples in English.
+- Commit only `.env.template`, never a real `.env`.
+- Verify the documented credentials against the actual runtime code before each release.
+- Prefer feature-gated credential checks at call time instead of import-time crashes.

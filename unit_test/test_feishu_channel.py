@@ -359,7 +359,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
                     message_type="post",
                     content=(
                         '{"title":"Image grounding task","content":[['
-                        '{"tag":"text","text":"将这个图像里面的人物的bbox坐标输出给我一下，利用 ImageGroundingAgent 完成"},'
+                        '{"tag":"text","text":"Please return the person bbox coordinates from this image by using ImageGroundingAgent."},'
                         '{"tag":"img","image_key":"img_post_2"}'
                         ']]}'
                     ),
@@ -376,7 +376,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(inbound_messages), 1)
         self.assertEqual(
             inbound_messages[0].text,
-            "Image grounding task 将这个图像里面的人物的bbox坐标输出给我一下，利用 ImageGroundingAgent 完成",
+            "Image grounding task Please return the person bbox coordinates from this image by using ImageGroundingAgent.",
         )
         self.assertEqual(len(inbound_messages[0].attachments), 1)
         self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_5_img_post_2.png")
@@ -393,7 +393,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
                     chat_type="group",
                     message_type="post",
                     content=(
-                        '{"zh_cn":{"title":"请输出人物 bbox","content":[['
+                        '{"zh_cn":{"title":"Please output the person bbox","content":[['
                         '{"tag":"img","image_key":"img_post_3"}'
                         ']]}}'
                     ),
@@ -408,7 +408,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         await channel._on_message(data)
 
         self.assertEqual(len(inbound_messages), 1)
-        self.assertEqual(inbound_messages[0].text, "请输出人物 bbox")
+        self.assertEqual(inbound_messages[0].text, "Please output the person bbox")
         self.assertEqual(len(inbound_messages[0].attachments), 1)
         self.assertEqual(inbound_messages[0].attachments[0].path, "/tmp/om_6_img_post_3.png")
 

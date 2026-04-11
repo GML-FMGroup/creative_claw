@@ -3,19 +3,10 @@ import os
 import json
 import httpx
 from typing import Any
-from urllib.parse import urlparse, unquote
-from pathlib import PurePosixPath
-from http import HTTPStatus
 
-from dashscope import ImageSynthesis
 from google.adk.tools import ToolContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Part
-from google.genai.types import Content
 from asyncddgs import aDDGS
 
-from conf.system import SYS_CONFIG
-from conf.api import API_CONFIG
 from src.logger import logger
 
 

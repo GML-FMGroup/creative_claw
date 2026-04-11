@@ -329,10 +329,10 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 actions=EventActions(
                     state_delta={
                         "files_history": [],
-                        "text_history": ["这是 expert 的长输出。"],
+                        "text_history": ["This is a long expert output."],
                         "summary_history": [],
                         "final_summary": "Internal completion summary.",
-                        "final_response": "这是给用户看的最终回复。",
+                        "final_response": "This is the final reply shown to the user.",
                     }
                 ),
             ),
@@ -345,7 +345,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(final_event.event_type, "final")
-        self.assertEqual(final_event.text, "这是给用户看的最终回复。")
+        self.assertEqual(final_event.text, "This is the final reply shown to the user.")
 
     async def test_build_final_event_prefers_explicit_final_file_paths_over_latest_outputs(self) -> None:
         runtime = CreativeClawRuntime()
@@ -383,7 +383,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                         state_delta={
                             "files_history": [[fallback_record]],
                             "final_file_paths": [selected_relative],
-                            "final_response": "已发送指定文件。",
+                            "final_response": "Sent the selected file.",
                         }
                     ),
                 ),
@@ -396,7 +396,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(final_event.artifact_paths, [str(selected_file.resolve())])
-        self.assertEqual(final_event.text, "已发送指定文件。")
+        self.assertEqual(final_event.text, "Sent the selected file.")
 
     async def test_build_final_event_respects_explicit_empty_final_file_selection(self) -> None:
         runtime = CreativeClawRuntime()
@@ -430,7 +430,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                         state_delta={
                             "files_history": [[fallback_record]],
                             "final_file_paths": [],
-                            "final_response": "只返回文本。",
+                            "final_response": "Return text only.",
                         }
                     ),
                 ),
@@ -443,7 +443,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(final_event.artifact_paths, [])
-        self.assertEqual(final_event.text, "只返回文本。")
+        self.assertEqual(final_event.text, "Return text only.")
 
     async def test_run_message_surfaces_orchestrator_failure(self) -> None:
         runtime = CreativeClawRuntime()

@@ -1,37 +1,46 @@
-from pydantic import BaseModel
-from dotenv import load_dotenv
+"""API-key configuration loaded from `.env`.
+
+The runtime should stay importable even when optional feature credentials are absent.
+Each tool or channel is responsible for validating the specific key it needs at call time.
+"""
+
+from __future__ import annotations
+
 import os
+
+from dotenv import load_dotenv
+from pydantic import BaseModel
 
 
 load_dotenv()
 
 
 class APIConfig(BaseModel):
-    """
-    Configuration for the API.
-    """
+    """Centralized API-key snapshot for runtime code that prefers typed access."""
 
-    DASHSCOPE_API_KEY: str
-    GOOGLE_API_KEY: str
+    OPENAI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
     ARK_API_KEY: str = ""
     DDS_API_KEY: str = ""
+    SERPER_API_KEY: str = ""
+    BRAVE_API_KEY: str = ""
 
 
-# Load API keys from environment variables
-dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
-google_api_key = os.getenv("GOOGLE_API_KEY")
-ark_api_key = os.getenv("ARK_API_KEY")
-dds_api_key = os.getenv("DDS_API_KEY")
+def _read_env(name: str) -> str:
+    """Return one stripped environment value or an empty string."""
+    return os.getenv(name, "").strip()
 
-# Check if the keys are set and raise an error if not
-if not dashscope_api_key:
-    raise ValueError("DASHSCOPE_API_KEY is not set in the environment variables.")
-if not google_api_key:
-    raise ValueError("GOOGLE_API_KEY is not set in the environment variables.")
-# Create the configuration instance
-API_CONFIG = APIConfig(
-    DASHSCOPE_API_KEY=dashscope_api_key,
-    GOOGLE_API_KEY=google_api_key,
-    ARK_API_KEY=ark_api_key or "",
-    DDS_API_KEY=dds_api_key or "",
-)
+
+def load_api_config() -> APIConfig:
+    """Load API keys from environment variables without eager validation."""
+    return APIConfig(
+        OPENAI_API_KEY=_read_env("OPENAI_API_KEY"),
+        GOOGLE_API_KEY=_read_env("GOOGLE_API_KEY"),
+        ARK_API_KEY=_read_env("ARK_API_KEY"),
+        DDS_API_KEY=_read_env("DDS_API_KEY"),
+        SERPER_API_KEY=_read_env("SERPER_API_KEY"),
+        BRAVE_API_KEY=_read_env("BRAVE_API_KEY"),
+    )
+
+
+API_CONFIG = load_api_config()
