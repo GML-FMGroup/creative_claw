@@ -24,6 +24,7 @@ from src.runtime.step_events import (
     step_event_streaming_active,
 )
 from src.runtime.expert_dispatcher import dispatch_expert_call
+from src.runtime.expert_registry import build_expert_contract_summary
 from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
 from src.runtime.workspace import (
     build_workspace_file_record,
@@ -207,6 +208,7 @@ class Orchestrator:
             str(expert) for expert in experts_list if expert.enable
         )
         skills_summary = self.skill_registry.build_summary()
+        expert_contracts = build_expert_contract_summary()
 
         return f"""
 You are Creative Claw's primary user-facing orchestrator.
@@ -265,6 +267,9 @@ Available skills:
 
 Available expert agents:
 {available_experts}
+
+Expert parameter contracts:
+{expert_contracts}
 """
 
     @staticmethod
@@ -462,136 +467,6 @@ Available expert agents:
     def build_runner_message(instruction: str) -> Content:
         """Create an ADK-compatible user message for one orchestrator turn."""
         return Content(role="user", parts=[Part(text=instruction)])
-
-    @staticmethod
-    def _parse_json_response(response_text: str) -> dict[str, Any]:
-        """Parse one JSON object from the model response."""
-        stripped = str(response_text or "").strip()
-        if not stripped:
-            raise ValueError("Orchestrator returned an empty response.")
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            stripped = "\n".join(lines).strip()
-        start_index = stripped.find("{")
-        if start_index < 0:
-            raise ValueError(f"Orchestrator did not return JSON: {response_text}")
-        decoder = json.JSONDecoder()
-        plan, _ = decoder.raw_decode(stripped[start_index:])
-        if not isinstance(plan, dict):
-            raise ValueError(f"Orchestrator returned a non-object plan: {response_text}")
-        return plan
-
-    def _normalize_step_plan(self, raw_plan: dict[str, Any]) -> dict[str, Any]:
-        """Validate and normalize one single-step plan."""
-        raw_next_agent = raw_plan.get("next_agent")
-        next_agent = str(raw_next_agent or "").strip()
-        if next_agent.upper() in {"", "NONE", "NULL", "FINISH"}:
-            next_agent = "FINISH"
-        elif next_agent not in self.expert_runners:
-            raise ValueError(f"Orchestrator selected an unknown expert: {next_agent}")
-
-        parameters = raw_plan.get("parameters") or {}
-        if not isinstance(parameters, dict):
-            raise ValueError("Plan field `parameters` must be a JSON object.")
-
-        summary = str(raw_plan.get("summary") or "").strip()
-        if not summary:
-            if next_agent == "FINISH":
-                summary = "The current task is complete."
-            else:
-                summary = f"Call `{next_agent}` for the next step."
-
-        final_response = str(raw_plan.get("final_response") or "").strip()
-        if next_agent == "FINISH":
-            if not final_response:
-                final_response = summary
-        else:
-            final_response = ""
-
-        return {
-            "next_agent": next_agent,
-            "parameters": parameters,
-            "summary": summary,
-            "final_response": final_response,
-        }
-
-    async def _persist_step_plan(
-        self,
-        *,
-        normalized_plan: dict[str, Any],
-        final_response: str,
-        previous_event_count: int,
-    ) -> dict[str, Any]:
-        """Persist one normalized plan into session state and return planner output."""
-        session = await self.session_service.get_session(
-            app_name=self.app_name,
-            user_id=self.uid,
-            session_id=self.sid,
-        )
-        if session is None:
-            raise ValueError(f"Session {self.sid} not found for user {self.uid}")
-
-        state = session.state
-        next_agent = normalized_plan["next_agent"]
-        summary = normalized_plan["summary"]
-        final_user_response = normalized_plan.get("final_response", "")
-        parameters = normalized_plan["parameters"]
-
-        if next_agent == "FINISH":
-            self._append_step_event(
-                state,
-                title="Finalize Result",
-                detail="Preparing the final reply.",
-                stage="finalizing",
-                session_id=self.sid,
-            )
-            state_delta = {
-                "current_plan": normalized_plan,
-                "workflow_status": "finished",
-                "final_summary": summary,
-                "final_response": final_user_response,
-                "last_output_message": final_user_response,
-                "last_orchestrator_response": final_response,
-                "current_parameters": {},
-                "orchestration_events": list(state.get("orchestration_events", [])),
-            }
-        else:
-            self._append_step_event(
-                state,
-                title="Call Expert Agent",
-                detail=f"Next step will call `{next_agent}`. Goal: {summary}",
-                stage="expert_execution",
-                session_id=self.sid,
-            )
-            state_delta = {
-                "current_plan": normalized_plan,
-                "workflow_status": "running",
-                "final_response": "",
-                "last_output_message": "",
-                "last_orchestrator_response": final_response,
-                "current_parameters": parameters,
-                "orchestration_events": list(state.get("orchestration_events", [])),
-            }
-
-        await self.session_service.append_event(
-            session,
-            Event(author="api_server", actions=EventActions(state_delta=state_delta)),
-        )
-
-        orchestration_events = list(state_delta["orchestration_events"])
-        return {
-            "workflow_status": state_delta["workflow_status"],
-            "final_summary": state_delta.get("final_summary", ""),
-            "final_response": state_delta.get("final_response", ""),
-            "last_response": final_response,
-            "last_output_message": state_delta["last_output_message"],
-            "new_orchestration_events": orchestration_events[previous_event_count:],
-            "current_plan": normalized_plan,
-        }
 
     def list_skills(self, tool_context: ToolContext | None = None) -> str:
         """List available skills in JSON format."""
@@ -918,32 +793,6 @@ Available expert agents:
                 if text_part:
                     final_response_text = text_part
         return final_response_text
-
-    async def generate_step_plan(self) -> dict:
-        """Run one planner turn and persist one normalized single-step plan."""
-        current_session = await self.session_service.get_session(
-            app_name=self.app_name,
-            user_id=self.uid,
-            session_id=self.sid,
-        )
-        current_session.state["last_output_message"] = ""
-        current_session.state["last_orchestrator_response"] = ""
-        previous_event_count = len(current_session.state.get("orchestration_events", []))
-
-        final_response = await self.run_agent_and_log_events(
-            user_id=self.uid,
-            session_id=self.sid,
-            new_message=self.build_runner_message(
-                "Review the current state, solve the user's request directly when possible, use built-in tools if needed, and then output the next single-action JSON plan."
-            ),
-        )
-        raw_plan = self._parse_json_response(final_response)
-        normalized_plan = self._normalize_step_plan(raw_plan)
-        return await self._persist_step_plan(
-            normalized_plan=normalized_plan,
-            final_response=final_response,
-            previous_event_count=previous_event_count,
-        )
 
     async def run_until_done(self) -> dict[str, Any]:
         """Run one orchestrator invocation and persist the final direct reply."""

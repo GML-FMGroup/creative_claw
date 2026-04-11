@@ -13,17 +13,12 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools.tool_context import ToolContext
 from google.genai.types import Content, Part
 
+from src.runtime.expert_registry import build_fallback_parameters
 from src.runtime.workspace import (
     build_workspace_file_record,
     normalize_file_references,
     resolve_workspace_path,
 )
-
-_FALLBACK_PROMPT_KEYS = {
-    "ImageGenerationAgent": "prompt",
-    "KnowledgeAgent": "prompt",
-    "SearchAgent": "query",
-}
 
 _STATE_HISTORY_KEYS = {
     "current_parameters",
@@ -83,11 +78,7 @@ def _parse_prompt_as_parameters(agent_name: str, prompt: str) -> dict[str, Any]:
                 return dict(nested)
             return dict(payload)
 
-    key = _FALLBACK_PROMPT_KEYS.get(agent_name, "prompt")
-    parameters: dict[str, Any] = {key: stripped}
-    if agent_name == "SearchAgent":
-        parameters.setdefault("mode", "all")
-    return parameters
+    return build_fallback_parameters(agent_name, stripped)
 
 
 def _resolve_named_files(state: dict[str, Any], names: list[str]) -> list[str]:

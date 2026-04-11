@@ -321,7 +321,6 @@ class CreativeClawRuntime:
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
-        state_delta["current_plan"] = None
         state_delta["current_output"] = None
         state_delta["last_expert_result"] = None
         state_delta["expert_history"] = []

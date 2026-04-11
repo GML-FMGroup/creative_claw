@@ -9,7 +9,7 @@ from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrato
 
 
 class OrchestratorTests(unittest.TestCase):
-    def test_instruction_mentions_skill_workflow_and_single_step_json_plan(self) -> None:
+    def test_instruction_mentions_skill_workflow_and_invoke_agent_path(self) -> None:
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
@@ -30,10 +30,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("grep", instruction)
         self.assertIn("exec_command", instruction)
         self.assertIn("process_session", instruction)
-        self.assertIn("exactly one JSON object", instruction)
-        self.assertIn('"next_agent"', instruction)
-        self.assertIn('"final_response"', instruction)
-        self.assertIn("cannot execute them directly", instruction)
+        self.assertIn("invoke_agent(agent_name, prompt)", instruction)
+        self.assertIn("Do not output internal workflow JSON", instruction)
         self.assertIn("keep changes small and reviewable", instruction.lower())
         self.assertIn("re-check the latest state", instruction.lower())
         self.assertIn("main conversational agent", instruction.lower())
@@ -51,69 +49,11 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("`input_name` is legacy", instruction)
         self.assertIn("aligned with the user's language", instruction)
         self.assertIn("If the user mixes languages", instruction)
-
-    def test_normalize_step_plan_accepts_known_expert(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_runners={"KnowledgeAgent": object()},
-        )
-
-        plan = orchestrator._normalize_step_plan(
-            {
-                "next_agent": "KnowledgeAgent",
-                "parameters": {"topic": "desert"},
-                "summary": "Let the knowledge expert organize the plan first.",
-            }
-        )
-
-        self.assertEqual(plan["next_agent"], "KnowledgeAgent")
-        self.assertEqual(plan["parameters"], {"topic": "desert"})
-        self.assertEqual(plan["summary"], "Let the knowledge expert organize the plan first.")
-        self.assertEqual(plan["final_response"], "")
-
-    def test_normalize_step_plan_maps_null_like_values_to_finish(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_runners={},
-        )
-
-        plan = orchestrator._normalize_step_plan(
-            {
-                "next_agent": "null",
-                "parameters": {},
-                "summary": "",
-            }
-        )
-
-        self.assertEqual(plan["next_agent"], "FINISH")
-        self.assertEqual(plan["parameters"], {})
-        self.assertIn("complete", plan["summary"].lower())
-        self.assertIn("complete", plan["final_response"].lower())
-
-    def test_normalize_step_plan_keeps_finish_final_response_separate_from_summary(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_runners={},
-        )
-
-        plan = orchestrator._normalize_step_plan(
-            {
-                "next_agent": "FINISH",
-                "parameters": {},
-                "summary": "Direct reply is ready.",
-                "final_response": "你好，我是 Creative Claw，可以陪你聊天，也可以帮你完成创意任务。",
-            }
-        )
-
-        self.assertEqual(plan["next_agent"], "FINISH")
-        self.assertEqual(plan["summary"], "Direct reply is ready.")
-        self.assertEqual(
-            plan["final_response"],
-            "你好，我是 Creative Claw，可以陪你聊天，也可以帮你完成创意任务。",
-        )
+        self.assertIn("Expert parameter contracts", instruction)
+        self.assertIn("SearchAgent: required=query, mode", instruction)
+        self.assertIn("plain_prompt=yes", instruction)
+        self.assertIn("ImageEditingAgent: required=prompt, input_path or input_paths", instruction)
+        self.assertIn("plain_prompt=no", instruction)
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
@@ -230,6 +170,36 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("alpha", summary)
         self.assertIn("End:", summary)
         self.assertIn("delta", summary)
+
+    def test_summarize_invoke_agent_result_uses_structured_fields(self) -> None:
+        status, summary = Orchestrator._summarize_tool_result(
+            "invoke_agent",
+            {
+                "agent_name": "KnowledgeAgent",
+                "status": "success",
+                "message": "analysis complete",
+                "output_text": "line one\nline two",
+                "output_files": [{"path": "generated/demo.txt"}],
+            },
+        )
+
+        self.assertEqual(status, "success")
+        self.assertIn("KnowledgeAgent finished", summary)
+        self.assertIn("files=1", summary)
+        self.assertIn("analysis complete", summary)
+
+    def test_summarize_invoke_agent_error_marks_failure(self) -> None:
+        status, summary = Orchestrator._summarize_tool_result(
+            "invoke_agent",
+            {
+                "agent_name": "SearchAgent",
+                "status": "error",
+                "message": "search failed",
+            },
+        )
+
+        self.assertEqual(status, "error")
+        self.assertIn("search failed", summary)
 
 class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_before_model_callback_includes_workspace_file_history_without_new_upload(self) -> None:

@@ -55,6 +55,26 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["query"], "cats in snow")
         self.assertEqual(parameters["mode"], "all")
 
+    def test_normalize_invoke_agent_parameters_uses_expert_defaults(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="ImageGenerationAgent",
+            prompt="make a cat poster",
+            state={},
+        )
+
+        self.assertEqual(parameters["prompt"], "make a cat poster")
+        self.assertEqual(parameters["provider"], "nano_banana")
+        self.assertEqual(parameters["aspect_ratio"], "16:9")
+        self.assertEqual(parameters["resolution"], "1K")
+
+    def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_understanding(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
+            normalize_invoke_agent_parameters(
+                agent_name="ImageUnderstandingAgent",
+                prompt="describe this image",
+                state={},
+            )
+
     async def test_dispatch_expert_call_updates_parent_state(self) -> None:
         artifact_service = InMemoryArtifactService()
         parent_state = State(
