@@ -11,6 +11,8 @@ dds-cloudapi-sdk
 opencv-python
 opencv-contrib-python
 litellm
+volcengine
+volcengine-python-sdk[ark]
 
 # Tools
 dashscope
