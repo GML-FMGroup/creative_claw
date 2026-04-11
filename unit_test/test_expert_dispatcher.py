@@ -23,12 +23,40 @@ class _FakeExpertAgent(BaseAgent):
             author=self.name,
             actions=EventActions(
                 state_delta={
+                    "step": 99,
+                    "summary_history": ["child-summary"],
                     "current_output": {
                         "status": "success",
                         "message": "expert finished",
                         "output_text": "expert answer",
                     },
+                    "app:shared_setting": "from-child",
                     "custom_key": "custom-value",
+                }
+            ),
+        )
+
+
+class _ParentStateInspectingExpertAgent(BaseAgent):
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name, description="state-inspecting expert")
+
+    async def _run_async_impl(self, ctx):
+        saw_internal_key = "_adk_hidden" in ctx.session.state
+        saw_user_prompt = "user_prompt" in ctx.session.state
+        message = (
+            "child saw filtered state"
+            if not saw_internal_key and saw_user_prompt
+            else "child saw unfiltered state"
+        )
+        yield Event(
+            author=self.name,
+            actions=EventActions(
+                state_delta={
+                    "current_output": {
+                        "status": "success",
+                        "message": message,
+                    }
                 }
             ),
         )
@@ -113,7 +141,50 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parent_state["current_output"]["message"], "expert finished")
         self.assertEqual(parent_state["last_expert_result"]["agent_name"], "KnowledgeAgent")
         self.assertEqual(parent_state["text_history"][-1], "expert answer")
+        self.assertEqual(parent_state["summary_history"], ["KnowledgeAgent: expert finished"])
+        self.assertEqual(parent_state["app:shared_setting"], "from-child")
         self.assertEqual(parent_state["custom_key"], "custom-value")
+
+    async def test_dispatch_expert_call_filters_internal_parent_state_before_child_run(self) -> None:
+        artifact_service = InMemoryArtifactService()
+        parent_state = State(
+            {
+                "step": 3,
+                "user_prompt": "describe the image",
+                "_adk_hidden": "should-not-leak",
+                "files_history": [],
+                "summary_history": [],
+                "text_history": [],
+                "message_history": [],
+                "expert_history": [],
+            },
+            {},
+        )
+        tool_context = SimpleNamespace(
+            state=parent_state,
+            _invocation_context=SimpleNamespace(user_id="user-1"),
+        )
+        expert_runner = Runner(
+            agent=_ParentStateInspectingExpertAgent(name="KnowledgeAgent"),
+            app_name="creative-claw-test",
+            session_service=InMemorySessionService(),
+            artifact_service=artifact_service,
+        )
+
+        result = await dispatch_expert_call(
+            agent_name="KnowledgeAgent",
+            prompt='{"prompt":"inspect the session"}',
+            tool_context=tool_context,
+            expert_runners={"KnowledgeAgent": expert_runner},
+            app_name="creative-claw-test",
+            artifact_service=artifact_service,
+        )
+
+        self.assertEqual(result.tool_result["status"], "success")
+        self.assertEqual(
+            parent_state["current_output"]["message"],
+            "child saw filtered state",
+        )
 
 
 if __name__ == "__main__":

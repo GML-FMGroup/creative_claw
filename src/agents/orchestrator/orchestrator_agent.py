@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.apps import App
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
 from google.adk.runners import Runner
@@ -194,12 +195,16 @@ class Orchestrator:
                 self.invoke_agent,
             ],
         )
+        self.app = App(
+            name=self.app_name,
+            root_agent=self.agent,
+            plugins=[CreativeClawStepEventPlugin()],
+        )
         self.runner = Runner(
-            agent=self.agent,
+            app=self.app,
             app_name=self.app_name,
             session_service=self.session_service,
             artifact_service=self.artifact_service,
-            plugins=[CreativeClawStepEventPlugin()],
         )
 
     def _build_instruction(self) -> str:
