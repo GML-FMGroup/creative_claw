@@ -252,7 +252,6 @@ class CreativeClawRuntime:
             final_summary = (
                 step_result.get("final_summary")
                 or step_result.get("last_output_message")
-                or step_result.get("last_response")
                 or final_summary
             )
 

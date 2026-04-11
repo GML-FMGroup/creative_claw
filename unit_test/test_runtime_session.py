@@ -163,7 +163,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     "workflow_status": "finished",
                     "final_summary": "Image generation is complete.",
                     "final_response": "The image is ready.",
-                    "last_response": "Internal orchestrator log",
                     "last_output_message": "The image is ready.",
                     "new_orchestration_events": [],
                 }
@@ -196,7 +195,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 return {
                     "workflow_status": "finished",
                     "final_summary": "The analysis is ready.",
-                    "last_response": "internal",
                     "last_output_message": "internal-output",
                     "final_response": "The analysis is ready.",
                     "new_orchestration_events": [
@@ -244,7 +242,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     "workflow_status": "finished",
                     "final_summary": "Done.",
                     "final_response": "Done.",
-                    "last_response": "",
                     "last_output_message": "",
                     "new_orchestration_events": [
                         {
@@ -286,7 +283,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                     "workflow_status": "finished",
                     "final_summary": "Done.",
                     "final_response": "Done.",
-                    "last_response": "",
                     "last_output_message": "",
                     "new_orchestration_events": [
                         {
@@ -397,7 +393,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                         "workflow_status": "finished",
                         "final_summary": "Image description completed.",
                         "final_response": "Image description completed.",
-                        "last_response": "",
                         "last_output_message": "Image description completed.",
                         "new_orchestration_events": [],
                     }

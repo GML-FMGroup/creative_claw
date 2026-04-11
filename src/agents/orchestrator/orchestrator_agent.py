@@ -861,7 +861,6 @@ Expert parameter contracts:
             "workflow_status": "finished",
             "final_summary": normalized_response,
             "final_response": normalized_response,
-            "last_response": normalized_response,
             "last_output_message": normalized_response,
             "new_orchestration_events": orchestration_events[previous_event_count:],
         }
