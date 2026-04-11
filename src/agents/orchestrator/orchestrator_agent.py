@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from google.adk.agents import LlmAgent
+from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.apps import App
 from google.adk.artifacts import InMemoryArtifactService
@@ -153,7 +153,7 @@ class Orchestrator:
         self,
         session_service: InMemorySessionService,
         artifact_service: InMemoryArtifactService,
-        expert_runners: dict[str, Runner],
+        expert_agents: dict[str, BaseAgent],
         app_name: str = SYS_CONFIG.app_name,
         save_dir: str = "",
         llm_model: str = "",
@@ -161,7 +161,7 @@ class Orchestrator:
         self.app_name = app_name
         self.session_service = session_service
         self.artifact_service = artifact_service
-        self.expert_runners = expert_runners
+        self.expert_agents = expert_agents
         self.save_dir = save_dir
         self.uid = ""
         self.sid = ""
@@ -767,7 +767,7 @@ Expert parameter contracts:
                 agent_name=agent_name,
                 prompt=prompt,
                 tool_context=tool_context,
-                expert_runners=self.expert_runners,
+                expert_agents=self.expert_agents,
                 app_name=self.app_name,
                 artifact_service=self.artifact_service,
             ),

@@ -13,7 +13,7 @@ class OrchestratorTests(unittest.TestCase):
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
-            expert_runners={},
+            expert_agents={},
         )
 
         instruction = orchestrator._build_instruction()
@@ -59,7 +59,7 @@ class OrchestratorTests(unittest.TestCase):
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
-            expert_runners={},
+            expert_agents={},
         )
         tool_context = SimpleNamespace(state={})
 
@@ -73,7 +73,7 @@ class OrchestratorTests(unittest.TestCase):
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
-            expert_runners={},
+            expert_agents={},
         )
         tool_context = SimpleNamespace(state={})
 

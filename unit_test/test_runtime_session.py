@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from google.adk.events import Event, EventActions
+from google.adk.runners import Runner
 
 from conf.system import SYS_CONFIG
 from src.runtime.models import InboundMessage, MessageAttachment
@@ -13,9 +14,26 @@ from src.runtime.workflow_service import CreativeClawRuntime
 class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     def test_runtime_registers_image_to_prompt_expert(self) -> None:
         runtime = CreativeClawRuntime()
+        image_to_prompt_agent = runtime.expert_agents["ImageToPromptAgent"]
 
         self.assertIn("ImageToPromptAgent", runtime.expert_agents)
-        self.assertIn("ImageToPromptAgent", runtime.expert_runners)
+        self.assertEqual(
+            getattr(image_to_prompt_agent, "_adk_origin_app_name", None),
+            SYS_CONFIG.app_name,
+        )
+        self.assertIsNotNone(getattr(image_to_prompt_agent, "_adk_origin_path", None))
+
+    def test_runtime_expert_metadata_keeps_runner_app_alignment_clean(self) -> None:
+        runtime = CreativeClawRuntime()
+
+        runner = Runner(
+            agent=runtime.expert_agents["KnowledgeAgent"],
+            app_name=SYS_CONFIG.app_name,
+            session_service=runtime.session_service,
+            artifact_service=runtime.artifact_service,
+        )
+
+        self.assertIsNone(runner._app_name_alignment_hint)
 
     async def test_ensure_session_reuses_same_channel_chat_pair(self) -> None:
         runtime = CreativeClawRuntime()

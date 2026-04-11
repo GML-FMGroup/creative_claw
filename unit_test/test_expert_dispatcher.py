@@ -4,8 +4,6 @@ from types import SimpleNamespace
 from google.adk.agents import BaseAgent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from google.adk.sessions.state import State
 
 from src.runtime.expert_dispatcher import (
@@ -120,18 +118,11 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
             state=parent_state,
             _invocation_context=SimpleNamespace(user_id="user-1"),
         )
-        expert_runner = Runner(
-            agent=_FakeExpertAgent(name="KnowledgeAgent"),
-            app_name="creative-claw-test",
-            session_service=InMemorySessionService(),
-            artifact_service=artifact_service,
-        )
-
         result = await dispatch_expert_call(
             agent_name="KnowledgeAgent",
             prompt='{"prompt":"analyze the request"}',
             tool_context=tool_context,
-            expert_runners={"KnowledgeAgent": expert_runner},
+            expert_agents={"KnowledgeAgent": _FakeExpertAgent(name="KnowledgeAgent")},
             app_name="creative-claw-test",
             artifact_service=artifact_service,
         )
@@ -164,18 +155,11 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
             state=parent_state,
             _invocation_context=SimpleNamespace(user_id="user-1"),
         )
-        expert_runner = Runner(
-            agent=_ParentStateInspectingExpertAgent(name="KnowledgeAgent"),
-            app_name="creative-claw-test",
-            session_service=InMemorySessionService(),
-            artifact_service=artifact_service,
-        )
-
         result = await dispatch_expert_call(
             agent_name="KnowledgeAgent",
             prompt='{"prompt":"inspect the session"}',
             tool_context=tool_context,
-            expert_runners={"KnowledgeAgent": expert_runner},
+            expert_agents={"KnowledgeAgent": _ParentStateInspectingExpertAgent(name="KnowledgeAgent")},
             app_name="creative-claw-test",
             artifact_service=artifact_service,
         )

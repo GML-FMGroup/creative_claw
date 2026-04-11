@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 
+from google.adk.agents import BaseAgent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
-from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
@@ -53,6 +54,13 @@ _PROGRESS_STAGE_TITLES = {
     "expert_execution": "Calling Expert Agent",
     "finalizing": "Finalizing Result",
 }
+
+
+def _attach_adk_origin_metadata(agent: BaseAgent, *, app_name: str, origin_path: Path) -> BaseAgent:
+    """Annotate one programmatically created expert with explicit ADK origin metadata."""
+    setattr(agent, "_adk_origin_app_name", app_name)
+    setattr(agent, "_adk_origin_path", origin_path)
+    return agent
 
 
 def _format_exception_summary(exc: Exception) -> str:
@@ -124,24 +132,44 @@ class CreativeClawRuntime:
         self.session_service = InMemorySessionService()
         self.artifact_service = InMemoryArtifactService()
         self._session_keys: dict[str, str] = {}
+        expert_origin_path = Path(__file__).resolve().parents[1] / "agents"
 
         self.expert_agents = {
-            "ImageGroundingAgent": ImageGroundingAgent(name="ImageGroundingAgent"),
-            "ImageGenerationAgent": ImageGenerationAgent(name="Text2ImageAgent"),
-            "ImageEditingAgent": ImageEditingAgent(name="ImageEditingAgent"),
-            "ImageToPromptAgent": ImageToPromptAgent(name="ImageToPromptAgent"),
-            "ImageUnderstandingAgent": ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
-            "KnowledgeAgent": KnowledgeAgent(name="KnowledgeAgent"),
-            "SearchAgent": SearchAgent(name="SearchAgent"),
-        }
-        self.expert_runners = {
-            name: Runner(
-                agent=agent,
+            "ImageGroundingAgent": _attach_adk_origin_metadata(
+                ImageGroundingAgent(name="ImageGroundingAgent"),
                 app_name=SYS_CONFIG.app_name,
-                session_service=self.session_service,
-                artifact_service=self.artifact_service,
-            )
-            for name, agent in self.expert_agents.items()
+                origin_path=expert_origin_path,
+            ),
+            "ImageGenerationAgent": _attach_adk_origin_metadata(
+                ImageGenerationAgent(name="Text2ImageAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "ImageEditingAgent": _attach_adk_origin_metadata(
+                ImageEditingAgent(name="ImageEditingAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "ImageToPromptAgent": _attach_adk_origin_metadata(
+                ImageToPromptAgent(name="ImageToPromptAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "ImageUnderstandingAgent": _attach_adk_origin_metadata(
+                ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "KnowledgeAgent": _attach_adk_origin_metadata(
+                KnowledgeAgent(name="KnowledgeAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "SearchAgent": _attach_adk_origin_metadata(
+                SearchAgent(name="SearchAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
         }
 
         self.workspace_root = workspace_root()
@@ -203,7 +231,7 @@ class CreativeClawRuntime:
         orchestrator_agent = Orchestrator(
             session_service=self.session_service,
             artifact_service=self.artifact_service,
-            expert_runners=self.expert_runners,
+            expert_agents=self.expert_agents,
             app_name=SYS_CONFIG.app_name,
             save_dir=str(self.generated_dir),
         )

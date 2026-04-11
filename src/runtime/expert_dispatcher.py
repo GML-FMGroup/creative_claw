@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from google.adk.agents import BaseAgent
 from google.adk.apps import App
 from google.adk.artifacts import BaseArtifactService, InMemoryArtifactService
 from google.adk.memory import InMemoryMemoryService
@@ -214,7 +215,7 @@ def _resolve_child_artifact_service(
 
 def _build_child_runner(
     *,
-    agent,
+    agent: BaseAgent,
     app_name: str,
     session_service: InMemorySessionService,
     artifact_service: BaseArtifactService,
@@ -324,12 +325,12 @@ async def dispatch_expert_call(
     agent_name: str,
     prompt: str,
     tool_context: ToolContext,
-    expert_runners: dict[str, Runner],
+    expert_agents: dict[str, BaseAgent],
     app_name: str,
     artifact_service: InMemoryArtifactService,
 ) -> ExpertInvocationResult:
     """Run one expert in a child session and merge the result into the parent state."""
-    if agent_name not in expert_runners:
+    if agent_name not in expert_agents:
         raise ValueError(f"invoke_agent got an unknown expert: '{agent_name}'.")
 
     parent_state = tool_context.state.to_dict()
@@ -349,7 +350,7 @@ async def dispatch_expert_call(
         fallback_service=artifact_service,
     )
     child_runner = _build_child_runner(
-        agent=expert_runners[agent_name].agent,
+        agent=expert_agents[agent_name],
         app_name=app_name,
         session_service=child_session_service,
         artifact_service=child_artifact_service,
