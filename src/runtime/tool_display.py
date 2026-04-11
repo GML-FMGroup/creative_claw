@@ -177,8 +177,32 @@ def _summarize_process_result(result_text: str) -> str:
     return f"Listed {len(sessions)} sessions. Preview: {stringify_value(preview, max_chars=180)}"
 
 
+def _summarize_invoke_agent_result(result: Any) -> str:
+    if isinstance(result, dict):
+        agent_name = str(result.get("agent_name", "")).strip() or "expert"
+        status = str(result.get("status", "")).strip() or "unknown"
+        message = stringify_value(result.get("message", ""), max_chars=180)
+        output_files = result.get("output_files") or []
+        output_text = str(result.get("output_text", "")).strip()
+        parts = [f"{agent_name} finished with status={status}", f"message={message}"]
+        if output_files:
+            parts.append(f"files={len(output_files)}")
+        if output_text:
+            parts.append(f"text={head_tail_preview(output_text, max_lines=2, max_chars=160)}")
+        return "; ".join(parts)
+    return stringify_value(result, max_chars=220)
+
+
 def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
     """Summarize one tool result into status plus short preview."""
+    if tool_name == "invoke_agent":
+        if hasattr(result, "tool_result"):
+            result = result.tool_result
+        status = "success"
+        if isinstance(result, dict) and str(result.get("status", "")).strip().lower() == "error":
+            status = "error"
+        return status, _summarize_invoke_agent_result(result)
+
     text = stringify_value(result, max_chars=260)
     lower = text.lower()
     if lower.startswith("error"):

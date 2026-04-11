@@ -23,6 +23,7 @@ from src.runtime.step_events import (
     publish_orchestration_step_event,
     step_event_streaming_active,
 )
+from src.runtime.expert_dispatcher import dispatch_expert_call
 from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
 from src.runtime.workspace import (
     build_workspace_file_record,
@@ -33,6 +34,22 @@ from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
     BuiltinToolbox,
 )
+
+_PLUGIN_MANAGED_TOOL_NAMES = {
+    "list_dir",
+    "glob",
+    "grep",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "image_crop",
+    "image_rotate",
+    "image_flip",
+    "exec_command",
+    "process_session",
+    "web_search",
+    "web_fetch",
+}
 
 
 async def orchestrator_before_model_callback(
@@ -173,6 +190,7 @@ class Orchestrator:
                 self.process_session,
                 self.web_search,
                 self.web_fetch,
+                self.invoke_agent,
             ],
         )
         self.runner = Runner(
@@ -193,18 +211,16 @@ class Orchestrator:
         return f"""
 You are Creative Claw's primary user-facing orchestrator.
 
-Your job is to talk with the user naturally, inspect the current state, use skills and built-in tools when helpful, and then decide exactly one next action.
-Whenever possible, solve the user's request directly in this turn instead of delegating.
+Your job is to inspect the current state, use skills and tools when helpful, and directly complete the user's request in this invocation whenever possible.
 Do not create a full upfront plan unless the user explicitly asks for one.
-你可以使用内置的函数、skill、一些专家Agent、以及你自己来生成代码并运行，来执行给你的任务。你需要确定用这些资源如何使用。
-只要任务没有结束，每一次你的可选动作都可以从这几种里面选择。
-有些人任务需要你组合 内置的函数、skill、一些专家Agent 来执行。你需要仔细考虑每个步骤的动作。
+你可以使用内置的函数、skill、`invoke_agent`、以及你自己的推理能力来执行任务。你是主Agent，expert 是你通过 `invoke_agent` 调用的子能力。
+优先直接完成任务，而不是输出内部工作流描述。
 
 You can use four kinds of capabilities:
 1. Skills from local markdown files
 2. Built-in local file tools inside the fixed workspace
 3. Built-in shell and web tools
-4. Existing expert agents, but you cannot execute them directly in this invocation
+4. Existing expert agents through `invoke_agent(agent_name, prompt)`
 
 Rules:
 - Treat yourself as the main conversational agent. Reply to the user's actual request, not to an internal workflow.
@@ -230,26 +246,19 @@ Rules:
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
 - Only choose an expert agent when the task needs specialized image, search, or other expert capability that built-in tools and direct reasoning cannot handle well.
+- When calling `invoke_agent`, pass a complete expert brief.
+- For experts that need several parameters, encode the `prompt` argument as a JSON object string that contains the exact expert parameters.
+- Prefer workspace paths in that JSON object, such as `input_path` or `input_paths`.
+- `invoke_agent` returns structured data including status, message, optional output_text, and output_files.
 - Keep the language of any user-facing summary or reply aligned with the user's language.
 - If the user primarily writes in Chinese, reply in Chinese. If the user primarily writes in English, reply in English.
 - If the user mixes languages, follow the primary language of the user's latest message.
 
-Output Format:
- - 如果你需要调用内置的函数，不需要用下面的格式来输出。
- - 只有当你需要和用户对话，或者使用 expert agents 来完成一个步骤的时候才需要JSON形式的输出
- - The JSON schema must be:
-  {{
-    "next_agent": "AgentName or FINISH",
-    "parameters": {{}},
-    "summary": "One short internal sentence describing the chosen next action or completion reason",
-    "final_response": "Direct user-facing reply. Required when next_agent is FINISH; otherwise use an empty string."
-  }}
-- If the task is complete, set `"next_agent"` to `"FINISH"` and keep `"parameters"` empty.
-- When `"next_agent"` is `"FINISH"`, `summary` is internal and `final_response` must contain the actual natural-language reply to the user.这个时候表示用户交代的任务完成了。
-- When `"next_agent"` is not `"FINISH"`, `final_response` must be empty and `summary` should describe the next action.
-- Do not put workflow notes in `final_response`. Never say things like "the task can end here", "please directly", or other internal process commentary.
-- If the task is not complete, 需要选择下一步的动作（调用内置函数、skill、或者是expert）.
-- Do not output markdown fences or any explanatory text outside the JSON object.
+Response Requirements:
+- Reply to the user in natural language after you finish the needed tool and expert calls.
+- Do not output internal workflow JSON.
+- Do not expose internal bookkeeping such as `current_output`, `workflow_status`, or private planning notes.
+- If the task is unfinished because a tool or expert failed, explain the blocker directly and say what remains.
 
 Available skills:
 {skills_summary}
@@ -408,11 +417,38 @@ Available expert agents:
         """Execute one tool and record its start and finish events when context exists."""
         if tool_context is None:
             return runner()
-        if not step_event_streaming_active():
+        should_record_manually = (not step_event_streaming_active()) or tool_name not in _PLUGIN_MANAGED_TOOL_NAMES
+        if should_record_manually:
             self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
         result = runner()
         self._maybe_record_tool_files(tool_context.state, tool_name=tool_name, args=args, result=result)
-        if not step_event_streaming_active():
+        if should_record_manually:
+            self._record_tool_finished(
+                tool_context.state,
+                tool_name=tool_name,
+                args=args,
+                result=result,
+                stage=stage,
+            )
+        return result
+
+    async def _run_async_tool_with_events(
+        self,
+        *,
+        tool_context: ToolContext | None,
+        tool_name: str,
+        stage: str,
+        args: dict[str, Any],
+        runner,
+    ):
+        """Execute one async tool and record its lifecycle events when context exists."""
+        if tool_context is None:
+            return await runner()
+        should_record_manually = (not step_event_streaming_active()) or tool_name not in _PLUGIN_MANAGED_TOOL_NAMES
+        if should_record_manually:
+            self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
+        result = await runner()
+        if should_record_manually:
             self._record_tool_finished(
                 tool_context.state,
                 tool_name=tool_name,
@@ -835,6 +871,29 @@ Available expert agents:
             runner=lambda: self.toolbox.web_fetch(url, max_chars),
         )
 
+    async def invoke_agent(
+        self,
+        agent_name: str,
+        prompt: str,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Invoke one expert agent through the shared dispatcher."""
+        invocation = await self._run_async_tool_with_events(
+            tool_context=tool_context,
+            tool_name="invoke_agent",
+            stage="expert_execution",
+            args={"agent_name": agent_name, "prompt": prompt},
+            runner=lambda: dispatch_expert_call(
+                agent_name=agent_name,
+                prompt=prompt,
+                tool_context=tool_context,
+                expert_runners=self.expert_runners,
+                app_name=self.app_name,
+                artifact_service=self.artifact_service,
+            ),
+        )
+        return invocation.tool_result
+
     async def run_agent_and_log_events(
         self,
         user_id: str,
@@ -885,3 +944,70 @@ Available expert agents:
             final_response=final_response,
             previous_event_count=previous_event_count,
         )
+
+    async def run_until_done(self) -> dict[str, Any]:
+        """Run one orchestrator invocation and persist the final direct reply."""
+        current_session = await self.session_service.get_session(
+            app_name=self.app_name,
+            user_id=self.uid,
+            session_id=self.sid,
+        )
+        current_session.state["last_output_message"] = ""
+        current_session.state["last_orchestrator_response"] = ""
+        previous_event_count = len(current_session.state.get("orchestration_events", []))
+
+        final_response = await self.run_agent_and_log_events(
+            user_id=self.uid,
+            session_id=self.sid,
+            new_message=self.build_runner_message(
+                "Review the current state, use built-in tools or invoke_agent when helpful, and answer the user directly once the task is complete."
+            ),
+        )
+
+        current_session = await self.session_service.get_session(
+            app_name=self.app_name,
+            user_id=self.uid,
+            session_id=self.sid,
+        )
+        if current_session is None:
+            raise ValueError(f"Session {self.sid} not found for user {self.uid}")
+
+        state = current_session.state
+        normalized_response = str(final_response or "").strip()
+        if not normalized_response:
+            normalized_response = str(state.get("last_output_message", "")).strip()
+        if not normalized_response:
+            current_output = state.get("current_output") or {}
+            normalized_response = str(current_output.get("message", "")).strip()
+        if not normalized_response:
+            normalized_response = "The current task is complete."
+
+        self._append_step_event(
+            state,
+            title="Finalize Result",
+            detail="Preparing the final reply.",
+            stage="finalizing",
+            session_id=self.sid,
+        )
+        state_delta = {
+            "workflow_status": "finished",
+            "final_summary": normalized_response,
+            "final_response": normalized_response,
+            "last_output_message": normalized_response,
+            "last_orchestrator_response": normalized_response,
+            "orchestration_events": list(state.get("orchestration_events", [])),
+        }
+        await self.session_service.append_event(
+            current_session,
+            Event(author="api_server", actions=EventActions(state_delta=state_delta)),
+        )
+
+        orchestration_events = list(state_delta["orchestration_events"])
+        return {
+            "workflow_status": "finished",
+            "final_summary": normalized_response,
+            "final_response": normalized_response,
+            "last_response": normalized_response,
+            "last_output_message": normalized_response,
+            "new_orchestration_events": orchestration_events[previous_event_count:],
+        }

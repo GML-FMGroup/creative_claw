@@ -21,7 +21,6 @@ from src.agents.experts import (
     KnowledgeAgent,
     SearchAgent,
 )
-from src.agents.executor.executor_agent import Executor
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
 from src.runtime.models import InboundMessage, WorkflowEvent
@@ -210,83 +209,37 @@ class CreativeClawRuntime:
         )
         orchestrator_agent.uid = user_id
         orchestrator_agent.sid = session_id
-        executor_agent = Executor(
-            session_service=self.session_service,
-            artifact_service=self.artifact_service,
-            expert_runners=self.expert_runners,
-            app_name=SYS_CONFIG.app_name,
-            save_dir=str(self.generated_dir),
-            execute_enabled=False,
-        )
-        executor_agent.uid = user_id
-        executor_agent.sid = session_id
 
         try:
             final_summary = "task workflow has started."
-            final_response = ""
-            max_loops = SYS_CONFIG.max_iterations_orchestrator
             orchestration_history: list[dict[str, str]] = []
-            current_round = 0
-            current_agent = ""
-            for index in range(max_loops):
-                current_round = index + 1
-                logger.info("--- workflow: round {}/{} ---", index + 1, max_loops)
-                current_session = await self.session_service.get_session(
-                    app_name=SYS_CONFIG.app_name,
-                    user_id=user_id,
-                    session_id=session_id,
-                )
-                logger.debug(
-                    "session.state (Orchestrator): {}",
-                    json.dumps(current_session.state, indent=2, ensure_ascii=False),
-                )
+            current_session = await self.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            logger.debug(
+                "session.state (Orchestrator): {}",
+                json.dumps(current_session.state, indent=2, ensure_ascii=False),
+            )
 
-                step_result = await orchestrator_agent.generate_step_plan()
-                workflow_status = step_result.get("workflow_status", "running")
-                response_text = step_result.get("last_response", "")
-                output_message = step_result.get("last_output_message", "")
-                final_response = str(step_result.get("final_response", "") or "").strip() or final_response
-                orchestration_events = list(step_result.get("new_orchestration_events", []))
-                current_plan = step_result.get("current_plan", {})
-                next_agent = str(current_plan.get("next_agent", "")).strip()
-                if step_event_streaming_active():
-                    orchestration_events = []
-                final_summary = (
-                    step_result.get("final_summary")
-                    or str(current_plan.get("summary", "")).strip()
-                    or output_message
-                    or response_text
-                    or final_summary
-                )
+            step_result = await orchestrator_agent.run_until_done()
+            final_response = str(step_result.get("final_response", "") or "").strip()
+            orchestration_events = list(step_result.get("new_orchestration_events", []))
+            if step_event_streaming_active():
+                orchestration_events = []
+            final_summary = (
+                step_result.get("final_summary")
+                or step_result.get("last_output_message")
+                or step_result.get("last_response")
+                or final_summary
+            )
 
-                for step_event in orchestration_events:
-                    orchestration_history.append(step_event)
-                    progress_event = _build_orchestration_progress_event(step_event, session_id=session_id)
-                    progress_event.text = _render_orchestration_history(orchestration_history)
-                    yield progress_event
-
-                if workflow_status == "finished":
-                    logger.info("Workflow finished. summary={}", final_summary)
-                    break
-
-                if not next_agent:
-                    raise ValueError("Orchestrator did not provide `next_agent` in the current plan.")
-
-                current_agent = next_agent
-                current_output = await executor_agent.execute_plan()
-                output_message = str((current_output or {}).get("message", "")).strip()
-                if output_message:
-                    yield _build_progress_event(
-                        _summarize_step_output(output_message),
-                        session_id=session_id,
-                        stage="expert_execution",
-                        stage_title=f"{next_agent} Returned",
-                    )
-                    final_summary = output_message or final_summary
-            else:
-                final_summary = (
-                    f"Workflow has reached the max iteration ({max_loops}) and has been terminated."
-                )
+            for step_event in orchestration_events:
+                orchestration_history.append(step_event)
+                progress_event = _build_orchestration_progress_event(step_event, session_id=session_id)
+                progress_event.text = _render_orchestration_history(orchestration_history)
+                yield progress_event
 
             final_event = await self._build_final_event(
                 user_id,
@@ -296,17 +249,10 @@ class CreativeClawRuntime:
             yield final_event
         except Exception as exc:
             error_summary = _format_exception_summary(exc)
-            context_parts = [f"session_id={session_id}"]
-            if current_round:
-                context_parts.append(f"round={current_round}")
-            if current_agent:
-                context_parts.append(f"next_agent={current_agent}")
-            error_text = f"Workflow failed ({', '.join(context_parts)}): {error_summary}"
+            error_text = f"Workflow failed (session_id={session_id}): {error_summary}"
             logger.opt(exception=exc).error(
-                "Workflow failed: session_id={} round={} next_agent={} error_summary={}",
+                "Workflow failed: session_id={} error_summary={}",
                 session_id,
-                current_round or "-",
-                current_agent or "-",
                 error_summary,
             )
             yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
@@ -377,6 +323,8 @@ class CreativeClawRuntime:
         state_delta["current_parameters"] = {}
         state_delta["current_plan"] = None
         state_delta["current_output"] = None
+        state_delta["last_expert_result"] = None
+        state_delta["expert_history"] = []
 
         for index, attachment in enumerate(inbound.attachments, start=1):
             saved_path = stage_attachment_into_workspace(
@@ -451,20 +399,21 @@ class CreativeClawRuntime:
         files_history = final_session.state.get("files_history") or []
         final_files = _select_latest_output_files(files_history)
 
-        text_history = final_session.state.get("text_history") or []
-        if text_history and text_history[-1]:
-            final_summary = text_history[-1]
+        state_response = final_session.state.get("final_response")
+        if state_response:
+            final_summary = state_response
         else:
-            state_response = final_session.state.get("final_response")
-            if state_response:
-                final_summary = state_response
-            state_summary = final_session.state.get("final_summary")
-            if state_summary and not state_response:
-                final_summary = state_summary
-            summary_history = final_session.state.get("summary_history") or []
-            if summary_history and not state_summary and not state_response:
-                history_text = "\n".join(f"- {summary}" for summary in summary_history)
-                final_summary = f"{final_summary}\nExecution history:\n{history_text}"
+            text_history = final_session.state.get("text_history") or []
+            if text_history and text_history[-1]:
+                final_summary = text_history[-1]
+            else:
+                state_summary = final_session.state.get("final_summary")
+                if state_summary:
+                    final_summary = state_summary
+                summary_history = final_session.state.get("summary_history") or []
+                if summary_history and not state_summary:
+                    history_text = "\n".join(f"- {summary}" for summary in summary_history)
+                    final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 
         artifact_paths = [
             str(resolve_workspace_path(file_info.get("path", "")).resolve())
