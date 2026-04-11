@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from src.agents.experts.dino_xseek.image_grounding_agent import ImageGroundingAgent
+from src.agents.experts.image_grounding.image_grounding_agent import ImageGroundingAgent
 
 
 def _build_ctx(state: dict) -> SimpleNamespace:
@@ -29,7 +29,7 @@ class ImageGroundingAgentTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "src.agents.experts.dino_xseek.image_grounding_agent.dino_xseek_detection_tool",
+            "src.agents.experts.image_grounding.image_grounding_agent.dino_xseek_detection_tool",
             new=AsyncMock(
                 return_value={
                     "status": "success",

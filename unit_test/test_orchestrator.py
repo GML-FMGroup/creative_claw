@@ -11,7 +11,7 @@ from google.adk.sessions.state import State
 from google.genai.types import Content
 
 from conf.system import SYS_CONFIG
-from src.agents.experts.dino_xseek.image_grounding_agent import ImageGroundingAgent
+from src.agents.experts.image_grounding.image_grounding_agent import ImageGroundingAgent
 from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrator_before_model_callback
 from src.runtime.adk_compat import annotate_agent_origin
 from src.runtime.workspace import workspace_relative_path, workspace_root
@@ -405,7 +405,7 @@ class OrchestratorInvokeAgentIntegrationTests(unittest.IsolatedAsyncioTestCase):
             relative_image_path = workspace_relative_path(image_path)
 
             with patch(
-                "src.agents.experts.dino_xseek.image_grounding_agent.dino_xseek_detection_tool",
+                "src.agents.experts.image_grounding.image_grounding_agent.dino_xseek_detection_tool",
                 new=AsyncMock(
                     return_value={
                         "status": "success",

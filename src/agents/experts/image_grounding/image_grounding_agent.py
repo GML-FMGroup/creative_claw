@@ -10,7 +10,7 @@ from google.adk.events import Event, EventActions
 from google.genai.types import Content, Part
 from typing_extensions import override
 
-from src.agents.experts.dino_xseek.tool import dino_xseek_detection_tool
+from src.agents.experts.image_grounding.tool import dino_xseek_detection_tool
 from src.logger import logger
 
 
