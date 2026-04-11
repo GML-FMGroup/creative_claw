@@ -193,6 +193,71 @@ def _summarize_invoke_agent_result(result: Any) -> str:
     return stringify_value(result, max_chars=220)
 
 
+def _summarize_list_session_files_result(result_text: str) -> str:
+    try:
+        payload = json.loads(result_text)
+    except Exception:
+        return stringify_value(result_text, max_chars=220)
+
+    if not isinstance(payload, dict):
+        return stringify_value(result_text, max_chars=220)
+
+    if "final_file_paths" in payload and len(payload) == 1:
+        final_paths = payload.get("final_file_paths")
+        if final_paths is None:
+            return "Final file selection is currently unset."
+        if isinstance(final_paths, list):
+            if not final_paths:
+                return "Final file selection is explicitly cleared."
+            preview = "; ".join(str(path).strip() for path in final_paths[:3] if str(path).strip())
+            return (
+                f"Final file selection contains {len(final_paths)} path(s). "
+                f"Preview: {stringify_value(preview, max_chars=180)}"
+            )
+
+    for key in ("input_files", "new_files", "latest_output_files"):
+        if key in payload and len(payload) == 1:
+            files = payload.get(key)
+            if isinstance(files, list):
+                preview = "; ".join(
+                    str(file_info.get("path", "")).strip()
+                    for file_info in files[:3]
+                    if isinstance(file_info, dict) and str(file_info.get("path", "")).strip()
+                )
+                return (
+                    f"{key} contains {len(files)} record(s). "
+                    f"Preview: {stringify_value(preview, max_chars=180)}"
+                )
+
+    if "files_history" in payload and len(payload) == 1:
+        history = payload.get("files_history")
+        if isinstance(history, list):
+            return f"Session file history contains {len(history)} step group(s)."
+
+    input_count = len(payload.get("input_files") or []) if isinstance(payload.get("input_files"), list) else 0
+    new_count = len(payload.get("new_files") or []) if isinstance(payload.get("new_files"), list) else 0
+    latest_count = (
+        len(payload.get("latest_output_files") or [])
+        if isinstance(payload.get("latest_output_files"), list)
+        else 0
+    )
+    history_count = len(payload.get("files_history") or []) if isinstance(payload.get("files_history"), list) else 0
+    final_paths = payload.get("final_file_paths")
+    if final_paths is None:
+        final_selection = "unset"
+    elif isinstance(final_paths, list) and not final_paths:
+        final_selection = "cleared"
+    elif isinstance(final_paths, list):
+        final_selection = f"{len(final_paths)} selected"
+    else:
+        final_selection = "unknown"
+    return (
+        "Session file snapshot loaded. "
+        f"input={input_count}; new={new_count}; latest_output={latest_count}; "
+        f"history_steps={history_count}; final_selection={final_selection}."
+    )
+
+
 def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
     """Summarize one tool result into status plus short preview."""
     if tool_name == "invoke_agent":
@@ -220,6 +285,7 @@ def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
         "process_session": _summarize_process_result,
         "web_search": _summarize_web_search_result,
         "web_fetch": _summarize_web_fetch_result,
+        "list_session_files": _summarize_list_session_files_result,
     }
     summarizer = summarizers.get(tool_name)
     if summarizer is None:

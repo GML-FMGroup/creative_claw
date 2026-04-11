@@ -9,6 +9,7 @@ from google.adk.runners import Runner
 from conf.system import SYS_CONFIG
 from src.runtime.models import InboundMessage, MessageAttachment
 from src.runtime.workflow_service import CreativeClawRuntime
+from src.runtime.workspace import build_workspace_file_record, workspace_relative_path, workspace_root
 
 
 class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -110,6 +111,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state["expert_history"], [])
         self.assertEqual(session.state["input_files"], [])
         self.assertEqual(session.state["new_files"], [])
+        self.assertIsNone(session.state["final_file_paths"])
 
     async def test_initial_state_persists_uploaded_files_in_history(self) -> None:
         runtime = CreativeClawRuntime()
@@ -344,6 +346,104 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(final_event.event_type, "final")
         self.assertEqual(final_event.text, "这是给用户看的最终回复。")
+
+    async def test_build_final_event_prefers_explicit_final_file_paths_over_latest_outputs(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="send this exact file",
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            selected_file = Path(tmpdir) / "selected.png"
+            fallback_file = Path(tmpdir) / "fallback.png"
+            selected_file.write_bytes(b"selected")
+            fallback_file.write_bytes(b"fallback")
+
+            selected_relative = workspace_relative_path(selected_file)
+            fallback_record = build_workspace_file_record(
+                fallback_file,
+                description="fallback file",
+                source="image_generation",
+            )
+
+            user_id, session_id = await runtime._ensure_session(inbound)
+            session = await runtime.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            await runtime.session_service.append_event(
+                session,
+                Event(
+                    author="unit_test",
+                    actions=EventActions(
+                        state_delta={
+                            "files_history": [[fallback_record]],
+                            "final_file_paths": [selected_relative],
+                            "final_response": "已发送指定文件。",
+                        }
+                    ),
+                ),
+            )
+
+            final_event = await runtime._build_final_event(
+                user_id=user_id,
+                session_id=session_id,
+                final_summary="fallback reply",
+            )
+
+        self.assertEqual(final_event.artifact_paths, [str(selected_file.resolve())])
+        self.assertEqual(final_event.text, "已发送指定文件。")
+
+    async def test_build_final_event_respects_explicit_empty_final_file_selection(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="local",
+            sender_id="local-user",
+            chat_id="terminal",
+            text="reply without attachments",
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            fallback_file = Path(tmpdir) / "fallback.png"
+            fallback_file.write_bytes(b"fallback")
+            fallback_record = build_workspace_file_record(
+                fallback_file,
+                description="fallback file",
+                source="image_generation",
+            )
+
+            user_id, session_id = await runtime._ensure_session(inbound)
+            session = await runtime.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            await runtime.session_service.append_event(
+                session,
+                Event(
+                    author="unit_test",
+                    actions=EventActions(
+                        state_delta={
+                            "files_history": [[fallback_record]],
+                            "final_file_paths": [],
+                            "final_response": "只返回文本。",
+                        }
+                    ),
+                ),
+            )
+
+            final_event = await runtime._build_final_event(
+                user_id=user_id,
+                session_id=session_id,
+                final_summary="fallback reply",
+            )
+
+        self.assertEqual(final_event.artifact_paths, [])
+        self.assertEqual(final_event.text, "只返回文本。")
 
     async def test_run_message_surfaces_orchestrator_failure(self) -> None:
         runtime = CreativeClawRuntime()

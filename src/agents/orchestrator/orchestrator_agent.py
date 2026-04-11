@@ -31,6 +31,8 @@ from src.runtime.workspace import (
     build_workspace_file_record,
     load_local_file_part,
     looks_like_image,
+    resolve_workspace_path,
+    workspace_relative_path,
 )
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
@@ -86,6 +88,19 @@ async def orchestrator_before_model_callback(
         summary_lines.append("# Execution history:")
         for index, (summary, message) in enumerate(zip(summary_history, message_history), start=1):
             summary_lines.append(f"- Step {index}: target={summary}; result={message}")
+
+    final_file_paths = state.get("final_file_paths")
+    if isinstance(final_file_paths, list):
+        normalized_final_paths = [
+            str(path).strip()
+            for path in final_file_paths
+            if isinstance(path, str) and str(path).strip()
+        ]
+        if normalized_final_paths:
+            summary_lines.append("# Explicitly selected final reply files:")
+            summary_lines.extend(f"- {path}" for path in normalized_final_paths)
+        else:
+            summary_lines.append("# Final reply attachments have been explicitly cleared for this response.")
 
     files_history = state.get("files_history") or state.get("artifacts_history", [])
     if files_history:
@@ -146,6 +161,14 @@ async def orchestrator_before_model_callback(
     llm_request.contents.append(Content(role="user", parts=file_parts))
 
 
+def _select_latest_non_channel_files(files_history: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Return the latest non-channel file batch recorded in session state."""
+    for file_group in reversed(files_history):
+        if file_group and any(str(file_info.get("source", "")).strip() != "channel" for file_info in file_group):
+            return file_group
+    return []
+
+
 class Orchestrator:
     """Plan one workflow step at a time with skills and builtin tools."""
 
@@ -192,6 +215,8 @@ class Orchestrator:
                 self.process_session,
                 self.web_search,
                 self.web_fetch,
+                self.list_session_files,
+                self.set_final_files,
                 self.invoke_agent,
             ],
         )
@@ -235,6 +260,8 @@ Rules:
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
+- Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state, especially before calling `set_final_files`.
+- Use `set_final_files(paths=[...])` when you need to explicitly choose which workspace files should be attached to the final reply.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
 - Inspect local files with `list_dir`, `glob`, `grep`, and `read_file` before changing them when the path or contents are uncertain.
 - Use local image tools for lightweight preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
@@ -252,6 +279,8 @@ Rules:
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
+- If the user asks you to send one or more workspace files back in the current conversation, call `set_final_files(paths=[...])` with the exact workspace-relative paths and then answer normally.
+- Selecting final files does not require GUI control. The runtime will attach the selected workspace files to the final channel reply when the channel supports attachments.
 - Only choose an expert agent when the task needs specialized image, search, or other expert capability that built-in tools and direct reasoning cannot handle well.
 - When calling `invoke_agent`, pass a complete expert brief.
 - For experts that need several parameters, encode the `prompt` argument as a JSON object string that contains the exact expert parameters.
@@ -750,6 +779,108 @@ Expert parameter contracts:
             args={"url": url, "max_chars": max_chars},
             runner=lambda: self.toolbox.web_fetch(url, max_chars),
         )
+
+    def list_session_files(
+        self,
+        section: str = "all",
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """List normalized workspace file records already known in the current session."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="list_session_files",
+            stage="inspection",
+            args={"section": section},
+            runner=lambda: self._list_session_files(section, tool_context=tool_context),
+        )
+
+    @staticmethod
+    def _list_session_files(section: str, *, tool_context: ToolContext | None) -> str:
+        """Return session-tracked file records in JSON form for one requested section."""
+        if tool_context is None:
+            return "Error: tool context is required to inspect session files."
+
+        normalized_section = str(section or "all").strip().lower() or "all"
+        state = tool_context.state
+        files_history = list(state.get("files_history") or [])
+        latest_output_files = _select_latest_non_channel_files(files_history)
+        payload_by_section = {
+            "input": {"input_files": list(state.get("input_files") or [])},
+            "new": {"new_files": list(state.get("new_files") or [])},
+            "latest_output": {"latest_output_files": latest_output_files},
+            "history": {"files_history": files_history},
+            "final": {"final_file_paths": state.get("final_file_paths")},
+            "all": {
+                "input_files": list(state.get("input_files") or []),
+                "new_files": list(state.get("new_files") or []),
+                "latest_output_files": latest_output_files,
+                "files_history": files_history,
+                "final_file_paths": state.get("final_file_paths"),
+            },
+        }
+        if normalized_section not in payload_by_section:
+            allowed = ", ".join(payload_by_section.keys())
+            return f"Error: Unsupported section `{section}`. Allowed: {allowed}"
+        return json.dumps(payload_by_section[normalized_section], ensure_ascii=False, indent=2)
+
+    def set_final_files(
+        self,
+        paths: list[str],
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Select which workspace files should be attached to the final reply."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="set_final_files",
+            stage="finalizing",
+            args={"paths": paths},
+            runner=lambda: self._set_final_files(paths, tool_context=tool_context),
+        )
+
+    @staticmethod
+    def _set_final_files(paths: Any, *, tool_context: ToolContext | None) -> str:
+        """Validate and persist the explicit final file selection in session state."""
+        if tool_context is None:
+            return "Error: tool context is required to select final files."
+
+        raw_paths: list[str] = []
+        if isinstance(paths, str):
+            normalized = paths.strip()
+            if normalized:
+                raw_paths.append(normalized)
+        elif isinstance(paths, list):
+            for item in paths:
+                if isinstance(item, str):
+                    normalized = item.strip()
+                    if normalized:
+                        raw_paths.append(normalized)
+                else:
+                    return "Error: Each final file path must be a string."
+        else:
+            return "Error: `paths` must be a string or a list of strings."
+
+        selected_paths: list[str] = []
+        seen_paths: set[str] = set()
+        for raw_path in raw_paths:
+            try:
+                resolved = resolve_workspace_path(raw_path)
+            except Exception as exc:
+                return f"Error: Invalid workspace path `{raw_path}`: {exc}"
+            if not resolved.exists():
+                return f"Error: File not found: {raw_path}"
+            if not resolved.is_file():
+                return f"Error: Not a file: {raw_path}"
+            relative_path = workspace_relative_path(resolved)
+            if relative_path in seen_paths:
+                continue
+            seen_paths.add(relative_path)
+            selected_paths.append(relative_path)
+
+        tool_context.state["final_file_paths"] = selected_paths
+        if not selected_paths:
+            return "Cleared the final file selection. No files will be attached unless a later step selects them."
+        joined_paths = ", ".join(selected_paths)
+        return f"Selected {len(selected_paths)} final file(s): {joined_paths}"
 
     async def invoke_agent(
         self,

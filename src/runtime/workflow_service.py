@@ -338,6 +338,7 @@ class CreativeClawRuntime:
         state_delta["workflow_status"] = "running"
         state_delta["final_summary"] = ""
         state_delta["final_response"] = ""
+        state_delta["final_file_paths"] = None
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
@@ -415,8 +416,16 @@ class CreativeClawRuntime:
                 metadata={"session_id": session_id},
             )
 
-        files_history = final_session.state.get("files_history") or []
-        final_files = _select_latest_output_files(files_history)
+        explicit_final_file_paths = final_session.state.get("final_file_paths")
+        artifact_paths = _resolve_final_artifact_paths(explicit_final_file_paths)
+        if explicit_final_file_paths is None:
+            files_history = final_session.state.get("files_history") or []
+            final_files = _select_latest_output_files(files_history)
+            artifact_paths = [
+                str(resolve_workspace_path(file_info.get("path", "")).resolve())
+                for file_info in final_files
+                if str(file_info.get("path", "")).strip()
+            ]
 
         state_response = final_session.state.get("final_response")
         if state_response:
@@ -434,17 +443,42 @@ class CreativeClawRuntime:
                     history_text = "\n".join(f"- {summary}" for summary in summary_history)
                     final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 
-        artifact_paths = [
-            str(resolve_workspace_path(file_info.get("path", "")).resolve())
-            for file_info in final_files
-            if str(file_info.get("path", "")).strip()
-        ]
         return WorkflowEvent(
             event_type="final",
             text=final_summary,
             artifact_paths=artifact_paths,
             metadata={"session_id": session_id, "display_style": "final"},
         )
+
+
+def _resolve_final_artifact_paths(selected_paths: object) -> list[str]:
+    """Resolve one explicit final-file selection into absolute artifact paths."""
+    if selected_paths is None:
+        return []
+
+    artifact_paths: list[str] = []
+    seen_paths: set[str] = set()
+    if not isinstance(selected_paths, list):
+        return artifact_paths
+
+    for path_value in selected_paths:
+        if not isinstance(path_value, str):
+            continue
+        raw_path = path_value.strip()
+        if not raw_path:
+            continue
+        try:
+            resolved = resolve_workspace_path(raw_path).resolve()
+        except Exception:
+            continue
+        if not resolved.exists() or not resolved.is_file():
+            continue
+        resolved_text = str(resolved)
+        if resolved_text in seen_paths:
+            continue
+        seen_paths.add(resolved_text)
+        artifact_paths.append(resolved_text)
+    return artifact_paths
 
 
 def _select_latest_output_files(files_history: list[list[dict]]) -> list[dict]:
