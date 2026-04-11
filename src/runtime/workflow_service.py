@@ -6,7 +6,6 @@ import json
 import uuid
 from pathlib import Path
 
-from google.adk.agents import BaseAgent
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
 from google.adk.sessions import InMemorySessionService
@@ -24,6 +23,7 @@ from src.agents.experts import (
 )
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
+from src.runtime.adk_compat import annotate_agent_origin
 from src.runtime.models import InboundMessage, WorkflowEvent
 from src.runtime.step_events import reset_step_event_history, step_event_streaming_active
 from src.runtime.workspace import (
@@ -54,13 +54,6 @@ _PROGRESS_STAGE_TITLES = {
     "expert_execution": "Calling Expert Agent",
     "finalizing": "Finalizing Result",
 }
-
-
-def _attach_adk_origin_metadata(agent: BaseAgent, *, app_name: str, origin_path: Path) -> BaseAgent:
-    """Annotate one programmatically created expert with explicit ADK origin metadata."""
-    setattr(agent, "_adk_origin_app_name", app_name)
-    setattr(agent, "_adk_origin_path", origin_path)
-    return agent
 
 
 def _format_exception_summary(exc: Exception) -> str:
@@ -135,37 +128,37 @@ class CreativeClawRuntime:
         expert_origin_path = Path(__file__).resolve().parents[1] / "agents"
 
         self.expert_agents = {
-            "ImageGroundingAgent": _attach_adk_origin_metadata(
+            "ImageGroundingAgent": annotate_agent_origin(
                 ImageGroundingAgent(name="ImageGroundingAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "ImageGenerationAgent": _attach_adk_origin_metadata(
+            "ImageGenerationAgent": annotate_agent_origin(
                 ImageGenerationAgent(name="Text2ImageAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "ImageEditingAgent": _attach_adk_origin_metadata(
+            "ImageEditingAgent": annotate_agent_origin(
                 ImageEditingAgent(name="ImageEditingAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "ImageToPromptAgent": _attach_adk_origin_metadata(
+            "ImageToPromptAgent": annotate_agent_origin(
                 ImageToPromptAgent(name="ImageToPromptAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "ImageUnderstandingAgent": _attach_adk_origin_metadata(
+            "ImageUnderstandingAgent": annotate_agent_origin(
                 ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "KnowledgeAgent": _attach_adk_origin_metadata(
+            "KnowledgeAgent": annotate_agent_origin(
                 KnowledgeAgent(name="KnowledgeAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
-            "SearchAgent": _attach_adk_origin_metadata(
+            "SearchAgent": annotate_agent_origin(
                 SearchAgent(name="SearchAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,

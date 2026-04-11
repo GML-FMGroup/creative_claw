@@ -1,11 +1,19 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from google.adk.artifacts import InMemoryArtifactService
-from google.genai.types import Content
 from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.state import State
+from google.genai.types import Content
 
+from conf.system import SYS_CONFIG
+from src.agents.experts.dino_xseek.image_grounding_agent import ImageGroundingAgent
 from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrator_before_model_callback
+from src.runtime.adk_compat import annotate_agent_origin
+from src.runtime.workspace import workspace_relative_path, workspace_root
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -237,6 +245,76 @@ class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("step1_generation_output0.png", prompt_text)
         self.assertIn("Most recent available output files", prompt_text)
+
+
+class OrchestratorInvokeAgentIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invoke_agent_runs_real_grounding_expert_through_dispatcher(self) -> None:
+        expert_origin_path = Path(__file__).resolve().parents[1] / "src" / "agents"
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_agents={
+                "ImageGroundingAgent": annotate_agent_origin(
+                    ImageGroundingAgent(name="ImageGroundingAgent"),
+                    app_name=SYS_CONFIG.app_name,
+                    origin_path=expert_origin_path,
+                )
+            },
+        )
+        tool_context = SimpleNamespace(
+            state=State(
+                {
+                    "step": 0,
+                    "files_history": [],
+                    "summary_history": [],
+                    "text_history": [],
+                    "message_history": [],
+                    "expert_history": [],
+                },
+                {},
+            ),
+            _invocation_context=SimpleNamespace(user_id="user-1"),
+        )
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            image_path = Path(tmpdir) / "grounding_input.png"
+            image_path.write_bytes(b"fake-image")
+            relative_image_path = workspace_relative_path(image_path)
+
+            with patch(
+                "src.agents.experts.dino_xseek.image_grounding_agent.dino_xseek_detection_tool",
+                new=AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "message": "Detected 1 object.",
+                        "input_path": relative_image_path,
+                        "prompt": "cat",
+                        "objects": [{"bbox": [1.0, 2.0, 3.0, 4.0]}],
+                        "bboxes": [[1.0, 2.0, 3.0, 4.0]],
+                        "task_uuid": "task-1",
+                        "session_id": "child-session",
+                        "provider": "deepdataspace",
+                        "model_name": "DINO-XSeek-1.0",
+                    }
+                ),
+            ):
+                result = await orchestrator.invoke_agent(
+                    "ImageGroundingAgent",
+                    f'{{"input_path":"{relative_image_path}","prompt":"cat"}}',
+                    tool_context=tool_context,
+                )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["agent_name"], "ImageGroundingAgent")
+        self.assertIn("image_ground_results", result["structured_data"])
+        self.assertEqual(
+            result["structured_data"]["image_ground_results"][0]["bboxes"][0],
+            [1.0, 2.0, 3.0, 4.0],
+        )
+        self.assertEqual(tool_context.state["step"], 1)
+        self.assertEqual(tool_context.state["current_output"]["status"], "success")
+        self.assertEqual(tool_context.state["expert_history"][-1]["agent_name"], "ImageGroundingAgent")
+        self.assertEqual(tool_context.state["orchestration_events"][0]["title"], "invoke_agent")
+        self.assertIn("agent_name=ImageGroundingAgent", tool_context.state["orchestration_events"][0]["detail"])
 
 
 if __name__ == "__main__":

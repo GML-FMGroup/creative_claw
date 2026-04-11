@@ -16,7 +16,11 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools.tool_context import ToolContext
 from google.genai.types import Content, Part
 
-from src.runtime.expert_registry import build_fallback_parameters
+from src.runtime.expert_registry import (
+    build_fallback_parameters,
+    normalize_expert_output,
+    validate_expert_parameters,
+)
 from src.runtime.tool_context_artifact_service import ToolContextArtifactService
 from src.runtime.workspace import (
     build_workspace_file_record,
@@ -162,7 +166,7 @@ def normalize_invoke_agent_parameters(
         if len(input_paths) == 1:
             normalized["input_path"] = input_paths[0]
 
-    return normalized
+    return validate_expert_parameters(agent_name, normalized)
 
 
 def _normalize_output_files(output_files: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -245,21 +249,31 @@ def _build_tool_result(
     *,
     agent_name: str,
     current_output: dict[str, Any],
+    forwarded_state_delta: dict[str, Any],
     normalized_parameters: dict[str, Any],
     normalized_files: list[dict[str, str]],
 ) -> dict[str, Any]:
     """Build the tool result returned to the orchestrator model."""
+    normalized_output = normalize_expert_output(
+        agent_name,
+        current_output,
+        forwarded_state_delta=forwarded_state_delta,
+    )
+    structured_data = {
+        key: value
+        for key, value in normalized_output.items()
+        if key not in {"status", "message", "output_text", "output_files"}
+    }
+    for key, value in forwarded_state_delta.items():
+        if key not in _NON_FORWARDABLE_STATE_KEYS and key not in structured_data:
+            structured_data[key] = value
     return {
         "agent_name": agent_name,
-        "status": str(current_output.get("status", "error")).strip() or "error",
-        "message": str(current_output.get("message", "")).strip(),
-        "output_text": current_output.get("output_text", ""),
+        "status": normalized_output["status"],
+        "message": normalized_output["message"],
+        "output_text": normalized_output.get("output_text", ""),
         "output_files": normalized_files,
-        "structured_data": {
-            key: value
-            for key, value in current_output.items()
-            if key not in {"status", "message", "output_text", "output_files"}
-        },
+        "structured_data": structured_data,
         "parameters": normalized_parameters,
     }
 
@@ -273,6 +287,11 @@ def _build_state_delta(
     current_output: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Merge one child expert result back into the parent session state."""
+    current_output = normalize_expert_output(
+        agent_name,
+        current_output,
+        forwarded_state_delta=forwarded_state_delta,
+    )
     current_step = int(parent_state.get("step", 0) or 0)
     normalized_files = _normalize_output_files(current_output.get("output_files", []))
     message = str(current_output.get("message", "")).strip()
@@ -289,6 +308,7 @@ def _build_state_delta(
     tool_result = _build_tool_result(
         agent_name=agent_name,
         current_output=current_output,
+        forwarded_state_delta=forwarded_state_delta,
         normalized_parameters=normalized_parameters,
         normalized_files=normalized_files,
     )

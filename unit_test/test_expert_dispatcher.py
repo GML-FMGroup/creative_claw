@@ -101,6 +101,14 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
                 state={},
             )
 
+    def test_normalize_invoke_agent_parameters_rejects_invalid_search_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid `mode` value"):
+            normalize_invoke_agent_parameters(
+                agent_name="SearchAgent",
+                prompt='{"query":"cats","mode":"weird"}',
+                state={},
+            )
+
     async def test_dispatch_expert_call_updates_parent_state(self) -> None:
         artifact_service = InMemoryArtifactService()
         parent_state = State(
@@ -135,6 +143,7 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parent_state["summary_history"], ["KnowledgeAgent: expert finished"])
         self.assertEqual(parent_state["app:shared_setting"], "from-child")
         self.assertEqual(parent_state["custom_key"], "custom-value")
+        self.assertEqual(result.tool_result["structured_data"]["custom_key"], "custom-value")
 
     async def test_dispatch_expert_call_filters_internal_parent_state_before_child_run(self) -> None:
         artifact_service = InMemoryArtifactService()
