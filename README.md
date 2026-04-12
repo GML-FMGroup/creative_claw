@@ -12,8 +12,8 @@
 CreativeClaw is a creative agent built on multiple autonomous agents. It brings chat, image generation, image understanding, prompt optimization, search, video generation, and multi-channel access into one workflow so you can keep iterating on a creative task instead of switching tools at every step.
 
 ## 📰 News
-
-- 2026-04-12: First release. Supports basic image and video operations, with chat-based usage through Web, CLI, and Feishu.
+ - 2026-04-13: Support 20 LLM providers. Support image segmentation.
+ - 2026-04-12: Release v0.1.1. Supports basic image and video operations, with chat-based usage through Web, CLI, and Feishu.
 
 ## ✨ CreativeClaw Features
 
@@ -313,6 +313,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 ## 📚 More Docs
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
+- [docs/model_and_token_map.md](docs/model_and_token_map.md): model names, mapped experts, and token application links
 
 ## 🛠️ TODO
 
