@@ -129,7 +129,7 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         ctx = _build_ctx(
             {
                 "current_parameters": {
-                    "input_paths": ["inbox/local/session_1/a.png"],
+                    "input_paths": ["inbox/cli/session_1/a.png"],
                     "prompt": ["make it blue"],
                 },
                 "step": 0,
@@ -161,7 +161,7 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         ctx = _build_ctx(
             {
                 "current_parameters": {
-                    "input_paths": ["inbox/local/session_1/a.png"],
+                    "input_paths": ["inbox/cli/session_1/a.png"],
                     "prompt": ["make it blue"],
                     "provider": "seedream",
                 },

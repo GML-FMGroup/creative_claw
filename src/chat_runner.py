@@ -14,10 +14,10 @@ if TYPE_CHECKING:
     from src.channels.manager import ChannelManager
     from src.runtime import CreativeClawRuntime, InboundMessage, MessageAttachment
 
-SUPPORTED_CHAT_CHANNELS: tuple[str, ...] = ("local", "telegram", "feishu", "web")
+SUPPORTED_CHAT_CHANNELS: tuple[str, ...] = ("cli", "telegram", "feishu", "web")
 
 _CHANNEL_LABELS = {
-    "local": "Local",
+    "cli": "CLI",
     "telegram": "Telegram",
     "feishu": "Feishu",
     "web": "Web",
@@ -37,16 +37,16 @@ def build_chat_channel(
     channel_name: str,
     *,
     inbound_handler: Callable[[InboundMessage], Awaitable[None]],
-    local_writer: Callable[[str], None] | None = None,
+    cli_writer: Callable[[str], None] | None = None,
     web_config: WebChannelConfig | None = None,
 ) -> BaseChannel:
     """Build one configured chat channel implementation."""
     normalized = normalize_chat_channel_name(channel_name)
 
-    if normalized == "local":
+    if normalized == "cli":
         from src.channels.local import LocalChannel
 
-        return LocalChannel(writer=local_writer)
+        return LocalChannel(writer=cli_writer)
 
     if normalized == "telegram":
         from src.channels.telegram import TelegramChannel
@@ -81,7 +81,7 @@ def create_chat_manager(
     channel_name: str,
     *,
     runtime: CreativeClawRuntime | None = None,
-    local_writer: Callable[[str], None] | None = None,
+    cli_writer: Callable[[str], None] | None = None,
     web_config: WebChannelConfig | None = None,
 ) -> tuple[ChannelManager, BaseChannel]:
     """Create one runtime-backed manager together with the requested channel."""
@@ -93,7 +93,7 @@ def create_chat_manager(
     channel = build_chat_channel(
         channel_name,
         inbound_handler=manager.handle_inbound,
-        local_writer=local_writer,
+        cli_writer=cli_writer,
         web_config=web_config,
     )
     manager.register(channel)
@@ -126,7 +126,7 @@ def build_cli_attachments(
     return attachments
 
 
-async def send_local_chat_message(
+async def send_cli_chat_message(
     manager: ChannelManager,
     *,
     prompt: str,
@@ -136,14 +136,14 @@ async def send_local_chat_message(
     status_writer: Callable[[str], None] | None = None,
     warn: Callable[[str], None] | None = None,
 ) -> None:
-    """Send one normalized local chat message through the shared manager."""
+    """Send one normalized CLI chat message through the shared manager."""
     from src.runtime import InboundMessage
 
     writer = status_writer or print
     writer(f"\nCLI: sending instruction '{prompt}' (chat: {chat_id}, user: {user_id})")
     await manager.handle_inbound(
         InboundMessage(
-            channel="local",
+            channel="cli",
             sender_id=user_id,
             chat_id=chat_id,
             text=prompt,
@@ -152,7 +152,7 @@ async def send_local_chat_message(
     )
 
 
-async def run_local_chat(
+async def run_cli_chat(
     *,
     user_id: str,
     chat_id: str,
@@ -160,23 +160,23 @@ async def run_local_chat(
     attachment_paths: Sequence[str] = (),
     runtime: CreativeClawRuntime | None = None,
     status_writer: Callable[[str], None] | None = None,
-    local_writer: Callable[[str], None] | None = None,
+    cli_writer: Callable[[str], None] | None = None,
     input_reader: Callable[[str], str] | None = None,
 ) -> None:
-    """Run the local terminal chat flow."""
+    """Run the CLI terminal chat flow."""
     writer = status_writer or print
     prompt_reader = input_reader or input
     manager, _ = create_chat_manager(
-        "local",
+        "cli",
         runtime=runtime,
-        local_writer=local_writer or writer,
+        cli_writer=cli_writer or writer,
     )
     await manager.start_all()
     try:
         writer(f"\nChatting with CreativeClaw (user: {user_id}, chat: {chat_id}).")
 
         if message:
-            await send_local_chat_message(
+            await send_cli_chat_message(
                 manager,
                 prompt=message,
                 user_id=user_id,
@@ -199,7 +199,7 @@ async def run_local_chat(
 
                 attachment_text = prompt_reader("Attachment path(s) (optional, comma separated): ").strip()
                 raw_paths = [item.strip() for item in attachment_text.split(",")] if attachment_text else []
-                await send_local_chat_message(
+                await send_cli_chat_message(
                     manager,
                     prompt=user_message,
                     user_id=user_id,
@@ -227,10 +227,10 @@ async def run_chat_service(
     status_writer: Callable[[str], None] | None = None,
     web_config: WebChannelConfig | None = None,
 ) -> None:
-    """Start one long-running non-local chat channel."""
+    """Start one long-running non-CLI chat channel."""
     normalized = normalize_chat_channel_name(channel_name)
-    if normalized == "local":
-        raise ValueError("Local chat should be run through run_local_chat().")
+    if normalized == "cli":
+        raise ValueError("CLI chat should be run through run_cli_chat().")
 
     writer = status_writer or print
     manager, channel = create_chat_manager(normalized, runtime=runtime, web_config=web_config)

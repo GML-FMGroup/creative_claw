@@ -29,7 +29,7 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.handle_inbound(
             InboundMessage(
-                channel="local",
+                channel="cli",
                 sender_id="u1",
                 chat_id="c1",
                 text="hello",
@@ -56,7 +56,7 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.handle_inbound(
             InboundMessage(
-                channel="local",
+                channel="cli",
                 sender_id="u1",
                 chat_id="c1",
                 text="hello",
@@ -71,7 +71,7 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await manager.handle_inbound(
                 InboundMessage(
-                    channel="local",
+                    channel="cli",
                     sender_id="u1",
                     chat_id="c1",
                     text="hello",
@@ -86,14 +86,14 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
 
         await manager.handle_inbound(
             InboundMessage(
-                channel="local",
+                channel="cli",
                 sender_id="u1",
                 chat_id="c9",
                 text="hello",
             )
         )
 
-        self.assertEqual(runtime.route, ("local", "c9"))
+        self.assertEqual(runtime.route, ("cli", "c9"))
         self.assertEqual(lines, ["done"])
 
 

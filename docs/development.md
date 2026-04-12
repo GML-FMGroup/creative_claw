@@ -14,7 +14,7 @@ Core pieces:
 - `invoke_agent(agent_name, prompt)`: the expert delegation entrypoint
 - `runtime/expert_dispatcher.py`: normalizes expert parameters, creates child sessions, runs experts, and merges results back
 - `workspace/`: the filesystem source of truth for uploaded and generated files
-- channel adapters: Local CLI, local Web chat, Telegram, and Feishu
+- channel adapters: CLI chat, local Web chat, Telegram, and Feishu
 
 Workspace behavior:
 
@@ -23,14 +23,14 @@ Workspace behavior:
 
 ## Included Channels
 
-- Unified local CLI: `creative-claw chat local`
+- Unified CLI chat: `creative-claw chat cli`
 - Unified local Web chat: `creative-claw chat web`
 - Unified Telegram runner: `creative-claw chat telegram`
 - Unified Feishu runner: `creative-claw chat feishu`
 
 Module fallback before installing the console script:
 
-- `python -m src.creative_claw_cli chat local`
+- `python -m src.creative_claw_cli chat cli`
 - `python -m src.creative_claw_cli chat web`
 - `python -m src.creative_claw_cli chat telegram`
 - `python -m src.creative_claw_cli chat feishu`
@@ -146,7 +146,7 @@ Example `invoke_agent` payloads:
 ```
 
 ```json
-{"input_path":"inbox/local/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
+{"input_path":"inbox/cli/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
 ```
 
 ## Running
@@ -156,19 +156,19 @@ Example `invoke_agent` payloads:
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
-creative-claw chat local
+creative-claw chat cli
 ```
 
 Single message:
 
 ```bash
-creative-claw chat local --message "Generate a poster-style cat image"
+creative-claw chat cli --message "Generate a poster-style cat image"
 ```
 
 Single message with attachments:
 
 ```bash
-creative-claw chat local \
+creative-claw chat cli \
   --message "Describe this image and write a better prompt" \
   --attachment /path/to/image.png
 ```
@@ -199,7 +199,7 @@ creative-claw chat feishu
 
 ## Chat Commands
 
-Supported across the local CLI, local Web chat, Telegram, and Feishu channels:
+Supported across the CLI chat, local Web chat, Telegram, and Feishu channels:
 
 - `/help`
 - `/new`

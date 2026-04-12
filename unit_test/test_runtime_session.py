@@ -50,8 +50,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_session_reuses_same_channel_chat_pair(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="hello",
         )
@@ -65,8 +65,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_reset_session_creates_new_session_for_same_channel_chat_pair(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="hello",
         )
@@ -82,8 +82,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_help_command_returns_help_text_without_creating_session(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="/help",
         )
@@ -99,8 +99,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_state_uses_runtime_fields(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="hello",
         )
@@ -130,8 +130,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             upload_path = Path(tmpdir) / "demo.png"
             upload_path.write_bytes(b"fake-image")
             inbound = InboundMessage(
-                channel="local",
-                sender_id="local-user",
+                channel="cli",
+                sender_id="cli-user",
                 chat_id="terminal",
                 text="describe this image",
                 attachments=[
@@ -155,13 +155,13 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.state["input_files"]), 1)
         self.assertEqual(len(session.state["files_history"]), 1)
         self.assertEqual(session.state["files_history"][0][0]["source"], "channel")
-        self.assertTrue(session.state["input_files"][0]["path"].startswith("inbox/local/"))
+        self.assertTrue(session.state["input_files"][0]["path"].startswith("inbox/cli/"))
 
     async def test_run_message_uses_natural_progress_messages(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="Generate an image for me",
         )
@@ -193,8 +193,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_message_emits_granular_orchestration_events(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="Analyze this directory",
         )
@@ -239,8 +239,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_message_renders_tool_args_and_result_summary(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="Check this file",
         )
@@ -280,8 +280,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_message_keeps_smart_tool_summary_in_timeline(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="List this directory",
         )
@@ -321,8 +321,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_final_event_prefers_state_final_response_over_text_history(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="hello",
         )
@@ -361,8 +361,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_final_event_prefers_explicit_final_file_paths_over_latest_outputs(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="send this exact file",
         )
@@ -412,8 +412,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_final_event_respects_explicit_empty_final_file_selection(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="reply without attachments",
         )
@@ -459,8 +459,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_message_surfaces_orchestrator_failure(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
-            channel="local",
-            sender_id="local-user",
+            channel="cli",
+            sender_id="cli-user",
             chat_id="terminal",
             text="Describe this image",
         )
@@ -487,8 +487,8 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             upload_path = Path(tmpdir) / "demo.png"
             upload_path.write_bytes(b"fake-image")
             inbound = InboundMessage(
-                channel="local",
-                sender_id="local-user",
+                channel="cli",
+                sender_id="cli-user",
                 chat_id="terminal",
                 text="Describe this image",
                 attachments=[MessageAttachment(path=str(upload_path), name="demo.png", mime_type="image/png")],

@@ -148,7 +148,7 @@ class OrchestratorTests(unittest.TestCase):
                 "input_files": [],
                 "new_files": [],
                 "files_history": [
-                    [{"name": "upload.png", "path": "inbox/local/upload.png", "source": "channel"}],
+                    [{"name": "upload.png", "path": "inbox/cli/upload.png", "source": "channel"}],
                     [{"name": "result.png", "path": "generated/session/result.png", "source": "image_grounding"}],
                 ],
                 "final_file_paths": None,

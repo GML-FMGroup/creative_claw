@@ -11,7 +11,7 @@ class LocalChannelTests(unittest.IsolatedAsyncioTestCase):
 
         await channel.send(
             OutboundMessage(
-                channel="local",
+                channel="cli",
                 chat_id="terminal",
                 text="completed",
                 artifact_paths=["outputs/image.png"],

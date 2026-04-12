@@ -14,14 +14,14 @@ CreativeClaw turns natural-language requests into creative output.
 
 You can ask it to generate visuals, analyze reference images, rewrite prompts, search for supporting information, and handle multi-step creative tasks from a chat interface.
 
-If you want to try it quickly, start from the local CLI with one API key and one command.
+If you want to try it quickly, start from the CLI chat with one API key and one command.
 
 ## Why CreativeClaw
 
 - **Built for creative workflows**: image generation, image editing, image understanding, prompt extraction, grounding, search, and video generation are first-class capabilities.
-- **Easy to try locally**: you can get the local CLI running with a small setup and start prompting right away.
+- **Easy to try from the CLI**: you can get the CLI chat running with a small setup and start prompting right away.
 - **Good at iterative work**: send in a reference image, ask for analysis, then keep refining the result in follow-up turns.
-- **Works in chat tools too**: start from the CLI, then connect the local web UI, Telegram, or Feishu when you want the same experience in another surface.
+- **Works in chat tools too**: start from the CLI chat, then connect the local web UI, Telegram, or Feishu when you want the same experience in another surface.
 - **Extensible with skills**: local skills can teach the agent extra workflows, including the new MiniMax CLI skill.
 
 ## What You Can Do
@@ -37,7 +37,7 @@ If you want to try it quickly, start from the local CLI with one API key and one
 
 ## Quick Start
 
-The fastest way to try CreativeClaw is the local CLI.
+The fastest way to try CreativeClaw is the CLI chat.
 
 ### 1. Set up the environment
 
@@ -61,7 +61,7 @@ OPENAI_API_KEY="your_api_key_here"
 
 Important:
 
-- This is enough to try the default local chat flow.
+- This is enough to try the default CLI chat flow.
 - Some image, video, search, and provider-specific features need additional keys only when you use those features.
 - Full setup details are in [docs/development.md](docs/development.md).
 
@@ -70,25 +70,25 @@ Important:
 If you installed the project with `python -m pip install -e .`, you can use the console script directly:
 
 ```bash
-creative-claw chat local
+creative-claw chat cli
 ```
 
 If you did not install the console script yet, use the module entrypoint instead:
 
 ```bash
-python -m src.creative_claw_cli chat local
+python -m src.creative_claw_cli chat cli
 ```
 
 You can also send a single request directly:
 
 ```bash
-creative-claw chat local --message "Generate a poster-style cat image"
+creative-claw chat cli --message "Generate a poster-style cat image"
 ```
 
 Or send a request with an image:
 
 ```bash
-creative-claw chat local \
+creative-claw chat cli \
   --message "Describe this image and write a better prompt for recreating it" \
   --attachment ./example.png
 ```
@@ -98,13 +98,13 @@ creative-claw chat local \
 ### Generate an image
 
 ```bash
-creative-claw chat local --message "Create a cinematic travel poster for Hangzhou in spring"
+creative-claw chat cli --message "Create a cinematic travel poster for Hangzhou in spring"
 ```
 
 ### Improve a prompt from a reference image
 
 ```bash
-creative-claw chat local \
+creative-claw chat cli \
   --message "Look at this reference image and write a cleaner generation prompt" \
   --attachment ./reference.png
 ```
@@ -112,7 +112,7 @@ creative-claw chat local \
 ### Understand an image before editing
 
 ```bash
-creative-claw chat local \
+creative-claw chat cli \
   --message "Describe this image, identify the subject, and suggest three editing directions" \
   --attachment ./input.png
 ```
@@ -128,7 +128,7 @@ Inside the chat, use:
 
 CreativeClaw currently supports:
 
-- **Local CLI**: the easiest way to get started
+- **CLI Chat**: the easiest way to get started
 - **Local Web Chat**: a browser chat surface with progress and artifact previews
 - **Telegram**: use the agent from Telegram chats
 - **Feishu**: use the agent from Feishu chats
@@ -181,12 +181,21 @@ Use it when:
 - you want MiniMax speech synthesis
 - you need MiniMax file upload or `file_id`-based follow-up workflows
 
+
 MiniMax CLI uses API credentials. For agent-style non-interactive usage, API key login is the recommended path:
 
 ```bash
+# Install CLI globally for terminal use
+npm install -g mmx-cli
+# Authenticate
 mmx auth login --api-key sk-xxxxx
 mmx auth status --output json --non-interactive
 ```
+
+> Requires [Node.js](https://nodejs.org) 18+
+
+> **Requires a MiniMax Token Plan** — [Global](https://platform.minimax.io/subscribe/token-plan) · [CN](https://platform.minimaxi.com/subscribe/token-plan)
+
 
 You usually only need this when you explicitly want MiniMax-specific workflows such as music, speech, or `mmx`-based tasks.
 
@@ -212,4 +221,4 @@ CreativeClaw is actively evolving. The current experience is strongest for users
 - iterate on creative tasks with images and follow-up prompts
 - enable only the providers and channels they actually need
 
-If you want the smoothest first run, start with the local CLI and only `OPENAI_API_KEY`, then expand from there.
+If you want the smoothest first run, start with the CLI chat and only `OPENAI_API_KEY`, then expand from there.

@@ -7,7 +7,7 @@ import asyncio
 from collections.abc import Sequence
 
 from conf.channel import CHANNEL_CONFIG, WebChannelConfig
-from src.chat_runner import run_chat_service, run_local_chat
+from src.chat_runner import run_chat_service, run_cli_chat
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,36 +26,36 @@ def build_parser() -> argparse.ArgumentParser:
     channel_parsers = chat_parser.add_subparsers(dest="channel")
     channel_parsers.required = True
 
-    local_parser = channel_parsers.add_parser(
-        "local",
-        help="Start the local terminal chat channel.",
+    cli_parser = channel_parsers.add_parser(
+        "cli",
+        help="Start the CLI terminal chat channel.",
     )
-    local_parser.add_argument(
+    cli_parser.add_argument(
         "--user-id",
         type=str,
-        default="local-user",
-        help="Logical user ID for the local channel session.",
+        default="cli-user",
+        help="Logical user ID for the CLI channel session.",
     )
-    local_parser.add_argument(
+    cli_parser.add_argument(
         "--chat-id",
         type=str,
         default="terminal",
-        help="Logical chat ID for the local channel session.",
+        help="Logical chat ID for the CLI channel session.",
     )
-    local_parser.add_argument(
+    cli_parser.add_argument(
         "--message",
         type=str,
         help="Exit after sending a single message (non-interactive mode).",
     )
-    local_parser.add_argument(
+    cli_parser.add_argument(
         "--attachment",
         action="append",
         default=[],
         metavar="PATH",
         help="Attachment path for non-interactive mode. Repeat this flag to send multiple files.",
     )
-    local_parser.add_argument("--img1", type=str, default=None, help=argparse.SUPPRESS)
-    local_parser.add_argument("--img2", type=str, default=None, help=argparse.SUPPRESS)
+    cli_parser.add_argument("--img1", type=str, default=None, help=argparse.SUPPRESS)
+    cli_parser.add_argument("--img2", type=str, default=None, help=argparse.SUPPRESS)
 
     for name in ("telegram", "feishu"):
         channel_parsers.add_parser(
@@ -94,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def collect_local_attachment_paths(args: argparse.Namespace) -> list[str]:
-    """Collect local attachment paths including legacy compatibility flags."""
+def collect_cli_attachment_paths(args: argparse.Namespace) -> list[str]:
+    """Collect CLI attachment paths including legacy compatibility flags."""
     attachment_paths = list(getattr(args, "attachment", []) or [])
     for legacy_flag in ("img1", "img2"):
         value = getattr(args, legacy_flag, None)
@@ -121,12 +121,12 @@ async def run_cli(args: argparse.Namespace) -> int:
     if args.command != "chat":
         raise ValueError(f"Unsupported command '{args.command}'.")
 
-    if args.channel == "local":
-        await run_local_chat(
+    if args.channel == "cli":
+        await run_cli_chat(
             user_id=args.user_id,
             chat_id=args.chat_id,
             message=args.message,
-            attachment_paths=collect_local_attachment_paths(args),
+            attachment_paths=collect_cli_attachment_paths(args),
         )
         return 0
 

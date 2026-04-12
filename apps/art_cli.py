@@ -9,8 +9,8 @@ from src.creative_claw_cli import main as creative_claw_main
 
 
 def main() -> int:
-    """Compatibility wrapper for the legacy local CLI entrypoint."""
-    return creative_claw_main(["chat", "local", *sys.argv[1:]])
+    """Compatibility wrapper for the legacy CLI entrypoint."""
+    return creative_claw_main(["chat", "cli", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

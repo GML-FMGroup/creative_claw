@@ -32,7 +32,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             session=SimpleNamespace(id="session-1"),
         )
 
-        with route_context("local", "chat-1"):
+        with route_context("cli", "chat-1"):
             await plugin.before_run_callback(invocation_context=invocation)
             await plugin.before_tool_callback(
                 tool=tool,
@@ -64,7 +64,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             session=SimpleNamespace(id="session-2"),
         )
 
-        with route_context("local", "chat-2"):
+        with route_context("cli", "chat-2"):
             await plugin.before_run_callback(invocation_context=invocation)
             await plugin.before_tool_callback(
                 tool=tool,
@@ -76,7 +76,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.messages, [])
 
     async def test_orchestration_event_is_published_realtime(self) -> None:
-        with route_context("local", "chat-3"):
+        with route_context("cli", "chat-3"):
             reset_step_event_history(session_id="session-3")
             publish_orchestration_step_event(
                 session_id="session-3",
@@ -99,7 +99,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
             session=SimpleNamespace(id="session-4"),
         )
 
-        with route_context("local", "chat-4"):
+        with route_context("cli", "chat-4"):
             reset_step_event_history(session_id="session-4")
             publish_orchestration_step_event(
                 session_id="session-4",

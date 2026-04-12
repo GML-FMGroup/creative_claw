@@ -1,4 +1,4 @@
-"""Local terminal channel implementation."""
+"""CLI terminal channel implementation."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from .events import OutboundMessage
 
 
 class LocalChannel(BaseChannel):
-    """Simple stdout-backed channel for local development and testing."""
+    """Simple stdout-backed channel for CLI development and testing."""
 
-    name = "local"
+    name = "cli"
 
     def __init__(self, writer: Callable[[str], None] | None = None) -> None:
         super().__init__()

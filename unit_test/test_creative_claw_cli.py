@@ -19,7 +19,7 @@ from src.chat_runner import (
 from src.creative_claw_cli import (
     build_parser,
     build_web_channel_config,
-    collect_local_attachment_paths,
+    collect_cli_attachment_paths,
     run_cli,
 )
 
@@ -31,11 +31,11 @@ class _FakeRuntime:
 
 
 class CreativeClawCliParserTests(unittest.TestCase):
-    def test_build_parser_parses_local_chat_command(self) -> None:
+    def test_build_parser_parses_cli_chat_command(self) -> None:
         args = build_parser().parse_args(
             [
                 "chat",
-                "local",
+                "cli",
                 "--user-id",
                 "demo-user",
                 "--chat-id",
@@ -50,13 +50,13 @@ class CreativeClawCliParserTests(unittest.TestCase):
         )
 
         self.assertEqual(args.command, "chat")
-        self.assertEqual(args.channel, "local")
+        self.assertEqual(args.channel, "cli")
         self.assertEqual(args.user_id, "demo-user")
         self.assertEqual(args.chat_id, "demo-chat")
         self.assertEqual(args.message, "hello")
         self.assertEqual(args.attachment, ["one.png", "two.png"])
 
-    def test_collect_local_attachment_paths_includes_legacy_flags(self) -> None:
+    def test_collect_cli_attachment_paths_includes_legacy_flags(self) -> None:
         args = argparse.Namespace(
             attachment=["from-new-flag.png"],
             img1="from-img1.png",
@@ -64,7 +64,7 @@ class CreativeClawCliParserTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            collect_local_attachment_paths(args),
+            collect_cli_attachment_paths(args),
             ["from-new-flag.png", "from-img1.png", "from-img2.png"],
         )
 
@@ -79,6 +79,10 @@ class CreativeClawCliParserTests(unittest.TestCase):
         self.assertEqual(args.port, 19001)
         self.assertEqual(args.title, "Demo")
         self.assertTrue(args.open_browser)
+
+    def test_build_parser_rejects_removed_local_chat_command(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["chat", "local"])
 
     def test_build_web_channel_config_applies_cli_overrides(self) -> None:
         args = argparse.Namespace(host="0.0.0.0", port=19001, title="Demo", open_browser=True)
@@ -96,17 +100,17 @@ class CreativeClawCliParserTests(unittest.TestCase):
 
 
 class CreativeClawCliDispatchTests(unittest.IsolatedAsyncioTestCase):
-    async def test_run_cli_dispatches_local_chat(self) -> None:
+    async def test_run_cli_dispatches_cli_chat(self) -> None:
         args = build_parser().parse_args(
-            ["chat", "local", "--message", "hello", "--attachment", "demo.png"]
+            ["chat", "cli", "--message", "hello", "--attachment", "demo.png"]
         )
 
-        with patch("src.creative_claw_cli.run_local_chat", new=AsyncMock()) as mocked_run_local_chat:
+        with patch("src.creative_claw_cli.run_cli_chat", new=AsyncMock()) as mocked_run_cli_chat:
             exit_code = await run_cli(args)
 
         self.assertEqual(exit_code, 0)
-        mocked_run_local_chat.assert_awaited_once_with(
-            user_id="local-user",
+        mocked_run_cli_chat.assert_awaited_once_with(
+            user_id="cli-user",
             chat_id="terminal",
             message="hello",
             attachment_paths=["demo.png"],
@@ -140,8 +144,8 @@ class ChatRunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_chat_channel_name("unknown")
 
-    def test_build_chat_channel_returns_local_channel(self) -> None:
-        channel = build_chat_channel("local", inbound_handler=AsyncMock(), local_writer=lambda _line: None)
+    def test_build_chat_channel_returns_cli_channel(self) -> None:
+        channel = build_chat_channel("cli", inbound_handler=AsyncMock(), cli_writer=lambda _line: None)
 
         self.assertIsInstance(channel, LocalChannel)
 
@@ -204,9 +208,9 @@ class ChatRunnerTests(unittest.TestCase):
         self.assertEqual(channel.config.title, "CreativeClaw Web Chat")
 
     def test_create_chat_manager_registers_requested_channel(self) -> None:
-        manager, channel = create_chat_manager("local", runtime=_FakeRuntime())
+        manager, channel = create_chat_manager("cli", runtime=_FakeRuntime())
 
-        self.assertIs(manager.channels["local"], channel)
+        self.assertIs(manager.channels["cli"], channel)
 
     def test_build_cli_attachments_keeps_existing_files_only(self) -> None:
         warnings: list[str] = []
