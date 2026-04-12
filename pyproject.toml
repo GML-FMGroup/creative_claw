@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "A creative AI agent for image generation, prompt refinement, visual understanding, and multi-channel chat."
 authors = ["GML <mail@yxy.pub>"]
 readme = "README.md"
+packages = [
+    { include = "src" },
+    { include = "conf" },
+]
+include = ["conf/jsons/*.json", "skills/**/*", "src/webchat/static/**/*"]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
@@ -21,10 +26,14 @@ httpx = {extras = ["socks"], version = ">=0.27.0"}
 requests-toolbelt = ">=1.0.0"
 openai = ">=1.16.0"
 lark-oapi = ">=1.4.13"
+websockets = ">=12.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
 pytest-mock = "^3.12.0"
+
+[tool.poetry.scripts]
+creative-claw = "src.creative_claw_cli:main"
 
 
 [build-system]

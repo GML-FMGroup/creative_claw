@@ -14,7 +14,7 @@ Core pieces:
 - `invoke_agent(agent_name, prompt)`: the expert delegation entrypoint
 - `runtime/expert_dispatcher.py`: normalizes expert parameters, creates child sessions, runs experts, and merges results back
 - `workspace/`: the filesystem source of truth for uploaded and generated files
-- channel adapters: Local CLI, Telegram, and Feishu
+- channel adapters: Local CLI, local Web chat, Telegram, and Feishu
 
 Workspace behavior:
 
@@ -23,9 +23,19 @@ Workspace behavior:
 
 ## Included Channels
 
-- Local CLI: `apps/art_cli.py`
-- Telegram long polling: `apps/run_telegram.py`
-- Feishu long connection: `apps/run_feishu.py`
+- Unified local CLI: `creative-claw chat local`
+- Unified local Web chat: `creative-claw chat web`
+- Unified Telegram runner: `creative-claw chat telegram`
+- Unified Feishu runner: `creative-claw chat feishu`
+
+Module fallback before installing the console script:
+
+- `python -m src.creative_claw_cli chat local`
+- `python -m src.creative_claw_cli chat web`
+- `python -m src.creative_claw_cli chat telegram`
+- `python -m src.creative_claw_cli chat feishu`
+
+Legacy compatibility wrappers are still available under `apps/`.
 
 ## Environment Setup
 
@@ -59,10 +69,10 @@ Feature-specific capabilities require additional keys only when those capabiliti
 | `DDS_API_KEY` | Optional | `ImageGroundingAgent` via DeepDataSpace DINO-XSeek | [DeepDataSpace cloud console](https://cloud.deepdataspace.com/) |
 | `SERPER_API_KEY` | Optional | `SearchAgent` image mode | [Serper](https://serper.dev/) |
 | `BRAVE_API_KEY` | Optional | Built-in `web_search` tool | [Brave Search API](https://api.search.brave.com/app/keys) |
-| `TELEGRAM_BOT_TOKEN` | Required only for Telegram channel | `apps/run_telegram.py` | [Telegram Bot token guide](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) |
+| `TELEGRAM_BOT_TOKEN` | Required only for Telegram channel | `creative-claw chat telegram` | [Telegram Bot token guide](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) |
 | `TELEGRAM_ALLOW_FROM` | Recommended for Telegram channel | Telegram allowlist | [Telegram Bot API docs](https://core.telegram.org/bots/api) |
-| `FEISHU_APP_ID` | Required only for Feishu channel | `apps/run_feishu.py` | [Feishu Open Platform](https://open.feishu.cn/app) |
-| `FEISHU_APP_SECRET` | Required only for Feishu channel | `apps/run_feishu.py` | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_APP_ID` | Required only for Feishu channel | `creative-claw chat feishu` | [Feishu Open Platform](https://open.feishu.cn/app) |
+| `FEISHU_APP_SECRET` | Required only for Feishu channel | `creative-claw chat feishu` | [Feishu Open Platform](https://open.feishu.cn/app) |
 | `FEISHU_ENCRYPT_KEY` | Optional, only if Feishu event encryption is enabled in the platform | Feishu event subscription security | [Feishu Open Platform](https://open.feishu.cn/app) |
 | `FEISHU_VERIFICATION_TOKEN` | Optional, only if token verification is enabled in the platform | Feishu event subscription verification | [Feishu Open Platform](https://open.feishu.cn/app) |
 | `FEISHU_ALLOW_FROM` | Recommended for Feishu channel | Feishu allowlist | [Feishu Open Platform](https://open.feishu.cn/app) |
@@ -72,6 +82,23 @@ Notes:
 - `SERPER_API_KEY` and `BRAVE_API_KEY` power different search paths
 - `GOOGLE_API_KEY` is not required for a minimal text-only run
 - `DASHSCOPE_API_KEY` is not required by the current tracked runtime paths
+
+## Web Chat Notes
+
+The local Web chat channel is configured through these optional environment variables:
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `WEB_HOST` | `127.0.0.1` | Host interface for the local Web chat server |
+| `WEB_PORT` | `18900` | Port for the local Web chat server |
+| `WEB_TITLE` | `CreativeClaw Web Chat` | Browser page title shown in the UI |
+| `WEB_OPEN_BROWSER` | `false` | Whether to try opening the browser automatically on startup |
+
+CLI flags can override these values for one run:
+
+```bash
+creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web Chat"
+```
 
 ## Feishu Notes
 
@@ -129,38 +156,50 @@ Example `invoke_agent` payloads:
 ```bash
 cd creative_claw
 source ./.venv/bin/activate
-python apps/art_cli.py
+creative-claw chat local
 ```
 
 Single message:
 
 ```bash
-python apps/art_cli.py --message "Generate a poster-style cat image"
+creative-claw chat local --message "Generate a poster-style cat image"
 ```
 
 Single message with attachments:
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Describe this image and write a better prompt" \
-  --img1 /path/to/image.png
+  --attachment /path/to/image.png
 ```
 
 ### Telegram
 
 ```bash
-python apps/run_telegram.py
+creative-claw chat telegram
 ```
+
+### Web Chat
+
+```bash
+creative-claw chat web
+```
+
+Open the printed URL in a browser. The first iteration currently supports:
+
+- text chat
+- realtime progress updates
+- generated artifact preview/download links
 
 ### Feishu
 
 ```bash
-python apps/run_feishu.py
+creative-claw chat feishu
 ```
 
 ## Chat Commands
 
-Supported across the local CLI, Telegram, and Feishu channels:
+Supported across the local CLI, local Web chat, Telegram, and Feishu channels:
 
 - `/help`
 - `/new`

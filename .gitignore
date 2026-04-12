@@ -179,6 +179,7 @@ cython_debug/
 .DS_Store
 
 # Output dir && Temp dir
+output.txt
 outputs
 uploads
 logs

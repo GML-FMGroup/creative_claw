@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>__CREATIVE_CLAW_TITLE__</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">CC</div>
+          <div class="brand-copy">
+            <div class="eyebrow">CreativeClaw</div>
+            <h1 id="title">__CREATIVE_CLAW_TITLE__</h1>
+            <p class="sidebar-copy">A local browser chat surface for creative ideation, progress tracking, and generated artifacts.</p>
+          </div>
+        </div>
+
+        <button id="new-session" class="primary-button" type="button">New Session</button>
+
+        <section class="session-panel">
+          <div class="section-label">Recent Sessions</div>
+          <ul id="session-list" class="session-list"></ul>
+        </section>
+
+        <section class="status-panel">
+          <div class="status-line">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="status">connecting</span>
+          </div>
+          <button id="clear-history" class="ghost-button danger" type="button">Clear Current Session</button>
+        </section>
+      </aside>
+
+      <main class="chat-panel">
+        <div class="hero">
+          <div class="hero-badge">Web Chat</div>
+          <h2>Creative flow in one surface</h2>
+          <p>Send a request, watch execution progress, and inspect generated images or files without leaving the browser.</p>
+        </div>
+
+        <section id="timeline" class="timeline"></section>
+
+        <div class="composer-shell">
+          <form id="composer" class="composer">
+            <label class="composer-label" for="prompt">Message</label>
+            <div class="composer-row">
+              <textarea
+                id="prompt"
+                rows="1"
+                placeholder="Describe the image, prompt, poster, edit, or idea you want CreativeClaw to handle..."
+              ></textarea>
+              <button id="send" class="send-button" type="submit">Send</button>
+            </div>
+            <div class="composer-hint">Markdown is supported. Press Ctrl/Cmd + Enter to send.</div>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <template id="message-template">
+      <article class="message-card">
+        <div class="message-meta">
+          <span class="message-role"></span>
+        </div>
+        <div class="message-body markdown"></div>
+        <div class="artifact-grid"></div>
+      </article>
+    </template>
+
+    <template id="progress-template">
+      <article class="progress-card">
+        <div class="progress-header">
+          <span class="progress-badge">Progress</span>
+          <span class="progress-title">Working</span>
+        </div>
+        <div class="progress-body markdown"></div>
+      </article>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

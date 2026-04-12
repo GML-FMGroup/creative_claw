@@ -11,6 +11,7 @@ __all__ = [
     "LocalChannel",
     "OutboundMessage",
     "TelegramChannel",
+    "WebChannel",
 ]
 
 
@@ -23,6 +24,7 @@ def __getattr__(name: str):
         "ChannelManager": ".manager",
         "FeishuChannel": ".feishu",
         "TelegramChannel": ".telegram",
+        "WebChannel": ".web",
     }
     module_name = module_map.get(name)
     if module_name is None:

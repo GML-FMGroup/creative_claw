@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="asset/logo.jpg" alt="CreativeClaw" width="420">
+  <img src="asset/logo-2.jpg" alt="CreativeClaw" width="420">
   <h1>CreativeClaw</h1>
   <p><a href="README_zh.md">简体中文</a> · <strong>English</strong></p>
-  <p><strong>Create images, understand references, improve prompts, search for ideas, and chat across CLI, Telegram, and Feishu.</strong></p>
+  <p><strong>Create images, understand references, improve prompts, search for ideas, and chat across CLI, Web, Telegram, and Feishu.</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
     <img src="https://img.shields.io/badge/google--adk-1.0.0-green" alt="Google ADK">
-    <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
+    <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Web%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
   </p>
 </div>
 
@@ -21,7 +21,7 @@ If you want to try it quickly, start from the local CLI with one API key and one
 - **Built for creative workflows**: image generation, image editing, image understanding, prompt extraction, grounding, search, and video generation are first-class capabilities.
 - **Easy to try locally**: you can get the local CLI running with a small setup and start prompting right away.
 - **Good at iterative work**: send in a reference image, ask for analysis, then keep refining the result in follow-up turns.
-- **Works in chat tools too**: start from the CLI, then connect Telegram or Feishu when you want the same experience in daily communication.
+- **Works in chat tools too**: start from the CLI, then connect the local web UI, Telegram, or Feishu when you want the same experience in another surface.
 - **Extensible with skills**: local skills can teach the agent extra workflows, including the new MiniMax CLI skill.
 
 ## What You Can Do
@@ -47,6 +47,7 @@ cd creative_claw
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pip install -e .
 cp .env.template .env
 ```
 
@@ -66,22 +67,30 @@ Important:
 
 ### 3. Start chatting
 
+If you installed the project with `python -m pip install -e .`, you can use the console script directly:
+
 ```bash
-python apps/art_cli.py
+creative-claw chat local
+```
+
+If you did not install the console script yet, use the module entrypoint instead:
+
+```bash
+python -m src.creative_claw_cli chat local
 ```
 
 You can also send a single request directly:
 
 ```bash
-python apps/art_cli.py --message "Generate a poster-style cat image"
+creative-claw chat local --message "Generate a poster-style cat image"
 ```
 
 Or send a request with an image:
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Describe this image and write a better prompt for recreating it" \
-  --img1 ./example.png
+  --attachment ./example.png
 ```
 
 ## Common Usage Examples
@@ -89,23 +98,23 @@ python apps/art_cli.py \
 ### Generate an image
 
 ```bash
-python apps/art_cli.py --message "Create a cinematic travel poster for Hangzhou in spring"
+creative-claw chat local --message "Create a cinematic travel poster for Hangzhou in spring"
 ```
 
 ### Improve a prompt from a reference image
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Look at this reference image and write a cleaner generation prompt" \
-  --img1 ./reference.png
+  --attachment ./reference.png
 ```
 
 ### Understand an image before editing
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Describe this image, identify the subject, and suggest three editing directions" \
-  --img1 ./input.png
+  --attachment ./input.png
 ```
 
 ### Start a new chat session
@@ -120,15 +129,30 @@ Inside the chat, use:
 CreativeClaw currently supports:
 
 - **Local CLI**: the easiest way to get started
+- **Local Web Chat**: a browser chat surface with progress and artifact previews
 - **Telegram**: use the agent from Telegram chats
 - **Feishu**: use the agent from Feishu chats
+
+### Local Web Chat
+
+```bash
+creative-claw chat web
+```
+
+By default the server listens on `http://127.0.0.1:18900`.
+
+You can also customize the binding:
+
+```bash
+creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web Chat"
+```
 
 ### Telegram
 
 After setting the Telegram-related variables in `.env`:
 
 ```bash
-python apps/run_telegram.py
+creative-claw chat telegram
 ```
 
 ### Feishu
@@ -136,13 +160,15 @@ python apps/run_telegram.py
 After setting the Feishu-related variables in `.env`:
 
 ```bash
-python apps/run_feishu.py
+creative-claw chat feishu
 ```
 
 Notes:
 
 - `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are the main required values.
 - `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` are usually **not needed** for a basic test setup. They are only needed if you enabled the corresponding security settings in the Feishu platform.
+- Web chat can also be configured from environment variables: `WEB_HOST`, `WEB_PORT`, `WEB_TITLE`, and `WEB_OPEN_BROWSER`.
+- Legacy `apps/art_cli.py`, `apps/run_telegram.py`, and `apps/run_feishu.py` are still kept as compatibility wrappers during the transition.
 
 ## MiniMax CLI Skill
 

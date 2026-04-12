@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="asset/logo.jpg" alt="CreativeClaw" width="420">
+  <img src="asset/logo-2.jpg" alt="CreativeClaw" width="420">
   <h1>CreativeClaw</h1>
   <p><strong>简体中文</strong> · <a href="README.md">English</a></p>
-  <p><strong>生成图片、理解参考图、优化提示词、搜索灵感，并可在 CLI、Telegram、飞书中聊天使用。</strong></p>
+  <p><strong>生成图片、理解参考图、优化提示词、搜索灵感，并可在 CLI、Web、Telegram、飞书中聊天使用。</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
     <img src="https://img.shields.io/badge/google--adk-1.0.0-green" alt="Google ADK">
-    <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
+    <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Web%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
   </p>
 </div>
 
@@ -21,7 +21,7 @@ CreativeClaw 可以把自然语言请求转成创意产出。
 - **面向创意工作流**：图像生成、图像编辑、图像理解、提示词提取、目标定位、搜索、视频生成都是一等能力。
 - **本地上手简单**：本地 CLI 配置很轻，几步就能开始使用。
 - **适合反复迭代**：可以先发参考图让它分析，再继续追问和修改。
-- **支持聊天工具接入**：可以先从 CLI 开始，后续再接 Telegram 或飞书。
+- **支持聊天工具接入**：可以先从 CLI 开始，后续再接本地网页、Telegram 或飞书。
 - **可通过 skill 扩展**：本地 skill 可以继续教它新流程，比如 MiniMax CLI skill。
 
 ## 你可以拿它做什么
@@ -47,6 +47,7 @@ cd creative_claw
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m pip install -e .
 cp .env.template .env
 ```
 
@@ -66,22 +67,30 @@ OPENAI_API_KEY="your_api_key_here"
 
 ### 3. 开始聊天
 
+如果你已经执行过 `python -m pip install -e .`，就可以直接使用 console script：
+
 ```bash
-python apps/art_cli.py
+creative-claw chat local
+```
+
+如果你还没有安装这个 console script，就先这样运行：
+
+```bash
+python -m src.creative_claw_cli chat local
 ```
 
 也可以直接发一条单次请求：
 
 ```bash
-python apps/art_cli.py --message "Generate a poster-style cat image"
+creative-claw chat local --message "Generate a poster-style cat image"
 ```
 
 或者带图提问：
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Describe this image and write a better prompt for recreating it" \
-  --img1 ./example.png
+  --attachment ./example.png
 ```
 
 ## 常见用法
@@ -89,23 +98,23 @@ python apps/art_cli.py \
 ### 生成一张图片
 
 ```bash
-python apps/art_cli.py --message "Create a cinematic travel poster for Hangzhou in spring"
+creative-claw chat local --message "Create a cinematic travel poster for Hangzhou in spring"
 ```
 
 ### 根据参考图优化提示词
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Look at this reference image and write a cleaner generation prompt" \
-  --img1 ./reference.png
+  --attachment ./reference.png
 ```
 
 ### 先理解图片，再决定怎么改
 
 ```bash
-python apps/art_cli.py \
+creative-claw chat local \
   --message "Describe this image, identify the subject, and suggest three editing directions" \
-  --img1 ./input.png
+  --attachment ./input.png
 ```
 
 ### 开启一个新会话
@@ -120,15 +129,30 @@ python apps/art_cli.py \
 CreativeClaw 当前支持：
 
 - **本地 CLI**：最适合第一次上手
+- **本地 Web Chat**：浏览器里聊天，能直接看到进度和产物预览
 - **Telegram**：在 Telegram 里使用
 - **飞书**：在飞书里使用
+
+### 本地 Web Chat
+
+```bash
+creative-claw chat web
+```
+
+默认会监听在 `http://127.0.0.1:18900`。
+
+也可以显式指定：
+
+```bash
+creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web Chat"
+```
 
 ### Telegram
 
 在 `.env` 填好 Telegram 相关配置后：
 
 ```bash
-python apps/run_telegram.py
+creative-claw chat telegram
 ```
 
 ### 飞书
@@ -136,13 +160,15 @@ python apps/run_telegram.py
 在 `.env` 填好飞书相关配置后：
 
 ```bash
-python apps/run_feishu.py
+creative-claw chat feishu
 ```
 
 说明：
 
 - `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 是主要必需项。
 - `FEISHU_ENCRYPT_KEY` 和 `FEISHU_VERIFICATION_TOKEN` 一般 **不需要**。只有你在飞书平台里开启了对应安全配置时才需要填写。
+- Web Chat 也支持通过环境变量配置：`WEB_HOST`、`WEB_PORT`、`WEB_TITLE`、`WEB_OPEN_BROWSER`。
+- 过渡期间，`apps/art_cli.py`、`apps/run_telegram.py`、`apps/run_feishu.py` 仍然保留为兼容包装层。
 
 ## MiniMax CLI Skill
 

@@ -21,6 +21,7 @@ requests-toolbelt
 openai
 asyncddgs==0.1.0a1
 lark-oapi
+websockets
 python-socks
 
 # Dev/Testing
