@@ -29,6 +29,7 @@ CreativeClaw is a creative agent built on multiple autonomous agents. It brings 
 
 - Nano Banana Pro
 - Seedream
+- GPT-image
 
 ### 🎬 Video Generation
 
