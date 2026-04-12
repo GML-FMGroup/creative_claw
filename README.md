@@ -1,7 +1,8 @@
 <div align="center">
   <img src="asset/logo-2.png" alt="CreativeClaw" width="420">
   <h1>CreativeClaw: your personal creative assistant</h1>
-  <p><a href="README_zh.md">简体中文</a> · <strong>English</strong></p>
+  <h3>One conversation. Endless creativity.</h3>
+  <p><a href="README_zh.md">中文</a> · <strong>English</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
     <img src="https://img.shields.io/badge/google--adk-1.29.0-green" alt="Google ADK">
@@ -9,13 +10,18 @@
   </p>
 </div>
 
-CreativeClaw is a creative agent built on multiple autonomous agents. It brings chat, image generation, image understanding, prompt optimization, search, video generation, and multi-channel access into one workflow so you can keep iterating on a creative task instead of switching tools at every step.
+CreativeClaw is a creative workflow system powered by multiple autonomous agents, turning the creative process from tool switching into continuous conversation.
+
+It comes with multiple built-in agents that provide reliable creative capabilities and intelligently invoke different tools through the Skill mechanism. With conversation alone, you can complete an end-to-end creative workflow covering image and video generation, image understanding, content refinement, and information search.
+
+No more jumping back and forth between different tools.
+With CreativeClaw, you can keep iterating around a single idea and move from inspiration to final output in one flow.
 
 ## 📰 News
  - 2026-04-13: Support 20 LLM providers. Support image segmentation.
  - 2026-04-12: Release v0.1.1. Supports basic image and video operations, with chat-based usage through Web, CLI, and Feishu.
 
-## ✨ CreativeClaw Features
+## ✨ Key Features of CreativeClaw
 
 - **Built for creative workflows**: image generation, image editing, image understanding, prompt extraction, grounding, search, and video generation are first-class capabilities.
 - **Supports multiple models and providers**: image and video flows can use different providers so you can balance quality, speed, and cost.
@@ -318,7 +324,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 
 ## 🛠️ TODO
 
-- Support more image-generation and video-generation models
-- Add more creativity-related skills
-- Support more LLM providers
-- Support more channels
+- [ ] Support more image-generation and video-generation models
+- [ ] Add more creativity-related skills
+- [x] Support more LLM providers
+- [ ] Support more channels
