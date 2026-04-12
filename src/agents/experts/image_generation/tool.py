@@ -162,20 +162,17 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
             status="error",
             message="ARK_API_KEY is not set.",
             provider="seedream",
-            model_name="doubao-seedream-4-0-250828",
+            model_name="doubao-seedream-5-0-260128",
         )
 
     try:
         from volcenginesdkarkruntime import Ark
-        from volcenginesdkarkruntime.types.images_generate_params import (
-            SequentialImageGenerationOptions,
-        )
     except Exception as exc:
         return ImageGenerationResult(
             status="error",
             message=f"seedream SDK unavailable: {exc}",
             provider="seedream",
-            model_name="doubao-seedream-4-0-250828",
+            model_name="doubao-seedream-5-0-260128",
         )
 
     try:
@@ -184,11 +181,10 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
             api_key=ark_api_key,
         )
         response = client.images.generate(
-            model="doubao-seedream-4-0-250828",
+            model="doubao-seedream-5-0-260128",
             prompt=prompt,
             size="2K",
-            sequential_image_generation="auto",
-            sequential_image_generation_options=SequentialImageGenerationOptions(max_images=10),
+            output_format="png",
             response_format="b64_json",
             watermark=False,
         )
@@ -197,7 +193,7 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
                 status="error",
                 message=f"seedream generation failed: {response.error}",
                 provider="seedream",
-                model_name="doubao-seedream-4-0-250828",
+                model_name="doubao-seedream-5-0-260128",
             )
 
         for item in getattr(response, "data", []) or []:
@@ -209,14 +205,14 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
                     status="success",
                     message=base64.b64decode(image_base64),
                     provider="seedream",
-                    model_name="doubao-seedream-4-0-250828",
+                    model_name="doubao-seedream-5-0-260128",
                 )
 
         return ImageGenerationResult(
             status="error",
             message="seedream returned empty images",
             provider="seedream",
-            model_name="doubao-seedream-4-0-250828",
+            model_name="doubao-seedream-5-0-260128",
         )
     except Exception as exc:
         logger.opt(exception=exc).error(
@@ -228,7 +224,7 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
             status="error",
             message=f"seedream exception: {exc}",
             provider="seedream",
-            model_name="doubao-seedream-4-0-250828",
+            model_name="doubao-seedream-5-0-260128",
         )
 
 

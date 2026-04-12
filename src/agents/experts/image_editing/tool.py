@@ -281,9 +281,6 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
             return {"status": "error", "message": "ARK_API_KEY is not set."}
         try:
             from volcenginesdkarkruntime import Ark
-            from volcenginesdkarkruntime.types.images_generate_params import (
-                SequentialImageGenerationOptions,
-            )
         except Exception as exc:
             return {"status": "error", "message": f"seedream SDK unavailable: {exc}"}
         client = Ark(
@@ -295,19 +292,18 @@ async def seedream_image_edit_tool(tool_context: ToolContext, enhance_prompt_lis
             'status': "success",
             'message': [],
             'provider': 'seedream',
-            'model_name': 'doubao-seedream-4-0-250828',
+            'model_name': 'doubao-seedream-5-0-260128',
             'usage_list': [],
         }
         fail_message = []
 
         for p in prompt:
             imagesResponse = client.images.generate(
-                model="doubao-seedream-4-0-250828",
+                model="doubao-seedream-5-0-260128",
                 prompt=p,
                 image=img_bs64_list,
                 size="2K",
-                sequential_image_generation="auto",
-                sequential_image_generation_options=SequentialImageGenerationOptions(max_images=10),
+                output_format="png",
                 response_format="b64_json",
                 watermark=False
             )
