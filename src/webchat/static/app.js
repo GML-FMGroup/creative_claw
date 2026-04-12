@@ -321,6 +321,7 @@ function renderArtifacts(container, artifacts) {
       const image = document.createElement("img");
       image.src = artifact.url;
       image.alt = artifact.name || "artifact";
+      image.addEventListener("load", scrollToBottom, { once: true });
       anchor.appendChild(image);
     }
 
@@ -379,7 +380,9 @@ function escapeHtml(text) {
 }
 
 function scrollToBottom() {
-  timeline.scrollTop = timeline.scrollHeight;
+  window.requestAnimationFrame(() => {
+    timeline.scrollTop = timeline.scrollHeight;
+  });
 }
 
 function sendPrompt() {
@@ -406,7 +409,7 @@ promptInput.addEventListener("input", () => {
 });
 
 promptInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     sendPrompt();
   }
