@@ -29,6 +29,12 @@ With CreativeClaw, you can keep iterating around a single idea and move from ins
 - **Extensible by design**: skills let you add specialized workflows such as MiniMax CLI.
 - **Coding-based asset processing**: besides generating content directly, it can also help process assets in batches through OpenCV / Python scripts.
 
+## 🏗️ Architecture
+
+The following diagram shows the high-level architecture of CreativeClaw, including the orchestrator, expert agents, skills, and channel integrations.
+
+![CreativeClaw architecture](asset/framework.png)
+
 ## 🤖 Supported Models
 
 ### 🖼️ Image Generation
