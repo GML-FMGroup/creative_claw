@@ -65,6 +65,98 @@ Notes:
 - If you change `conf/jsons/system.json` to a Gemini model, the orchestrator will also require `GOOGLE_API_KEY`.
 - `DASHSCOPE_API_KEY` is not required by the current tracked runtime paths and is intentionally not documented as a setup requirement.
 
+## MiniMax CLI Skill
+
+Creative Claw now includes a project-specific skill at `skills/minimax-cli-skill/SKILL.md`.
+
+What it is for:
+
+- explicit MiniMax / `minimax-cli` / `mmx` requests
+- MiniMax music generation
+- MiniMax speech synthesis
+- MiniMax file upload and `file_id`-based follow-up workflows
+- explicit MiniMax image, video, search, or vision requests
+
+What it is not for:
+
+- it does not replace the existing Creative Claw experts by default
+- generic image, video, search, and image-understanding tasks should still prefer the existing experts unless the user explicitly asks for MiniMax
+
+### How skill triggering works today
+
+Creative Claw skill triggering is currently prompt-driven, not rule-engine-driven:
+
+- the orchestrator sees the skill summary built from folder name plus `SKILL.md` description
+- the model decides whether to call `list_skills` and `read_skill`
+
+That means `minimax-cli-skill` is easiest to trigger when:
+
+- the user explicitly says `MiniMax`, `minimax-cli`, or `mmx`
+- the task is clearly about music, speech, or MiniMax file upload
+
+If you want the orchestrator to trigger this skill more reliably in code, the next changes should be:
+
+1. In `src/agents/orchestrator/orchestrator_agent.py`, add an explicit routing hint to `_build_instruction()`:
+   when the user mentions `MiniMax`, `minimax-cli`, `mmx`, or asks for MiniMax music / speech / file upload, prefer reading `minimax-cli-skill`.
+2. In `orchestrator_before_model_callback()`, append a lightweight hint when `session.state["user_prompt"]` matches those keywords.
+3. Keep the skill description narrow and trigger-oriented so the summary remains high-signal.
+
+These changes are more effective than adding more generic prose to the skill itself, because current routing is LLM-guided.
+
+### Does MiniMax CLI need an API key?
+
+Yes.
+
+For Creative Claw's `minimax-cli-skill`, the practical authentication method is an API key. While `mmx` also supports OAuth login, API key login is the better fit for non-interactive agent usage.
+
+Official references:
+
+- Global docs: [MiniMax API prerequisites](https://platform.minimax.io/docs/guides/quickstart-preparation)
+- Global FAQ: [How to obtain your API key](https://platform.minimax.io/docs/faq/about-apis)
+- China mainland docs: [MiniMax 前置准备](https://platform.minimaxi.com/docs/guides/quickstart)
+- China mainland FAQ: [如何获取 API Key](https://platform.minimaxi.com/docs/faq/about-apis)
+
+How to get it:
+
+- Register or log in to the MiniMax open platform.
+- Go to the API key management page.
+  Global docs describe this as `Account > Settings > API Keys`.
+  China mainland docs describe this as `账户管理 > 接口密钥`, with `订阅管理 > Coding Plan` as a separate text-only plan path.
+- Create a new key and copy it immediately. Official docs state the key is a required credential for API calls and should be kept secret.
+
+Important plan note:
+
+- Official MiniMax docs state that pay-as-you-go keys support all modalities.
+- The same docs state that `Coding Plan` keys only support MiniMax text models.
+- For this project's `minimax-cli-skill`, if you want image, video, speech, or music, do not rely on a text-only Coding Plan key.
+
+### Recommended authentication flow for this project
+
+Install MiniMax CLI:
+
+```bash
+npm install -g mmx-cli
+```
+
+Store the API key into MiniMax CLI's local config:
+
+```bash
+mmx auth login --api-key sk-xxxxx
+```
+
+Verify that MiniMax CLI is usable:
+
+```bash
+mmx auth status --output json --non-interactive
+```
+
+Notes:
+
+- In the current `minimax-cli` code in this repository, the most reliable paths are:
+  - `mmx auth login --api-key ...`
+  - or passing `--api-key ...` explicitly on a command
+- For Creative Claw, prefer the persisted login path so `exec_command` can reuse `mmx` without injecting secrets into prompts or shell history repeatedly.
+
 ## Example `.env`
 
 Use `.env.template` as the canonical sample. A practical minimal `.env` for the default text-only setup is:
