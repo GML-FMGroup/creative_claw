@@ -97,98 +97,7 @@ creative-claw init
 - 图片、视频、搜索和某些特定 provider 只在用到时才需要额外凭证。
 - 读取顺序是：`conf.json` 优先；如果某个 API key 在 `conf.json` 里是空字符串，运行时会回退到同名环境变量。
 - 第一轮文本 LLM provider 已支持：`openai`、`anthropic`、`gemini`、`openrouter`、`deepseek`、`groq`、`zhipu`、`dashscope`、`vllm`、`ollama`、`moonshot`、`minimax`、`mistral`、`stepfun`、`siliconflow`、`volcengine`、`byteplus`、`qianfan`、`azure_openai`、`custom`。
-- 更完整的环境与凭证说明见 [docs/development.md](docs/development.md)。
-
-完整模板参考：
-
-```json
-{
-  "workspace": "~/.creative-claw/workspace",
-  "llm": {
-    "provider": "openai",
-    "model": "gpt-5.4",
-    "temperature": 0.1,
-    "max_tokens": 8192
-  },
-  "providers": {
-    "openai": {
-      "api_key": "",
-      "api_base": null,
-      "api_version": null,
-      "extra_headers": {}
-    },
-    "openrouter": {
-      "api_key": "",
-      "api_base": "https://openrouter.ai/api/v1",
-      "api_version": null,
-      "extra_headers": {}
-    },
-    "gemini": {
-      "api_key": "",
-      "api_base": null,
-      "api_version": null,
-      "extra_headers": {}
-    },
-    "ollama": {
-      "api_key": "",
-      "api_base": "http://localhost:11434/v1",
-      "api_version": null,
-      "extra_headers": {}
-    },
-    "azure_openai": {
-      "api_key": "",
-      "api_base": "https://your-resource.openai.azure.com",
-      "api_version": "2024-10-21",
-      "extra_headers": {}
-    },
-    "custom": {
-      "api_key": "",
-      "api_base": "https://your-openai-compatible-endpoint/v1",
-      "api_version": null,
-      "extra_headers": {}
-    }
-  },
-  "services": {
-    "ark_api_key": "",
-    "dds_api_key": "",
-    "serper_api_key": "",
-    "brave_api_key": ""
-  },
-  "channels": {
-    "telegram": {
-      "bot_token": "",
-      "allow_from": []
-    },
-    "feishu": {
-      "app_id": "",
-      "app_secret": "",
-      "encrypt_key": "",
-      "verification_token": "",
-      "allow_from": []
-    },
-    "web": {
-      "host": "127.0.0.1",
-      "port": 18900,
-      "open_browser": false,
-      "title": "CreativeClaw Web Chat"
-    }
-  }
-}
-```
-
-常用字段解释：
-
-- `workspace`：所有上传文件和生成产物的根目录。
-- `llm.provider`：默认文本模型提供商，orchestrator 和文本专家默认走这里。
-- `llm.model`：默认模型名。大多数情况下只写 provider 内部模型名，不需要再手动写前缀。
-- `providers.<name>.api_key`：对应 provider 的认证 key。
-- `providers.<name>.api_base`：OpenAI 兼容接口或代理地址，常见于 `custom`、`azure_openai`、私有网关。
-- `providers.<name>.api_version`：主要给 `azure_openai` 这类 provider 使用。
-- `providers.<name>.extra_headers`：给需要额外 header 的网关或代理用。
-- `ollama.api_base` 默认会预填本地地址 `http://localhost:11434/v1`，适合本机 Ollama 直接接入。
-- `openrouter.api_base`、`azure_openai.api_base`、`custom.api_base` 会在 `init` 时直接写进模板，便于照着改。
-- `services.*`：非文本 LLM 能力依赖的额外服务 key，比如图像、视频、搜索。
-- `channels.*`：Telegram、飞书、本地 Web 的默认启动参数。
+- 更完整的环境与凭证说明、完整模板参考、以及常用字段解释，统一见 [docs/development.md](docs/development.md)。
 
 ### 3. 开始聊天
 
@@ -306,7 +215,7 @@ CreativeClaw 内置了一个基于 minimax-cli 的 skill：`skills/minimax-cli-s
 npm install -g mmx-cli
 # Authenticate
 mmx auth login --api-key sk-xxxxx
-mmx auth status --output json --non-interactive
+mmx auth status 
 ```
 > Requires [Node.js](https://nodejs.org) 18+
 
