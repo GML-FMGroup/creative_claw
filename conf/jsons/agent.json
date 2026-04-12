@@ -16,8 +16,8 @@
         {
             "name": "ImageGenerationAgent",
             "enable": true,
-            "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values.",
-            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional), 'aspect_ratio': '16:9'(optional), 'resolution': '1K|2K|4K'(optional)}`"
+            "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default, `seedream` can be requested explicitly, and OpenAI GPT Image is available through `gpt_image`. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values. For GPT Image you can pass optional `size` (`1024x1024|1024x1536|1536x1024`) and `quality` (`low|medium|high`).",
+            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream|gpt_image'(optional), 'aspect_ratio': '16:9'(optional), 'resolution': '1K|2K|4K'(optional), 'size': '1024x1024|1024x1536|1536x1024'(optional, gpt_image only), 'quality': 'low|medium|high'(optional, gpt_image only)}`"
         },
         {
             "name": "ImageEditingAgent",

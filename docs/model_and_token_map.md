@@ -5,6 +5,7 @@ This document lists the concrete model names currently used in the codebase, the
 | Model Name | Expert | Required Key / Token | Application Link |
 | --- | --- | --- | --- |
 | `gpt-5.4` | `OrchestratorAgent`, `KnowledgeAgent`, and the default text-LLM path | `OPENAI_API_KEY` | [OpenAI API Key](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key%23.class) |
+| `gpt-image-1.5` | `ImageGenerationAgent` (`gpt_image`) | `OPENAI_API_KEY` | [OpenAI API Key](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key%23.class) |
 | `gemini-3.1-flash-image-preview` | `ImageGenerationAgent` (`nano_banana`), `ImageEditingAgent` (`nano_banana`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `gemini-3-pro-preview` | `ImageToPromptAgent` | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `veo-3.1-generate-preview` | `VideoGenerationAgent` (`veo`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import base64
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 
@@ -9,7 +10,9 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest
 from google.genai import types
 from google.genai.types import Content, Part
+from openai import OpenAI
 
+from conf.api import API_CONFIG
 from conf.llm import build_llm
 from conf.system import SYS_CONFIG
 from src.logger import logger
@@ -228,6 +231,62 @@ async def seedream_image_generation(prompt: str, ark_api_key: str) -> ImageGener
         )
 
 
+async def gpt_image_generation(
+    prompt: str,
+    openai_api_key: str,
+    *,
+    size: str = "1024x1024",
+    quality: str = "high",
+) -> ImageGenerationResult:
+    """Generate one image with OpenAI GPT Image."""
+    if not openai_api_key:
+        return ImageGenerationResult(
+            status="error",
+            message="OPENAI_API_KEY is not set.",
+            provider="gpt_image",
+            model_name="gpt-image-1.5",
+        )
+
+    def _generate() -> ImageGenerationResult:
+        try:
+            client = OpenAI(api_key=openai_api_key)
+            result = client.images.generate(
+                model="gpt-image-1.5",
+                prompt=prompt,
+                size=size,
+                quality=quality,
+                output_format="png",
+            )
+            image_base64 = getattr(result.data[0], "b64_json", None) if getattr(result, "data", None) else None
+            if not image_base64:
+                return ImageGenerationResult(
+                    status="error",
+                    message="gpt-image returned empty images",
+                    provider="gpt_image",
+                    model_name="gpt-image-1.5",
+                )
+            return ImageGenerationResult(
+                status="success",
+                message=base64.b64decode(image_base64),
+                provider="gpt_image",
+                model_name="gpt-image-1.5",
+            )
+        except Exception as exc:
+            logger.opt(exception=exc).error(
+                "gpt-image exception: error_type={} error={!r}",
+                type(exc).__name__,
+                exc,
+            )
+            return ImageGenerationResult(
+                status="error",
+                message=f"gpt-image exception: {exc}",
+                provider="gpt_image",
+                model_name="gpt-image-1.5",
+            )
+
+    return await asyncio.to_thread(_generate)
+
+
 async def nano_banana_image_generation_tool(
     ctx: InvocationContext,
     prompt: str,
@@ -259,6 +318,25 @@ async def seedream_image_generation_tool(prompt: str) -> AsyncGenerator[dict[str
     logger.info("calling seedream for image generation ...")
     ark_api_key = os.environ.get("ARK_API_KEY") or ""
     result = await seedream_image_generation(prompt, ark_api_key)
+    return {
+        "status": result.status,
+        "message": result.message,
+        "provider": result.provider,
+        "model_name": result.model_name,
+        "usage": result.usage,
+    }
+
+
+async def gpt_image_generation_tool(prompt: str) -> dict[str, Any]:
+    """Run GPT Image generation with one normalized prompt."""
+    logger.info("calling gpt-image for image generation ...")
+    openai_api_key = str(API_CONFIG.OPENAI_API_KEY).strip() or os.environ.get("OPENAI_API_KEY") or ""
+    result = await gpt_image_generation(
+        prompt,
+        openai_api_key,
+        size=os.environ.get("OPENAI_GPT_IMAGE_SIZE", "1024x1024"),
+        quality=os.environ.get("OPENAI_GPT_IMAGE_QUALITY", "high"),
+    )
     return {
         "status": result.status,
         "message": result.message,

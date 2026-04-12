@@ -35,11 +35,24 @@ _EXPERT_SPECS = {
     "ImageGenerationAgent": ExpertSpec(
         name="ImageGenerationAgent",
         default_prompt_key="prompt",
-        default_parameters={"provider": "nano_banana", "aspect_ratio": "16:9", "resolution": "1K"},
+        default_parameters={
+            "provider": "nano_banana",
+            "aspect_ratio": "16:9",
+            "resolution": "1K",
+            "size": "1024x1024",
+            "quality": "high",
+        },
         required_parameters=("prompt",),
         required_parameter_groups=(RequiredParameterGroup(keys=("prompt",), description="prompt"),),
-        allowed_values={"provider": ("nano_banana", "seedream")},
-        notes="Use prompt; optional provider, aspect_ratio, resolution.",
+        allowed_values={
+            "provider": ("nano_banana", "seedream", "gpt_image"),
+            "size": ("1024x1024", "1024x1536", "1536x1024"),
+            "quality": ("low", "medium", "high"),
+        },
+        notes=(
+            "Use prompt; optional provider, aspect_ratio, resolution. "
+            "GPT Image is available through provider `gpt_image` and supports optional size and quality."
+        ),
     ),
     "ImageEditingAgent": ExpertSpec(
         name="ImageEditingAgent",

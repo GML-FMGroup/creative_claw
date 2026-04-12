@@ -98,6 +98,66 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         seedream_mock.assert_awaited_once_with("enhanced cat")
         nano_mock.assert_not_called()
 
+    async def test_image_generation_uses_gpt_image_when_requested(self) -> None:
+        agent = ImageGenerationAgent(name="ImageGenerationAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "prompt": "draw a cat",
+                    "provider": "gpt_image",
+                    "size": "1536x1024",
+                    "quality": "medium",
+                },
+                "step": 0,
+            }
+        )
+
+        with (
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.prompt_enhancement_tool",
+                new=AsyncMock(return_value={"status": "success", "message": "enhanced cat"}),
+            ),
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_generation_output0.png",
+            ),
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.nano_banana_image_generation_tool",
+                new=AsyncMock(),
+            ) as nano_mock,
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.seedream_image_generation_tool",
+                new=AsyncMock(),
+            ) as seedream_mock,
+            patch(
+                "src.agents.experts.image_generation.image_generation_agent.generation_tools.gpt_image_generation",
+                new=AsyncMock(
+                    return_value=generation_tools.ImageGenerationResult(
+                        status="success",
+                        message=b"png-data",
+                        provider="gpt_image",
+                        model_name="gpt-image-1.5",
+                    )
+                ),
+            ) as gpt_image_mock,
+            patch.object(
+                generation_tools.API_CONFIG,
+                "OPENAI_API_KEY",
+                "test-key",
+            ),
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        gpt_image_mock.assert_awaited_once_with(
+            "enhanced cat",
+            "test-key",
+            size="1536x1024",
+            quality="medium",
+        )
+        seedream_mock.assert_not_called()
+        nano_mock.assert_not_called()
+
     async def test_image_generation_reports_output_artifact_name_in_message(self) -> None:
         agent = ImageGenerationAgent(name="ImageGenerationAgent")
         ctx = _build_ctx({"current_parameters": {"prompt": "draw a cat"}, "step": 0})
@@ -250,6 +310,25 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["provider"], "seedream")
         self.assertEqual(result["message"][0], b"edited-png")
+
+    async def test_gpt_image_generation_returns_binary_payload(self) -> None:
+        image_payload = base64.b64encode(b"gpt-image-png").decode("utf-8")
+
+        class _FakeClient:
+            def __init__(self, **_kwargs) -> None:
+                self.images = SimpleNamespace(
+                    generate=lambda **_kwargs: SimpleNamespace(
+                        data=[SimpleNamespace(b64_json=image_payload)],
+                    )
+                )
+
+        with patch("src.agents.experts.image_generation.tool.OpenAI", _FakeClient):
+            result = await generation_tools.gpt_image_generation("draw a cat", "test-key")
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.provider, "gpt_image")
+        self.assertEqual(result.model_name, "gpt-image-1.5")
+        self.assertEqual(result.message, b"gpt-image-png")
 
 
 if __name__ == "__main__":
