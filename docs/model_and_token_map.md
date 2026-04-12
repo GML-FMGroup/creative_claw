@@ -10,8 +10,8 @@ This document lists the concrete model names currently used in the codebase, the
 | `veo-3.1-generate-preview` | `VideoGenerationAgent` (`veo`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `doubao-seedream-4-0-250828` | `ImageGenerationAgent` (`seedream`), `ImageEditingAgent` (`seedream`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `doubao-seedance-1-0-pro-250528` | `VideoGenerationAgent` (`seedance`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
-| `DINO-XSeek-1.0` | `ImageGroundingAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud-preview.deepdataspace.com/en) |
-| `DINO-X-1.0` | `ImageSegmentationAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud-preview.deepdataspace.com/en) |
+| `DINO-XSeek-1.0` | `ImageGroundingAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
+| `DINO-X-1.0` | `ImageSegmentationAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
 
 ## Notes
 
