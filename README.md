@@ -10,32 +10,33 @@
   </p>
 </div>
 
-CreativeClaw is a creative agent built on Google ADK. It brings chat, image generation, image understanding, prompt optimization, search, video generation, and multi-channel access into one workflow so you can keep iterating on a creative task without switching tools at every step.
+CreativeClaw is a creative agent built on multiple autonomous agents. It brings chat, image generation, image understanding, prompt optimization, search, video generation, and multi-channel access into one workflow so you can keep iterating on a creative task instead of switching tools at every step.
 
-If you only want to get started quickly, begin from the CLI: prepare one API key, run one command, and start chatting.
+## 📰 News
 
-## Why CreativeClaw
+- 2026-04-12: First release. Supports basic image and video operations, with chat-based usage through Web, CLI, and Feishu.
+
+## ✨ CreativeClaw Features
 
 - **Built for creative workflows**: image generation, image editing, image understanding, prompt extraction, grounding, search, and video generation are first-class capabilities.
 - **Supports multiple models and providers**: image and video flows can use different providers so you can balance quality, speed, and cost.
-- **Good for iterative work**: send a reference image, ask for analysis, then keep refining the prompt or the output in follow-up turns.
-- **One capability set, multiple surfaces**: start from the CLI, then add local Web chat, Telegram, or Feishu when needed.
-- **Extensible by design**: skills let you plug in specialized workflows such as MiniMax CLI.
-- **Not only generation**: besides creating content directly, it can also help produce OpenCV / Python scripts for batch processing of image and video assets.
+- **Iterative through conversation**: send a reference image for analysis, then keep asking follow-up questions, editing, and refining prompts.
+- **Extensible by design**: skills let you add specialized workflows such as MiniMax CLI.
+- **Coding-based asset processing**: besides generating content directly, it can also help process assets in batches through OpenCV / Python scripts.
 
-## What You Can Do
+## 🤖 Supported Models
 
-- Generate poster-style, product-style, or concept-style images from text
-- Edit, expand, restyle, or vary an existing image
-- Analyze the content, composition, and style of a reference image
-- Turn a reference image into a stronger generation prompt
-- Ground objects inside an image
-- Search for references, ideas, and supporting information
-- Generate short videos from text or image-guided prompts
-- Produce scripts for batch image or video asset processing
-- Use `mmx` for MiniMax-specific workflows, especially video, music, speech, and file upload
+### 🖼️ Image Generation
 
-## Quick Start
+- Nano Banana Pro
+- Seedream
+
+### 🎬 Video Generation
+
+- Seedance
+- Veo
+
+## 🚀 Quick Start
 
 ### 1. Set up the environment
 
@@ -65,7 +66,7 @@ Notes:
 
 ### 3. Start chatting
 
-If you already ran `pip install -e .`, you can use the installed command directly:
+If you already ran `pip install -e .`, you can use the command directly:
 
 ```bash
 creative-claw chat cli
@@ -77,7 +78,7 @@ If you have not installed the console script yet, use the module entrypoint:
 python -m src.creative_claw_cli chat cli
 ```
 
-You can also send a single one-off request:
+You can also send a single request directly:
 
 ```bash
 creative-claw chat cli --message "Generate a poster-style cat image"
@@ -91,7 +92,7 @@ creative-claw chat cli \
   --attachment ./example.png
 ```
 
-## Common Usage
+## 💡 Common Usage
 
 ### Generate an image
 
@@ -122,14 +123,14 @@ Inside the chat, use:
 - `/help`
 - `/new`
 
-## Supported Channels
+## 🌐 Supported Channels
 
 CreativeClaw currently supports:
 
-- **CLI Chat**: the best place to start
+- **CLI Chat**: the easiest way to get started
 - **Local Web Chat**: browser-based chat with realtime progress and artifact previews
-- **Telegram**: chat from Telegram
-- **Feishu**: chat from Feishu
+- **Telegram**: chat in Telegram
+- **Feishu**: chat in Feishu
 
 ### Local Web Chat
 
@@ -139,7 +140,7 @@ creative-claw chat web
 
 The default address is `http://127.0.0.1:18900`.
 
-You can also override it explicitly:
+You can also set it explicitly:
 
 ```bash
 creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web Chat"
@@ -147,7 +148,7 @@ creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web C
 
 ### Telegram
 
-After setting the Telegram-related variables in `.env`:
+After setting the Telegram-related values in `.env`:
 
 ```bash
 creative-claw chat telegram
@@ -155,7 +156,7 @@ creative-claw chat telegram
 
 ### Feishu
 
-After setting the Feishu-related variables in `.env`:
+After setting the Feishu-related values in `.env`:
 
 ```bash
 creative-claw chat feishu
@@ -163,13 +164,15 @@ creative-claw chat feishu
 
 Additional notes:
 
-- `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are the main Feishu credentials.
-- `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` are only needed if the matching security options are enabled in the Feishu platform.
+- `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are the main required values for Feishu.
+- `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` are only needed when the matching security settings are enabled in the Feishu platform.
 - Web chat can also be configured through environment variables: `WEB_HOST`, `WEB_PORT`, `WEB_TITLE`, and `WEB_OPEN_BROWSER`.
 
-## MiniMax CLI Skill
+## 🧰 Built-in Skill
 
-CreativeClaw ships with a project-level MiniMax skill at `skills/minimax-cli-skill/SKILL.md`.
+### 🎵 MiniMax CLI Skill
+
+CreativeClaw includes a project-level MiniMax skill at `skills/minimax-cli-skill/SKILL.md`.
 
 Use it when:
 
@@ -181,32 +184,26 @@ Use it when:
 For agent-style usage, API key login is the recommended setup:
 
 ```bash
+# install CLI globally
 npm install -g mmx-cli
+# Authenticate
 mmx auth login --api-key sk-xxxxx
 mmx auth status --output json --non-interactive
 ```
 
+> Requires [Node.js](https://nodejs.org) 18+
+
+> **Requires a MiniMax Token Plan** — [Global](https://platform.minimax.io/subscribe/token-plan) · [CN](https://platform.minimaxi.com/subscribe/token-plan)
+
 In practice, you only need this skill when you explicitly want MiniMax-specific capabilities.
 
-## Who This Is For
-
-CreativeClaw is a good fit if you want:
-
-- a creative AI assistant for image, video, and prompt-heavy work
-- to start from the command line, then add Web or chat channels later
-- to get something working quickly and expand models, providers, and workflows gradually
-- to keep multi-step creative tasks inside one conversation
-
-## More Docs
+## 📚 More Docs
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
 
-## Current Status
+## 🛠️ TODO
 
-CreativeClaw is still evolving. The smoothest way to use it today is:
-
-- start with `creative-claw chat cli`
-- begin with image, reference-analysis, and prompt-related workflows
-- enable only the providers and channels you actually need
-
-For the smoothest first run, start with `OPENAI_API_KEY` and the CLI chat, then expand from there.
+- Support more image-generation and video-generation models
+- Add more creativity-related skills
+- Support more LLM providers
+- Support more channels

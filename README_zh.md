@@ -10,30 +10,29 @@
   </p>
 </div>
 
-CreativeClaw 是一个基于 Google ADK 的创意 Agent。它把对话、图像生成、图像理解、提示词优化、搜索、视频生成和多渠道接入放在同一个工作流里，让你可以围绕一个创意任务连续迭代，而不是每一步都换一个工具。
+CreativeClaw 是一个基于多自主智能体的创意 Agent，把对话、图像生成、图像理解、提示词优化、搜索、视频生成和多渠道接入放在同一个工作流里，让你可以围绕一个创意任务连续迭代，而不是每一步都换一个工具。
 
-如果你只想先跑起来，最简单的方式就是从 CLI 开始：准备一个 API Key，执行一条命令，就可以开始聊天。
+## News
+ - 2026-04-12: 第一次release，支持基本的图像、视频操作，支持web、cli、飞书以对话形式使用。
 
-## 为什么用 CreativeClaw
+
+## CreativeClaw 的特性
 
 - **面向创意工作流**：图像生成、图像编辑、图像理解、提示词提取、目标定位、搜索、视频生成都是一等能力。
 - **支持多种模型与提供商**：图像和视频相关能力可以接不同 provider，方便按质量、速度和成本选择。
-- **适合反复迭代**：可以先发参考图让它分析，再继续追问、改图、补提示词。
-- **同一套能力，多种入口**：先从 CLI 开始，后续可以接本地 Web、Telegram 和飞书。
+- **基于对话的反复迭代**：可以先发参考图让它分析，再继续追问、改图、补提示词。
 - **可继续扩展**：通过 skills 可以把更多专用流程接进来，比如 MiniMax CLI。
-- **不仅能生成，还能做处理**：除了直接生成内容，也可以让它帮你产出用于批量处理素材的 OpenCV / Python 脚本。
+- **基于coding的素材处理**：除了直接生成内容，也可以让它帮你用 OpenCV / Python 脚本 来批量处理素材。
 
-## 你可以拿它做什么
+## 支持模型
 
-- 根据一句话生成海报风、产品风、概念风图片
-- 对已有图片做修改、扩图、风格变化或变体
-- 分析参考图的内容、构图和风格
-- 把参考图转成更好的生成提示词
-- 在图中做目标定位
-- 搜索资料、灵感和补充信息
-- 根据文本或参考图生成短视频
-- 生成用于批量处理图像或视频素材的脚本
-- 通过 `mmx` 走 MiniMax 相关流程，尤其是视频、音乐、语音和文件上传
+### 图像生成
+ - Nano Banana Pro
+ - Seedream
+
+### 视频生成
+ - Seedance
+ - Veo
 
 ## 快速开始
 
@@ -167,46 +166,33 @@ creative-claw chat feishu
 - `FEISHU_ENCRYPT_KEY` 和 `FEISHU_VERIFICATION_TOKEN` 只有在飞书平台里开启对应安全选项时才需要。
 - Web Chat 也支持通过环境变量配置：`WEB_HOST`、`WEB_PORT`、`WEB_TITLE`、`WEB_OPEN_BROWSER`。
 
-## MiniMax CLI Skill
+### 内置 skill
+### MiniMax CLI Skill
 
-CreativeClaw 内置了一个项目级 MiniMax skill：`skills/minimax-cli-skill/SKILL.md`。
+CreativeClaw 内置了一个基于 minimax-cli 的 skill：`skills/minimax-cli-skill/SKILL.md`，支持使用 MiniMax 模型进行图像、音乐、语音、视频方面的创作。
 
-适合这些场景：
-
-- 你明确想用 MiniMax 或 `mmx`
-- 你想用 MiniMax 生成音乐
-- 你想用 MiniMax 做语音合成
-- 你需要走 MiniMax 的文件上传或 `file_id` 相关流程
-
-对 agent 场景，推荐直接用 API Key 登录：
+为了在 CreativeClaw 中正常使用MiniMax 模型，推荐直接用 API Key 登录：
 
 ```bash
+# install CLI globally
 npm install -g mmx-cli
+# Authenticate
 mmx auth login --api-key sk-xxxxx
 mmx auth status --output json --non-interactive
 ```
+> Requires [Node.js](https://nodejs.org) 18+
 
-通常只有你明确需要 MiniMax 特定能力时，才需要启用这条 skill。
+> **Requires a MiniMax Token Plan** — [Global](https://platform.minimax.io/subscribe/token-plan) · [CN](https://platform.minimaxi.com/subscribe/token-plan)
 
-## 适合什么人
 
-CreativeClaw 比较适合这些使用方式：
 
-- 想要一个面向图片、视频和提示词任务的创意型 AI 助手
-- 想先从命令行开始，再按需接入 Web 或聊天渠道
-- 想先快速跑通，再逐步补充更多模型、provider 和工作流
-- 想把多步骤创意任务收拢到同一个对话里完成
 
 ## 更多文档
 
 - [docs/development.md](docs/development.md)：架构、环境、凭证、测试和开发说明
 
-## 当前状态
-
-CreativeClaw 还在持续迭代中。当前最顺手的使用方式是：
-
-- 先从 `creative-claw chat cli` 开始
-- 先跑图片、参考图理解和提示词相关流程
-- 只开启你当前真正需要的 provider 和聊天渠道
-
-如果你想要最顺畅的第一次体验，建议先从 `OPENAI_API_KEY` 和 CLI Chat 开始，跑通后再逐步增加其他能力。
+## TODO
+ - 支持更多图像生成、视频生成模型
+ - 增加更多创意相关 skill
+ - 支持更多LLM provider
+ - 支持更多 channel
