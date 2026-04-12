@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="asset/logo-2.jpg" alt="CreativeClaw" width="420">
+  <img src="asset/logo-2.png" alt="CreativeClaw" width="420">
   <h1>CreativeClaw</h1>
   <p><strong>简体中文</strong> · <a href="README.md">English</a></p>
   <p><strong>生成图片、理解参考图、优化提示词、搜索灵感，并可在 CLI、Web、Telegram、飞书中聊天使用。</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
-    <img src="https://img.shields.io/badge/google--adk-1.0.0-green" alt="Google ADK">
+    <img src="https://img.shields.io/badge/google--adk-1.29.0-green" alt="Google ADK">
     <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Web%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
   </p>
 </div>
@@ -184,6 +184,9 @@ CreativeClaw 现在内置了一个项目级的 MiniMax skill：`skills/minimax-c
 MiniMax CLI 需要鉴权。对 agent 场景，推荐直接用 API Key 登录：
 
 ```bash
+# Install CLI globally for terminal use
+npm install -g mmx-cli
+# Authenticate
 mmx auth login --api-key sk-xxxxx
 mmx auth status --output json --non-interactive
 ```

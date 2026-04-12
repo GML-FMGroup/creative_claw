@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="asset/logo-2.jpg" alt="CreativeClaw" width="420">
+  <img src="asset/logo-2.png" alt="CreativeClaw" width="420">
   <h1>CreativeClaw</h1>
   <p><a href="README_zh.md">简体中文</a> · <strong>English</strong></p>
   <p><strong>Create images, understand references, improve prompts, search for ideas, and chat across CLI, Web, Telegram, and Feishu.</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
-    <img src="https://img.shields.io/badge/google--adk-1.0.0-green" alt="Google ADK">
+    <img src="https://img.shields.io/badge/google--adk-1.29.0-green" alt="Google ADK">
     <img src="https://img.shields.io/badge/channels-CLI%20%7C%20Web%20%7C%20Telegram%20%7C%20Feishu-orange" alt="Channels">
   </p>
 </div>
