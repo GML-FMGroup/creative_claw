@@ -14,6 +14,7 @@ const progressTemplate = document.getElementById("progress-template");
 const STORAGE_KEY = "creative_claw_webchat_session_id";
 const SESSION_INDEX_KEY = "creative_claw_webchat_sessions";
 const HISTORY_KEY_PREFIX = "creative_claw_webchat_history:";
+const HIDDEN_PROGRESS_TITLES = new Set(["Starting", "Finalize Result"]);
 
 let sessionId = ensureSessionId();
 let socket = null;
@@ -298,7 +299,15 @@ function upsertProgressCard(content, metadata) {
     timeline.appendChild(fragment);
     activeProgressCard = timeline.lastElementChild;
   }
-  activeProgressCard.querySelector(".progress-title").textContent = metadata.stage_title || "Working";
+  const rawTitle = String(metadata.stage_title || "").trim();
+  const titleEl = activeProgressCard.querySelector(".progress-title");
+  if (HIDDEN_PROGRESS_TITLES.has(rawTitle)) {
+    titleEl.hidden = true;
+    titleEl.textContent = "";
+  } else {
+    titleEl.hidden = false;
+    titleEl.textContent = rawTitle || "Working";
+  }
   activeProgressCard.querySelector(".progress-body").innerHTML = renderMarkdown(content);
   scrollToBottom();
 }
