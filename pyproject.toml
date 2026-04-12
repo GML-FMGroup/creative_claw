@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "creative-claw"
 version = "0.1.0"
-description = "A channel-oriented creative agent system built on Google's Agent Development Kit (ADK)."
+description = "A creative AI agent for image generation, prompt refinement, visual understanding, and multi-channel chat."
 authors = ["GML <mail@yxy.pub>"]
 readme = "README.md"
 
