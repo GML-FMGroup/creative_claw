@@ -100,6 +100,25 @@ _EXPERT_SPECS = {
         mirrored_output_keys=("image_ground_results",),
         notes="Requires one image path and one grounding prompt.",
     ),
+    "ImageSegmentationAgent": ExpertSpec(
+        name="ImageSegmentationAgent",
+        default_prompt_key="prompt",
+        supports_plain_prompt=False,
+        default_parameters={"model": "DINO-X-1.0", "threshold": 0.25},
+        required_parameters=("input_path", "prompt"),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("input_path",), description="input_path"),
+            RequiredParameterGroup(keys=("prompt",), description="prompt"),
+        ),
+        mirrored_output_keys=("image_segmentation_results",),
+        notes=(
+            "Requires one image path and one segmentation prompt; saves one binary mask file. "
+            "Example invoke_agent JSON: "
+            '{"input_path":"inbox/cli/demo.png","prompt":"person","threshold":0.2}. '
+            "For chaining, read current_output.results[0].mask_path and pass that workspace path "
+            "into a later expert or built-in tool."
+        ),
+    ),
     "KnowledgeAgent": ExpertSpec(
         name="KnowledgeAgent",
         default_prompt_key="prompt",

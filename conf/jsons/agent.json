@@ -8,6 +8,12 @@
             "parameters": "`{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-XSeek-1.0'(optional)}`"
         },
         {
+            "name": "ImageSegmentationAgent",
+            "enable": true,
+            "description": "Segment one target description in one workspace image with the DeepDataSpace DINO-X model. Input: `input_path` for one workspace image plus `prompt` for the target object phrase, with optional `model` and `threshold`. Output: one saved binary mask image file plus structured segmentation results containing the provider response `objects` list, simplified `bboxes`, and the generated `mask_path`. Example `invoke_agent` payload: `{\"input_path\":\"inbox/cli/demo.png\",\"prompt\":\"person\",\"threshold\":0.2}`. Chaining example: first call `ImageSegmentationAgent`, then read `current_output.results[0].mask_path`, and pass that workspace file path into a later step such as `ImageEditingAgent` or a built-in file/image tool.",
+            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-X-1.0'(optional), 'threshold': 0.25(optional)}`"
+        },
+        {
             "name": "ImageGenerationAgent",
             "enable": true,
             "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values.",

@@ -106,6 +106,14 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["aspect_ratio"], "16:9")
         self.assertEqual(parameters["resolution"], "720p")
 
+    def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_segmentation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
+            normalize_invoke_agent_parameters(
+                agent_name="ImageSegmentationAgent",
+                prompt="segment the person",
+                state={},
+            )
+
     def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_understanding(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
             normalize_invoke_agent_parameters(

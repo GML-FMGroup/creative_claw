@@ -17,6 +17,7 @@ google-adk = "^1.29.0"
 pydantic = "^2.7.0"
 requests = "^2.31.0"
 pillow = "^10.3.0"
+pycocotools = "^2.0.8"
 loguru = "^0.7.2"
 litellm = ">=1.0.0"
 

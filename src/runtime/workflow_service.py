@@ -14,6 +14,7 @@ from google.genai.types import Content, Part
 from conf.system import SYS_CONFIG
 from src.agents.experts import (
     ImageGroundingAgent,
+    ImageSegmentationAgent,
     ImageEditingAgent,
     ImageGenerationAgent,
     ImageToPromptAgent,
@@ -131,6 +132,11 @@ class CreativeClawRuntime:
         self.expert_agents = {
             "ImageGroundingAgent": annotate_agent_origin(
                 ImageGroundingAgent(name="ImageGroundingAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "ImageSegmentationAgent": annotate_agent_origin(
+                ImageSegmentationAgent(name="ImageSegmentationAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
