@@ -17,6 +17,7 @@ from google.adk.models import LlmRequest
 from google.genai.types import Content, Part
 
 from conf.agent import experts_list
+from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
 from src.logger import logger
 from src.runtime.step_events import (
@@ -191,12 +192,12 @@ class Orchestrator:
         self.skill_registry = get_skill_registry()
         self.toolbox = BuiltinToolbox()
 
-        model_name = llm_model or SYS_CONFIG.llm_model
+        model_name = resolve_llm_model_name(llm_model or SYS_CONFIG.llm_model)
         logger.info("OrchestratorAgent: using llm: {}", model_name)
 
         self.agent = LlmAgent(
             name="CreativeClawOrchestrator",
-            model=model_name,
+            model=build_llm(llm_model or SYS_CONFIG.llm_model),
             instruction=self._build_instruction(),
             before_model_callback=orchestrator_before_model_callback,
             tools=[

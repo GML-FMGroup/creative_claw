@@ -31,6 +31,12 @@ class _FakeRuntime:
 
 
 class CreativeClawCliParserTests(unittest.TestCase):
+    def test_build_parser_parses_init_command(self) -> None:
+        args = build_parser().parse_args(["init", "--force"])
+
+        self.assertEqual(args.command, "init")
+        self.assertTrue(args.force)
+
     def test_build_parser_parses_cli_chat_command(self) -> None:
         args = build_parser().parse_args(
             [
@@ -100,6 +106,19 @@ class CreativeClawCliParserTests(unittest.TestCase):
 
 
 class CreativeClawCliDispatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_cli_dispatches_init_command(self) -> None:
+        args = build_parser().parse_args(["init", "--force"])
+
+        with patch(
+            "src.creative_claw_cli.initialize_runtime_config",
+            return_value=(Path("/tmp/.creative-claw/conf.json"), Path("/tmp/.creative-claw/workspace"), True),
+        ) as mocked_init, patch("builtins.print") as mocked_print:
+            exit_code = await run_cli(args)
+
+        self.assertEqual(exit_code, 0)
+        mocked_init.assert_called_once_with(force=True)
+        self.assertEqual(mocked_print.call_count, 3)
+
     async def test_run_cli_dispatches_cli_chat(self) -> None:
         args = build_parser().parse_args(
             ["chat", "cli", "--message", "hello", "--attachment", "demo.png"]

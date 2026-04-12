@@ -6,6 +6,7 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 
+from conf.app_config import initialize_runtime_config
 from conf.channel import CHANNEL_CONFIG, WebChannelConfig
 from src.chat_runner import run_chat_service, run_cli_chat
 
@@ -18,6 +19,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     command_parsers = parser.add_subparsers(dest="command")
     command_parsers.required = True
+
+    init_parser = command_parsers.add_parser(
+        "init",
+        help="Initialize the user-home CreativeClaw runtime directory and conf.json.",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing conf.json with the default template.",
+    )
 
     chat_parser = command_parsers.add_parser(
         "chat",
@@ -71,13 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--host",
         type=str,
         default=None,
-        help="Host interface for the web chat server. Defaults to the configured WEB_HOST value.",
+        help="Host interface for the web chat server. Defaults to the configured web host in conf.json.",
     )
     web_parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Port for the web chat server. Defaults to the configured WEB_PORT value.",
+        help="Port for the web chat server. Defaults to the configured web port in conf.json.",
     )
     web_parser.add_argument(
         "--title",
@@ -118,6 +129,14 @@ def build_web_channel_config(args: argparse.Namespace) -> WebChannelConfig:
 
 async def run_cli(args: argparse.Namespace) -> int:
     """Run the parsed CreativeClaw CLI command."""
+    if args.command == "init":
+        config_path, workspace_path, created = initialize_runtime_config(force=bool(args.force))
+        action = "created" if created else "kept"
+        print(f"Runtime directory ready: {config_path.parent}")
+        print(f"Config file {action}: {config_path}")
+        print(f"Workspace ready: {workspace_path}")
+        return 0
+
     if args.command != "chat":
         raise ValueError(f"Unsupported command '{args.command}'.")
 

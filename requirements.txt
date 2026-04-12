@@ -2,7 +2,6 @@ google-adk>=1.29.0,<2.0.0
 google-genai
 google-cloud-aiplatform
 pillow
-python-dotenv
 pydantic
 requests
 loguru

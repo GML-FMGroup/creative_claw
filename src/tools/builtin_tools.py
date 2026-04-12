@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
+from conf.api import API_CONFIG
 from src.runtime.process_sessions import get_process_session_manager
 from src.runtime.workspace import workspace_root
 
@@ -453,7 +454,7 @@ class BuiltinToolbox:
 
     def web_search(self, query: str, count: int = 5) -> str:
         """Search the web via Brave Search API."""
-        api_key = os.getenv("BRAVE_API_KEY", "")
+        api_key = API_CONFIG.BRAVE_API_KEY
         if not api_key:
             return "Error: BRAVE_API_KEY not configured"
 

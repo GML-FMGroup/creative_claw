@@ -19,9 +19,14 @@ _GENERATED_DIR_NAME = "generated"
 
 def workspace_root() -> Path:
     """Return the fixed workspace root for all runtime file interactions."""
-    root = Path(SYS_CONFIG.base_dir).resolve() / _WORKSPACE_DIR_NAME
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    preferred = SYS_CONFIG.workspace_path.resolve()
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except OSError:
+        fallback = Path("/tmp/creative-claw-workspace").resolve()
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def inbox_root() -> Path:

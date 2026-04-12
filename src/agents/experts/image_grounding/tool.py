@@ -127,7 +127,7 @@ async def dino_xseek_detection_tool(
             or os.getenv("DINO_XSEEK_TOKEN")
         )
         if not token:
-            raise RuntimeError("DDS_API_KEY is not set. Please configure it in .env.")
+            raise RuntimeError("DDS_API_KEY is not set. Please configure it in ~/.creative-claw/conf.json.")
 
         normalized_prompt = str(prompt).strip()
         if not normalized_prompt:

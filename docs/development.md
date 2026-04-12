@@ -13,7 +13,7 @@ Core pieces:
 - `Orchestrator`: the primary user-facing agent
 - `invoke_agent(agent_name, prompt)`: the expert delegation entrypoint
 - `runtime/expert_dispatcher.py`: normalizes expert parameters, creates child sessions, runs experts, and merges results back
-- `workspace/`: the filesystem source of truth for uploaded and generated files
+- `~/.creative-claw/workspace/`: the filesystem source of truth for uploaded and generated files
 - channel adapters: CLI chat, local Web chat, Telegram, and Feishu
 
 Workspace behavior:
@@ -44,55 +44,202 @@ cd creative_claw
 python3.12 -m venv .venv
 source ./.venv/bin/activate
 pip install -r requirements.txt
-cp .env.template .env
+pip install -e .
+creative-claw init
 ```
 
 If you already have the repository-local virtual environment, reuse it instead of recreating it.
 
 Important:
 
-- `.env` is ignored by git and should never be committed
-- only `.env.template` should be committed
-- rotate any secret that was ever shared outside your machine
+- runtime config now lives in `~/.creative-claw/conf.json`
+- the default workspace is `~/.creative-claw/workspace`
+- image, video, and channel credentials should be stored in `conf.json`, not in repository-local env files
 
-## Credential Matrix
+## Runtime Config
 
-The default orchestrator model in `conf/jsons/system.json` is `openai/gpt-5.4`, so `OPENAI_API_KEY` is the only required credential for a minimal text-first setup.
+The runtime config file is `~/.creative-claw/conf.json`.
 
-Feature-specific capabilities require additional keys only when those capabilities are used:
+The default text setup is:
 
-| Env var | Required when | Used by | Official URL |
-| --- | --- | --- | --- |
-| `OPENAI_API_KEY` | Required for the default orchestrator model | Main orchestrator and any feature using the default system model | [OpenAI API keys](https://platform.openai.com/api-keys) |
-| `GOOGLE_API_KEY` | Required for Gemini-backed image and VEO paths | `ImageGenerationAgent`, `ImageEditingAgent`, `ImageUnderstandingAgent`, `ImageToPromptAgent`, `VideoGenerationAgent` (`veo`) | [Google AI Studio API keys](https://aistudio.google.com/app/apikey) |
-| `ARK_API_KEY` | Optional | Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance`) | [Volcengine Ark console](https://console.volcengine.com/ark) |
-| `DDS_API_KEY` | Optional | `ImageGroundingAgent` via DeepDataSpace DINO-XSeek | [DeepDataSpace cloud console](https://cloud.deepdataspace.com/) |
-| `SERPER_API_KEY` | Optional | `SearchAgent` image mode | [Serper](https://serper.dev/) |
-| `BRAVE_API_KEY` | Optional | Built-in `web_search` tool | [Brave Search API](https://api.search.brave.com/app/keys) |
-| `TELEGRAM_BOT_TOKEN` | Required only for Telegram channel | `creative-claw chat telegram` | [Telegram Bot token guide](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) |
-| `TELEGRAM_ALLOW_FROM` | Recommended for Telegram channel | Telegram allowlist | [Telegram Bot API docs](https://core.telegram.org/bots/api) |
-| `FEISHU_APP_ID` | Required only for Feishu channel | `creative-claw chat feishu` | [Feishu Open Platform](https://open.feishu.cn/app) |
-| `FEISHU_APP_SECRET` | Required only for Feishu channel | `creative-claw chat feishu` | [Feishu Open Platform](https://open.feishu.cn/app) |
-| `FEISHU_ENCRYPT_KEY` | Optional, only if Feishu event encryption is enabled in the platform | Feishu event subscription security | [Feishu Open Platform](https://open.feishu.cn/app) |
-| `FEISHU_VERIFICATION_TOKEN` | Optional, only if token verification is enabled in the platform | Feishu event subscription verification | [Feishu Open Platform](https://open.feishu.cn/app) |
-| `FEISHU_ALLOW_FROM` | Recommended for Feishu channel | Feishu allowlist | [Feishu Open Platform](https://open.feishu.cn/app) |
+```json
+{
+  "workspace": "~/.creative-claw/workspace",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.4"
+  },
+  "providers": {
+    "openai": {
+      "api_key": "your_api_key_here"
+    }
+  }
+}
+```
 
-Notes:
+Useful config sections:
 
-- `SERPER_API_KEY` and `BRAVE_API_KEY` power different search paths
-- `GOOGLE_API_KEY` is not required for a minimal text-only run
-- `DASHSCOPE_API_KEY` is not required by the current tracked runtime paths
+- `workspace`: runtime file root
+- `llm.provider` / `llm.model`: default text model selection
+- `providers.*`: credentials and API base settings for text LLM providers
+- `services.*`: extra keys for image/video/search integrations
+- `channels.*`: Telegram, Feishu, and Web channel defaults
+
+Credential resolution rule:
+
+- `conf.json` is the primary source of truth
+- if an API key field in `conf.json` is an empty string, runtime falls back to the matching environment variable
+- this fallback applies to key-like secret fields, not to general settings such as `workspace` or `api_base`
+
+Reference fuller template:
+
+```json
+{
+  "workspace": "~/.creative-claw/workspace",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.4",
+    "temperature": 0.1,
+    "max_tokens": 8192
+  },
+  "providers": {
+    "openai": {
+      "api_key": "",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "openrouter": {
+      "api_key": "",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "gemini": {
+      "api_key": "",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "ollama": {
+      "api_key": "",
+      "api_base": "http://localhost:11434/v1",
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "azure_openai": {
+      "api_key": "",
+      "api_base": "https://your-resource.openai.azure.com",
+      "api_version": "2024-10-21",
+      "extra_headers": {}
+    },
+    "custom": {
+      "api_key": "",
+      "api_base": "https://your-openai-compatible-endpoint/v1",
+      "api_version": null,
+      "extra_headers": {}
+    }
+  },
+  "services": {
+    "ark_api_key": "",
+    "dds_api_key": "",
+    "serper_api_key": "",
+    "brave_api_key": ""
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "",
+      "allow_from": []
+    },
+    "feishu": {
+      "app_id": "",
+      "app_secret": "",
+      "encrypt_key": "",
+      "verification_token": "",
+      "allow_from": []
+    },
+    "web": {
+      "host": "127.0.0.1",
+      "port": 18900,
+      "open_browser": false,
+      "title": "CreativeClaw Web Chat"
+    }
+  },
+  "system": {
+    "app_name": "CreativeClaw",
+    "user_id_default": "art_user_001",
+    "session_id_default_prefix": "art_session_",
+    "max_iterations_orchestrator": 10,
+    "log_level": "DEBUG",
+    "log_file": "creative_claw_{time}.log",
+    "retention": "7 days",
+    "rotation": "10 MB"
+  }
+}
+```
+
+Field notes:
+
+| Field | Meaning | Typical usage |
+| --- | --- | --- |
+| `workspace` | Root directory for runtime files | Move generated content to another disk or shared mount |
+| `llm.provider` | Default text-provider name | Switch the orchestrator from OpenAI to Gemini, Anthropic, or another provider |
+| `llm.model` | Default model within the provider | Example: `gpt-5.4`, `gemini-2.5-flash`, `claude-sonnet-4-5` |
+| `providers.<name>.api_key` | Provider credential | Required by most hosted providers |
+| `providers.<name>.api_base` | Custom API endpoint | Needed for OpenAI-compatible gateways, self-hosted services, or Azure |
+| `providers.<name>.api_version` | Provider-specific API version | Mainly Azure OpenAI |
+| `providers.<name>.extra_headers` | Extra HTTP headers | Enterprise proxy or custom gateway integration |
+| `providers.ollama.api_base` | Local Ollama endpoint | Prefilled as `http://localhost:11434/v1` by `creative-claw init` |
+| `services.ark_api_key` | Volcengine Ark key | Seedream and Seedance paths |
+| `services.dds_api_key` | Grounding service key | Image grounding |
+| `services.serper_api_key` | Search service key | Search/image search features |
+| `services.brave_api_key` | Brave search key | Built-in web search tool |
+| `channels.telegram.*` | Telegram defaults | Bot token and allow-list |
+| `channels.feishu.*` | Feishu defaults | App credentials and allow-list |
+| `channels.web.*` | Local web-chat defaults | Host, port, title, and browser behavior |
+| `system.*` | Internal runtime defaults | Logging and session defaults; usually left as-is |
+
+First-round text LLM providers:
+
+- `openai`
+- `anthropic`
+- `gemini`
+- `openrouter`
+- `deepseek`
+- `groq`
+- `zhipu`
+- `dashscope`
+- `vllm`
+- `ollama`
+- `moonshot`
+- `minimax`
+- `mistral`
+- `stepfun`
+- `siliconflow`
+- `volcengine`
+- `byteplus`
+- `qianfan`
+- `azure_openai`
+- `custom`
+
+Feature-specific extra service keys:
+
+- `services.ark_api_key`: Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance`)
+- `services.dds_api_key`: `ImageGroundingAgent`
+- `services.serper_api_key`: `SearchAgent` image mode
+- `services.brave_api_key`: built-in `web_search` tool
+- `providers.gemini.api_key`: Gemini-backed image and VEO paths
 
 ## Web Chat Notes
 
-The local Web chat channel is configured through these optional environment variables:
+The local Web chat channel is configured through `channels.web` in `~/.creative-claw/conf.json`:
 
-| Env var | Default | Purpose |
+| Field | Default | Purpose |
 | --- | --- | --- |
-| `WEB_HOST` | `127.0.0.1` | Host interface for the local Web chat server |
-| `WEB_PORT` | `18900` | Port for the local Web chat server |
-| `WEB_TITLE` | `CreativeClaw Web Chat` | Browser page title shown in the UI |
-| `WEB_OPEN_BROWSER` | `false` | Whether to try opening the browser automatically on startup |
+| `host` | `127.0.0.1` | Host interface for the local Web chat server |
+| `port` | `18900` | Port for the local Web chat server |
+| `title` | `CreativeClaw Web Chat` | Browser page title shown in the UI |
+| `open_browser` | `false` | Whether to try opening the browser automatically on startup |
 
 CLI flags can override these values for one run:
 
@@ -104,8 +251,8 @@ creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web C
 
 For the current implementation:
 
-- `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are the main required values
-- `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` are not required for a basic test setup
+- `channels.feishu.app_id` and `channels.feishu.app_secret` are the main required values
+- `channels.feishu.encrypt_key` and `channels.feishu.verification_token` are not required for a basic test setup
 - only set those two values if the matching security options are enabled in the Feishu platform configuration
 
 ## MiniMax CLI Skill
@@ -128,8 +275,8 @@ mmx auth status --output json --non-interactive
 
 `VideoGenerationAgent` supports two providers:
 
-- `seedance`: default provider, requires `ARK_API_KEY`
-- `veo`: Google VEO provider, requires `GOOGLE_API_KEY`
+- `seedance`: default provider, requires `services.ark_api_key`
+- `veo`: Google VEO provider, requires `providers.gemini.api_key`
 
 Supported modes:
 
@@ -234,6 +381,6 @@ python -m py_compile \
 ## Public Release Checklist
 
 - keep public-facing prompts, comments, and examples in English
-- commit only `.env.template`, never a real `.env`
+- do not document repository-local legacy environment-file setup anymore
 - verify documented credentials against the actual runtime code before release
 - prefer feature-gated credential checks at call time instead of import-time crashes

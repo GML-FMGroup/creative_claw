@@ -14,6 +14,7 @@ from google.adk.models import LlmRequest
 from google.genai.types import Part
 from google.genai.types import Content
 
+from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
 from src.logger import logger
 from src.runtime.workspace import load_local_file_part
@@ -53,13 +54,13 @@ class KnowledgeAgent(BaseAgent):
     ):
         if not llm_model:
             llm_model = SYS_CONFIG.llm_model
-        logger.info(f"KnowledgeAgent: using llm: {llm_model}")
+        logger.info(f"KnowledgeAgent: using llm: {resolve_llm_model_name(llm_model)}")
         description = 'Analyze input requirement, output refined design scheme or enhanced prompt'
 
         # The LLM does not automatically receive prior session content.
         llm = LlmAgent(
             name=name,
-            model=llm_model,
+            model=build_llm(llm_model),
             description=description,
             instruction=knowledge_intruction,
             before_model_callback=knowledge_before_model_callback

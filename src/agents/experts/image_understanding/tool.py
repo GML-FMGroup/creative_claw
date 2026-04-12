@@ -7,6 +7,7 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.models import LlmRequest
 from google.genai.types import Content, Part
 
+from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
 from src.logger import logger
 from src.runtime.workspace import load_local_file_part, resolve_workspace_path, workspace_relative_path
@@ -84,7 +85,7 @@ async def image_to_text_tool(ctx: InvocationContext, input_path: str, mode: str 
 
         llm = LlmAgent(
             name="ImageUnderstandingToolAgent",
-            model=SYS_CONFIG.llm_model,
+            model=build_llm(),
             instruction="You are a professional image analyst. Follow the requested mode exactly and return a clear, faithful result.",
             include_contents="none",
             before_model_callback=before_model_callback,
@@ -111,7 +112,7 @@ async def image_to_text_tool(ctx: InvocationContext, input_path: str, mode: str 
                 "input_path": workspace_relative_path(resolved_path),
                 "mode": normalized_mode,
                 "provider": "google_adk",
-                "model_name": SYS_CONFIG.llm_model,
+                "model_name": resolve_llm_model_name(),
             }
 
         logger.info("[{}] image analysis success", tool_name_for_log)
@@ -124,7 +125,7 @@ async def image_to_text_tool(ctx: InvocationContext, input_path: str, mode: str 
             "input_path": workspace_relative_path(resolved_path),
             "mode": normalized_mode,
             "provider": "google_adk",
-            "model_name": SYS_CONFIG.llm_model,
+            "model_name": resolve_llm_model_name(),
         }
 
     except Exception as e:
@@ -148,5 +149,5 @@ async def image_to_text_tool(ctx: InvocationContext, input_path: str, mode: str 
             ),
             "mode": str(mode or "description").strip().lower(),
             "provider": "google_adk",
-            "model_name": SYS_CONFIG.llm_model,
+            "model_name": resolve_llm_model_name(),
         }

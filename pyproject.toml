@@ -14,11 +14,11 @@ include = ["conf/jsons/*.json", "skills/**/*", "src/webchat/static/**/*"]
 python = ">=3.12,<4.0"
 google-genai = ">=0.6.0"
 google-adk = "^1.29.0"
-python-dotenv = "^1.0.1"
 pydantic = "^2.7.0"
 requests = "^2.31.0"
 pillow = "^10.3.0"
 loguru = "^0.7.2"
+litellm = ">=1.0.0"
 
 # Tools
 dashscope = ">=1.20.7"

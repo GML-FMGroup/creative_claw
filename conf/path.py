@@ -1,14 +1,15 @@
-# coding: utf-8
-# @author: zyh
-# @file: path.py
-import os
+"""Filesystem path helpers for package assets and user-home runtime state."""
 
-PROJECT_PATH = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-) 
+from __future__ import annotations
 
-CONF_ROOT = os.path.join(PROJECT_PATH, "conf")  
-DATA_ROOT = os.path.join(PROJECT_PATH, "data") 
-LOGS_ROOT = os.path.join(PROJECT_PATH, "logs") 
-SRC_ROOT = os.path.join(PROJECT_PATH, "src") 
-TEST_ROOT = os.path.join(PROJECT_PATH, "unit_test") 
+from pathlib import Path
+
+from conf.app_config import get_instance_root, get_logs_dir
+
+PROJECT_PATH = str(Path(__file__).resolve().parent.parent)
+CONF_ROOT = str(Path(PROJECT_PATH) / "conf")
+INSTANCE_ROOT = str(get_instance_root())
+DATA_ROOT = str(Path(INSTANCE_ROOT) / "data")
+LOGS_ROOT = str(get_logs_dir())
+SRC_ROOT = str(Path(PROJECT_PATH) / "src")
+TEST_ROOT = str(Path(PROJECT_PATH) / "unit_test")

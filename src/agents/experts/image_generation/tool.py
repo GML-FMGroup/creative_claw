@@ -10,6 +10,7 @@ from google.adk.models import LlmRequest
 from google.genai import types
 from google.genai.types import Content, Part
 
+from conf.llm import build_llm
 from conf.system import SYS_CONFIG
 from src.logger import logger
 
@@ -48,7 +49,7 @@ async def prompt_enhancement_tool(ctx: InvocationContext, prompt: str) -> dict[s
     
     llm = LlmAgent(
         name="prompt_enhancement",
-        model=SYS_CONFIG.llm_model,
+        model=build_llm(),
         instruction=system_prompt,
         include_contents='none',
         before_model_callback=before_model_callback

@@ -1,8 +1,7 @@
 <div align="center">
   <img src="asset/logo-2.png" alt="CreativeClaw" width="420">
-  <h1>CreativeClaw</h1>
+  <h1>CreativeClaw: your personal creative assistant</h1>
   <p><a href="README_zh.md">简体中文</a> · <strong>English</strong></p>
-  <p><strong>Conversational creative generation, your personal creative assistant.</strong></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
     <img src="https://img.shields.io/badge/google--adk-1.29.0-green" alt="Google ADK">
@@ -47,22 +46,136 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-cp .env.template .env
 ```
 
-### 2. Add the minimum required API key
+### 2. Initialize the runtime directory
 
-For the default setup, this is enough:
+```bash
+creative-claw init
+```
 
-```env
-OPENAI_API_KEY="your_api_key_here"
+This creates:
+
+- `~/.creative-claw/conf.json`
+- `~/.creative-claw/workspace/`
+
+### 3. Add the minimum required API key
+
+The minimum working config looks like this:
+
+```json
+{
+  "workspace": "~/.creative-claw/workspace",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.4"
+  },
+  "providers": {
+    "openai": {
+      "api_key": "your_api_key_here"
+    }
+  }
+}
 ```
 
 Notes:
 
 - This is enough to try the default CLI chat flow.
 - Image, video, search, and some provider-specific capabilities only need extra credentials when you actually use them.
+- Resolution order is: `conf.json` first; if an API key is empty in `conf.json`, runtime falls back to the matching environment variable.
+- The first-round text LLM providers include `openai`, `anthropic`, `gemini`, `openrouter`, `deepseek`, `groq`, `zhipu`, `dashscope`, `vllm`, `ollama`, `moonshot`, `minimax`, `mistral`, `stepfun`, `siliconflow`, `volcengine`, `byteplus`, `qianfan`, `azure_openai`, and `custom`.
 - For the full environment and credential matrix, see [docs/development.md](docs/development.md).
+
+Reference full template:
+
+```json
+{
+  "workspace": "~/.creative-claw/workspace",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.4",
+    "temperature": 0.1,
+    "max_tokens": 8192
+  },
+  "providers": {
+    "openai": {
+      "api_key": "",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "openrouter": {
+      "api_key": "",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "gemini": {
+      "api_key": "",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "ollama": {
+      "api_key": "",
+      "api_base": "http://localhost:11434/v1",
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "azure_openai": {
+      "api_key": "",
+      "api_base": "https://your-resource.openai.azure.com",
+      "api_version": "2024-10-21",
+      "extra_headers": {}
+    },
+    "custom": {
+      "api_key": "",
+      "api_base": "https://your-openai-compatible-endpoint/v1",
+      "api_version": null,
+      "extra_headers": {}
+    }
+  },
+  "services": {
+    "ark_api_key": "",
+    "dds_api_key": "",
+    "serper_api_key": "",
+    "brave_api_key": ""
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "",
+      "allow_from": []
+    },
+    "feishu": {
+      "app_id": "",
+      "app_secret": "",
+      "encrypt_key": "",
+      "verification_token": "",
+      "allow_from": []
+    },
+    "web": {
+      "host": "127.0.0.1",
+      "port": 18900,
+      "open_browser": false,
+      "title": "CreativeClaw Web Chat"
+    }
+  }
+}
+```
+
+Common fields:
+
+- `workspace`: root directory for uploaded files and generated artifacts.
+- `llm.provider`: default text-model provider used by the orchestrator and text-oriented experts.
+- `llm.model`: default model name. In most cases use the provider-local model name without repeating the provider prefix.
+- `providers.<name>.api_key`: authentication key for that provider.
+- `providers.<name>.api_base`: OpenAI-compatible or proxy endpoint, commonly used by `custom`, `azure_openai`, and private gateways.
+- `providers.<name>.api_version`: mainly used by `azure_openai`.
+- `providers.<name>.extra_headers`: extra HTTP headers for custom gateways or proxies.
+- `ollama.api_base` is prefilled with `http://localhost:11434/v1` so a local Ollama instance works with minimal edits.
+- `openrouter.api_base`, `azure_openai.api_base`, and `custom.api_base` are also prefilled by `creative-claw init` as starting points.
+- `services.*`: extra service keys used by image, video, and search features.
+- `channels.*`: default Telegram, Feishu, and local Web settings.
 
 ### 3. Start chatting
 
@@ -148,7 +261,7 @@ creative-claw chat web --host 127.0.0.1 --port 18900 --title "CreativeClaw Web C
 
 ### Telegram
 
-After setting the Telegram-related values in `.env`:
+After filling the Telegram fields in `~/.creative-claw/conf.json`:
 
 ```bash
 creative-claw chat telegram
@@ -156,7 +269,7 @@ creative-claw chat telegram
 
 ### Feishu
 
-After setting the Feishu-related values in `.env`:
+After filling the Feishu fields in `~/.creative-claw/conf.json`:
 
 ```bash
 creative-claw chat feishu
@@ -166,7 +279,7 @@ Additional notes:
 
 - `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are the main required values for Feishu.
 - `FEISHU_ENCRYPT_KEY` and `FEISHU_VERIFICATION_TOKEN` are only needed when the matching security settings are enabled in the Feishu platform.
-- Web chat can also be configured through environment variables: `WEB_HOST`, `WEB_PORT`, `WEB_TITLE`, and `WEB_OPEN_BROWSER`.
+- Web chat defaults also live in `~/.creative-claw/conf.json`, and CLI flags can still override them for one run.
 
 ## 🧰 Built-in Skill
 
