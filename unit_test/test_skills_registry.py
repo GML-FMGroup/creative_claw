@@ -11,7 +11,8 @@ class SkillRegistryTests(unittest.TestCase):
         names = {item.name for item in registry.list_skills()}
 
         self.assertIn("code-edit", names)
-        self.assertIn("creative-image-task", names)
+        self.assertIn("minimax-cli-skill", names)
+        self.assertIn("expert-usage-guide", names)
         self.assertIn("summarize", names)
         self.assertIn("web-research", names)
         self.assertIn("planning-with-files", names)

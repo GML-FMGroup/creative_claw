@@ -1,6 +1,7 @@
 <div align="center">
   <img src="asset/logo-2.png" alt="CreativeClaw" width="420">
   <h1>CreativeClaw：你的个人创意助理</h1>
+  <h3>One conversation. Endless creativity.</h3>
   <p><strong>简体中文</strong> · <a href="README.md">English</a></p>
   <p>
     <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
@@ -9,7 +10,13 @@
   </p>
 </div>
 
-CreativeClaw 是一个基于多自主智能体的创意 Agent，把对话、图像生成、图像理解、提示词优化、搜索、视频生成和多渠道接入放在同一个工作流里，让你可以围绕一个创意任务连续迭代，而不是每一步都换一个工具。
+CreativeClaw 是一个由多个自主智能体驱动的创意工作流系统，让你的创作从“工具切换”变成“连续对话”。
+
+它内置多种智能体，提供稳定的创意能力，并通过 Skill 机制智能调用各类工具。你只需要用对话，就可以完成图像/视频生成、图像理解、内容优化、信息搜索等一整套创作流程。
+
+不再需要在不同工具之间来回切换 ——
+在 CreativeClaw 中，你可以围绕一个创意持续迭代，从灵感到成品，一步到位。
+
 
 ## 📰 News
  - 2026-04-13: 增加支持的 LLM provider数量到20个；支持图像分割。
@@ -308,7 +315,7 @@ mmx auth status --output json --non-interactive
 - [docs/model_and_token_map.md](docs/model_and_token_map.md)：模型名、对应 expert 和 token 申请链接
 
 ## 🛠️ TODO
- - 支持更多图像生成、视频生成模型
- - 增加更多创意相关 skill
- - 支持更多LLM provider
- - 支持更多 channel
+- [ ] 支持更多图像生成、视频生成模型
+- [ ] 增加更多创意相关 skill
+- [x] 支持更多LLM provider
+- [ ] 支持更多 channel
