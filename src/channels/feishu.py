@@ -6,6 +6,8 @@ import asyncio
 import json
 import mimetypes
 import threading
+import time
+import traceback
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from .events import OutboundMessage
 
 try:
     import lark_oapi as lark
+    import lark_oapi.ws.client as lark_ws_client_module
     from lark_oapi.api.im.v1 import (
         CreateFileRequest,
         CreateFileRequestBody,
@@ -42,6 +45,7 @@ try:
     FEISHU_REACTION_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
     lark = None
+    lark_ws_client_module = None
     CreateFileRequest = None
     CreateFileRequestBody = None
     CreateImageRequest = None
@@ -173,6 +177,7 @@ class FeishuChannel(BaseChannel):
         self._client: Any = None
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._progress_cards: dict[tuple[str, str], str] = {}
 
     async def start(self) -> None:
@@ -201,23 +206,53 @@ class FeishuChannel(BaseChannel):
             .register_p2_im_message_receive_v1(self._on_message_sync)
             .build()
         )
-        self._ws_client = lark.ws.Client(  # type: ignore[union-attr]
-            self.app_id,
-            self.app_secret,
-            event_handler=dispatcher,
-            log_level=lark.LogLevel.INFO,  # type: ignore[union-attr]
-        )
 
         def _run_ws_forever() -> None:
+            thread_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(thread_loop)
+            self._ws_loop = thread_loop
+            if lark_ws_client_module is not None:
+                lark_ws_client_module.loop = thread_loop
+            self._ws_client = lark.ws.Client(  # type: ignore[union-attr]
+                self.app_id,
+                self.app_secret,
+                event_handler=dispatcher,
+                log_level=lark.LogLevel.INFO,  # type: ignore[union-attr]
+                auto_reconnect=False,
+            )
+
             while self._running:
                 try:
                     self._ws_client.start()
+                except RuntimeError as exc:
+                    stop_text = str(exc)
+                    if not self._running and (
+                        "event loop stopped before future completed" in stop_text.lower()
+                        or "event loop is closed" in stop_text.lower()
+                    ):
+                        break
+                    logger.exception("Feishu websocket loop failed; retrying")
+                    if self._running:
+                        time.sleep(3)
                 except Exception:
                     logger.exception("Feishu websocket loop failed; retrying")
                     if self._running:
-                        import time
-
                         time.sleep(3)
+
+            try:
+                pending = asyncio.all_tasks(thread_loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    thread_loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception:
+                logger.exception("Feishu websocket thread cleanup failed")
+            finally:
+                self._ws_client = None
+                self._ws_loop = None
+                thread_loop.close()
 
         self._ws_thread = threading.Thread(target=_run_ws_forever, daemon=True)
         self._ws_thread.start()
@@ -225,16 +260,22 @@ class FeishuChannel(BaseChannel):
     async def stop(self) -> None:
         """Stop Feishu long connection."""
         self._running = False
-        if self._ws_client:
-            stop_fn = getattr(self._ws_client, "stop", None)
-            close_fn = getattr(self._ws_client, "close", None)
+        ws_client = self._ws_client
+        ws_loop = self._ws_loop
+        if ws_client and ws_loop and not ws_loop.is_closed():
             try:
-                if callable(stop_fn):
-                    stop_fn()
-                elif callable(close_fn):
-                    close_fn()
+                setattr(ws_client, "_auto_reconnect", False)
+                disconnect_fn = getattr(ws_client, "_disconnect", None)
+                if callable(disconnect_fn) and ws_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(disconnect_fn(), ws_loop)
+                    future.result(timeout=5)
+                if ws_loop.is_running():
+                    ws_loop.call_soon_threadsafe(ws_loop.stop)
             except Exception:
                 logger.exception("Failed stopping Feishu websocket client")
+        if self._ws_thread and self._ws_thread.is_alive():
+            self._ws_thread.join(timeout=5)
+        self._ws_thread = None
 
     async def send(self, message: OutboundMessage) -> None:
         """Send one outbound Feishu message and artifacts."""
@@ -248,14 +289,47 @@ class FeishuChannel(BaseChannel):
             self._send_card_message_sync(message.chat_id, text, message.metadata)
         else:
             self._send_text_sync(message.chat_id, text)
-        for artifact_path in message.artifact_paths:
+        total_artifacts = len(message.artifact_paths)
+        for index, artifact_path in enumerate(message.artifact_paths, start=1):
             cleaned_path = artifact_path.strip()
             if not cleaned_path:
                 continue
-            if _is_image_file(cleaned_path):
-                self._send_image_sync(message.chat_id, cleaned_path)
-            else:
-                self._send_file_sync(message.chat_id, cleaned_path)
+            path_info = _describe_local_file(cleaned_path)
+            artifact_kind = "image" if _is_image_file(cleaned_path) else "file"
+            logger.debug(
+                "Feishu outbound artifact send starting: index={} total={} kind={} path={} exists={} size_bytes={} mime_type={}",
+                index,
+                total_artifacts,
+                artifact_kind,
+                cleaned_path,
+                path_info["exists"],
+                path_info["size_bytes"],
+                path_info["mime_type"],
+            )
+            try:
+                if artifact_kind == "image":
+                    self._send_image_sync(message.chat_id, cleaned_path)
+                else:
+                    self._send_file_sync(message.chat_id, cleaned_path)
+            except Exception as exc:
+                logger.opt(exception=exc).error(
+                    "Feishu outbound artifact send failed: index={} total={} kind={} path={} exists={} size_bytes={} mime_type={}",
+                    index,
+                    total_artifacts,
+                    artifact_kind,
+                    cleaned_path,
+                    path_info["exists"],
+                    path_info["size_bytes"],
+                    path_info["mime_type"],
+                )
+                raise
+            logger.debug(
+                "Feishu outbound artifact send finished: index={} total={} kind={} path={}",
+                index,
+                total_artifacts,
+                artifact_kind,
+                cleaned_path,
+            )
 
     def _send_text_sync(self, chat_id: str, text: str) -> str:
         """Send one text message to Feishu."""
@@ -419,6 +493,15 @@ class FeishuChannel(BaseChannel):
         if not self._client or CreateFileRequest is None or CreateFileRequestBody is None:
             raise RuntimeError("Feishu file upload API is unavailable.")
         target = Path(file_path).expanduser().resolve()
+        path_info = _describe_local_file(str(target))
+        logger.debug(
+            "Feishu file upload starting: path={} exists={} size_bytes={} mime_type={} file_name={}",
+            str(target),
+            path_info["exists"],
+            path_info["size_bytes"],
+            path_info["mime_type"],
+            target.name,
+        )
         with target.open("rb") as file_obj:
             request = (
                 CreateFileRequest.builder()
@@ -431,11 +514,37 @@ class FeishuChannel(BaseChannel):
                 )
                 .build()
             )
-            response = self._client.im.v1.file.create(request)
+            try:
+                response = self._client.im.v1.file.create(request)
+            except Exception as exc:
+                raw_response = self._extract_raw_response_from_exception(exc)
+                response_status = getattr(raw_response, "status_code", None)
+                response_headers = getattr(raw_response, "headers", {}) or {}
+                response_body = self._summarize_raw_payload(getattr(raw_response, "content", b""))
+                logger.opt(exception=exc).error(
+                    "Feishu file upload failed before SDK parse completed: path={} exists={} size_bytes={} mime_type={} file_name={} response_status={} response_content_type={} response_body={}",
+                    str(target),
+                    path_info["exists"],
+                    path_info["size_bytes"],
+                    path_info["mime_type"],
+                    target.name,
+                    response_status,
+                    response_headers.get("Content-Type") or response_headers.get("content-type") or "",
+                    response_body,
+                )
+                raise
         self._ensure_success(response, "file upload")
         file_key = getattr(getattr(response, "data", None), "file_key", "")
         if not file_key:
             raise RuntimeError("Feishu file upload returned empty file_key.")
+        logger.debug(
+            "Feishu file upload finished: path={} file_name={} size_bytes={} mime_type={} file_key={}",
+            str(target),
+            target.name,
+            path_info["size_bytes"],
+            path_info["mime_type"],
+            file_key,
+        )
         return str(file_key)
 
     def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
@@ -806,6 +915,31 @@ class FeishuChannel(BaseChannel):
             message = getattr(response, "msg", "")
             raise RuntimeError(f"Feishu {action_name} failed: code={code}, msg={message}")
 
+    @staticmethod
+    def _extract_raw_response_from_exception(exc: BaseException) -> Any | None:
+        """Best-effort extract one SDK raw response object from an exception traceback."""
+        tb = exc.__traceback__
+        while tb is not None:
+            candidate = tb.tb_frame.f_locals.get("resp")
+            if candidate is not None and hasattr(candidate, "status_code") and hasattr(candidate, "content"):
+                return candidate
+            tb = tb.tb_next
+        return None
+
+    @staticmethod
+    def _summarize_raw_payload(payload: Any, limit: int = 300) -> str:
+        """Convert one raw response payload into a short, log-friendly string."""
+        if payload is None:
+            return ""
+        if isinstance(payload, bytes | bytearray):
+            text = bytes(payload).decode("utf-8", errors="replace")
+        else:
+            text = str(payload)
+        compact = " ".join(text.split())
+        if len(compact) <= limit:
+            return compact
+        return f"{compact[:limit]}..."
+
     def _is_allowed(self, sender_id: str) -> bool:
         """Return whether one sender passes the allow list."""
         if not self.allow_from:
@@ -823,3 +957,15 @@ def _guess_mime_type(file_name: str) -> str:
     """Guess mime type for one inbound file name."""
     mime_type, _ = mimetypes.guess_type(file_name)
     return mime_type or "application/octet-stream"
+
+
+def _describe_local_file(file_path: str) -> dict[str, Any]:
+    """Collect lightweight diagnostics for one local file path."""
+    target = Path(file_path).expanduser()
+    exists = target.exists()
+    size_bytes = target.stat().st_size if exists and target.is_file() else None
+    return {
+        "exists": exists,
+        "size_bytes": size_bytes,
+        "mime_type": _guess_mime_type(target.name or file_path),
+    }

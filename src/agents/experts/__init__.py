@@ -7,3 +7,4 @@ from src.agents.experts.search.search_agent import SearchAgent
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
 from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent
+from src.agents.experts.three_d_generation.three_d_generation_agent import ThreeDGenerationAgent

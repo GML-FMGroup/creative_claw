@@ -181,6 +181,36 @@ _EXPERT_SPECS = {
         },
         notes="Use prompt-only or image-guided video generation with optional provider, mode, aspect_ratio, and resolution.",
     ),
+    "3DGeneration": ExpertSpec(
+        name="3DGeneration",
+        default_prompt_key="prompt",
+        default_parameters={
+            "provider": "hy3d",
+            "model": "3.0",
+            "generate_type": "normal",
+            "enable_pbr": False,
+            "timeout_seconds": 900,
+            "interval_seconds": 8,
+        },
+        required_parameters=("prompt or input_path/input_paths",),
+        required_parameter_groups=(
+            RequiredParameterGroup(
+                keys=("prompt", "input_path", "input_paths"),
+                description="prompt or input_path/input_paths",
+            ),
+        ),
+        allowed_values={
+            "provider": ("hy3d",),
+            "model": ("3.0", "3.1"),
+            "generate_type": ("normal", "lowpoly", "sketch", "geometry"),
+            "result_format": ("stl", "usdz", "fbx"),
+        },
+        mirrored_output_keys=("three_d_generation_results",),
+        notes=(
+            "Generates 3D assets through Tencent Cloud Hunyuan 3D Pro. "
+            "V1 supports prompt-only, image-only, and Sketch prompt-plus-image input."
+        ),
+    ),
 }
 
 

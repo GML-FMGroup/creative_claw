@@ -22,6 +22,9 @@ def workspace_root() -> Path:
     preferred = SYS_CONFIG.workspace_path.resolve()
     try:
         preferred.mkdir(parents=True, exist_ok=True)
+        probe_path = preferred / f".write_probe_{uuid.uuid4().hex}"
+        probe_path.write_bytes(b"")
+        probe_path.unlink()
         return preferred
     except OSError:
         fallback = Path("/tmp/creative-claw-workspace").resolve()

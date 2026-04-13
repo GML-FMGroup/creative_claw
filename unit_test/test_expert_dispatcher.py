@@ -106,6 +106,20 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["aspect_ratio"], "16:9")
         self.assertEqual(parameters["resolution"], "720p")
 
+    def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="3DGeneration",
+            prompt="make a wooden corgi figurine",
+            state={},
+        )
+
+        self.assertEqual(parameters["prompt"], "make a wooden corgi figurine")
+        self.assertEqual(parameters["provider"], "hy3d")
+        self.assertEqual(parameters["model"], "3.0")
+        self.assertEqual(parameters["generate_type"], "normal")
+        self.assertEqual(parameters["timeout_seconds"], 900)
+        self.assertEqual(parameters["interval_seconds"], 8)
+
     def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_segmentation(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
             normalize_invoke_agent_parameters(
@@ -135,6 +149,14 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
             normalize_invoke_agent_parameters(
                 agent_name="VideoGenerationAgent",
                 prompt='{"prompt":"cats","provider":"weird"}',
+                state={},
+            )
+
+    def test_normalize_invoke_agent_parameters_rejects_invalid_3d_generate_type(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid `generate_type` value"):
+            normalize_invoke_agent_parameters(
+                agent_name="3DGeneration",
+                prompt='{"prompt":"cats","generate_type":"weird"}',
                 state={},
             )
 

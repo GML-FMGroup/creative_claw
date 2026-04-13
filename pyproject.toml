@@ -28,6 +28,7 @@ requests-toolbelt = ">=1.0.0"
 openai = ">=1.16.0"
 lark-oapi = ">=1.4.13"
 websockets = ">=12.0"
+tencentcloud-sdk-python = ">=3.1.76"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"

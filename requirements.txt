@@ -24,6 +24,7 @@ lark-oapi
 websockets
 Deprecated
 python-socks
+tencentcloud-sdk-python
 
 # Dev/Testing
 pytest

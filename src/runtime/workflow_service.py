@@ -22,6 +22,7 @@ from src.agents.experts import (
     KnowledgeAgent,
     SearchAgent,
     VideoGenerationAgent,
+    ThreeDGenerationAgent,
 )
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
@@ -172,6 +173,14 @@ class CreativeClawRuntime:
             ),
             "VideoGenerationAgent": annotate_agent_origin(
                 VideoGenerationAgent(name="VideoGenerationAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "3DGeneration": annotate_agent_origin(
+                ThreeDGenerationAgent(
+                    name="ThreeDGenerationAgent",
+                    public_name="3DGeneration",
+                ),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),

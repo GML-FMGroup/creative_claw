@@ -1,10 +1,15 @@
 import io
+import asyncio
+import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import src.channels.feishu as feishu_module
 from src.channels.events import OutboundMessage
 from src.channels.feishu import FeishuChannel, _build_status_card, _should_use_interactive_card
 from src.runtime import InboundMessage
@@ -75,6 +80,89 @@ class _TestFeishuChannel(FeishuChannel):
 
 
 class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_creates_feishu_ws_client_inside_dedicated_thread_loop(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+        main_loop = asyncio.get_running_loop()
+        started = threading.Event()
+        state: dict[str, object] = {}
+
+        class _Builder:
+            def app_id(self, _value: str) -> "_Builder":
+                return self
+
+            def app_secret(self, _value: str) -> "_Builder":
+                return self
+
+            def log_level(self, _value: object) -> "_Builder":
+                return self
+
+            def build(self) -> SimpleNamespace:
+                return SimpleNamespace()
+
+        class _DispatcherBuilder:
+            def register_p2_im_message_receive_v1(self, _handler) -> "_DispatcherBuilder":
+                return self
+
+            def build(self) -> str:
+                return "dispatcher"
+
+        class _FakeWsClient:
+            def __init__(
+                self,
+                _app_id: str,
+                _app_secret: str,
+                *,
+                event_handler: object,
+                log_level: object,
+                auto_reconnect: bool,
+            ) -> None:
+                state["constructor_thread"] = threading.current_thread().name
+                state["event_handler"] = event_handler
+                state["log_level"] = log_level
+                state["auto_reconnect"] = auto_reconnect
+                self._conn = None
+
+            def start(self) -> None:
+                state["start_thread"] = threading.current_thread().name
+                state["loop"] = feishu_module.lark_ws_client_module.loop
+                started.set()
+                while channel._running:
+                    time.sleep(0.01)
+
+            async def _disconnect(self) -> None:
+                state["disconnect_called"] = True
+
+        fake_lark = SimpleNamespace(
+            Client=SimpleNamespace(builder=lambda: _Builder()),
+            EventDispatcherHandler=SimpleNamespace(
+                builder=lambda *_args: _DispatcherBuilder()
+            ),
+            LogLevel=SimpleNamespace(INFO="info"),
+            ws=SimpleNamespace(Client=_FakeWsClient),
+        )
+        fake_ws_module = SimpleNamespace(loop=main_loop)
+
+        with (
+            patch("src.channels.feishu.FEISHU_AVAILABLE", True),
+            patch("src.channels.feishu.lark", fake_lark),
+            patch("src.channels.feishu.lark_ws_client_module", fake_ws_module),
+        ):
+            await channel.start()
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            await channel.stop()
+
+        self.assertTrue(started.is_set())
+        self.assertIsNot(state["loop"], main_loop)
+        self.assertEqual(state["event_handler"], "dispatcher")
+        self.assertEqual(state["log_level"], "info")
+        self.assertFalse(state["auto_reconnect"])
+        self.assertNotEqual(state["constructor_thread"], threading.current_thread().name)
+        self.assertEqual(state["constructor_thread"], state["start_thread"])
+
     def test_download_file_sync_prefers_message_resource(self) -> None:
         inbound_messages: list[InboundMessage] = []
         channel = _TestFeishuChannel(inbound_messages=inbound_messages)
@@ -245,6 +333,86 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(channel.sent_texts, [("oc_group_1", "done")])
             self.assertEqual(channel.sent_images, [("oc_group_1", str(image_path))])
+
+    async def test_send_logs_artifact_details_when_file_send_fails(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file_path = Path(tmp_dir) / "model.glb"
+            file_path.write_bytes(b"glb-data")
+
+            def _raise_send_failure(chat_id: str, path: str) -> str:
+                raise RuntimeError(f"boom: {chat_id} {path}")
+
+            channel._send_file_sync = _raise_send_failure  # type: ignore[method-assign]
+            mock_logger = MagicMock()
+            mock_logger.opt.return_value = mock_logger
+
+            with patch("src.channels.feishu.logger", mock_logger):
+                with self.assertRaisesRegex(RuntimeError, "boom"):
+                    await channel.send(
+                        OutboundMessage(
+                            channel="feishu",
+                            chat_id="oc_group_1",
+                            text="done",
+                            artifact_paths=[str(file_path)],
+                        )
+                    )
+
+            self.assertEqual(mock_logger.debug.call_count, 1)
+            self.assertEqual(mock_logger.opt.call_count, 1)
+            error_args = mock_logger.error.call_args.args
+            self.assertEqual(
+                error_args[0],
+                "Feishu outbound artifact send failed: index={} total={} kind={} path={} exists={} size_bytes={} mime_type={}",
+            )
+            self.assertEqual(error_args[1:4], (1, 1, "file"))
+            self.assertEqual(error_args[4], str(file_path))
+            self.assertTrue(error_args[5])
+            self.assertEqual(error_args[6], len(b"glb-data"))
+            self.assertEqual(error_args[7], "model/gltf-binary")
+
+    def test_upload_file_sync_logs_response_summary_when_sdk_parse_fails(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        def _raise_parse_failure(_request: object) -> object:
+            resp = SimpleNamespace(
+                status_code=400,
+                headers={"Content-Type": "text/plain"},
+                content=b"Error when parsing request",
+            )
+            raise json.JSONDecodeError("Expecting value", "Error when parsing request", 0)
+
+        channel._client = SimpleNamespace(
+            im=SimpleNamespace(v1=SimpleNamespace(file=SimpleNamespace(create=_raise_parse_failure)))
+        )
+        mock_logger = MagicMock()
+        mock_logger.opt.return_value = mock_logger
+
+        with tempfile.TemporaryDirectory() as tmp_dir, patch("src.channels.feishu.logger", mock_logger):
+            file_path = Path(tmp_dir) / "model.glb"
+            file_path.write_bytes(b"glb-data")
+
+            with self.assertRaises(json.JSONDecodeError):
+                channel._upload_file_sync(str(file_path))
+
+        self.assertEqual(mock_logger.debug.call_count, 1)
+        self.assertEqual(mock_logger.opt.call_count, 1)
+        error_args = mock_logger.error.call_args.args
+        self.assertEqual(
+            error_args[0],
+            "Feishu file upload failed before SDK parse completed: path={} exists={} size_bytes={} mime_type={} file_name={} response_status={} response_content_type={} response_body={}",
+        )
+        self.assertEqual(error_args[1], str(file_path.resolve()))
+        self.assertTrue(error_args[2])
+        self.assertEqual(error_args[3], len(b"glb-data"))
+        self.assertEqual(error_args[4], "model/gltf-binary")
+        self.assertEqual(error_args[5], "model.glb")
+        self.assertEqual(error_args[6], 400)
+        self.assertEqual(error_args[7], "text/plain")
+        self.assertEqual(error_args[8], "Error when parsing request")
 
     async def test_send_uses_interactive_card_for_progress_message(self) -> None:
         inbound_messages: list[InboundMessage] = []
