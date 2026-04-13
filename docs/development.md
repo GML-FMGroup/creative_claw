@@ -92,6 +92,13 @@ Credential resolution rule:
 - `conf.json` is the primary source of truth
 - if an API key field in `conf.json` is an empty string, runtime falls back to the matching environment variable
 - this fallback applies to key-like secret fields, not to general settings such as `workspace` or `api_base`
+- after config load, runtime also syncs configured secrets back into process environment variables for SDK compatibility
+
+Current provider env-fallback coverage:
+
+- auto-fallback is implemented for `openai`, `anthropic`, `gemini`, `groq`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `mistral`, `stepfun`, and `qianfan`
+- `gemini` accepts `GOOGLE_API_KEY` as the primary env var and also accepts `GEMINI_API_KEY` as a compatibility alias
+- providers such as `openrouter`, `vllm`, `ollama`, `siliconflow`, `volcengine`, `byteplus`, `azure_openai`, and `custom` can still use `providers.<name>.api_key` from `conf.json`, but `apply_env_fallbacks()` does not currently auto-import them from provider-specific environment variables
 
 Reference fuller template:
 
@@ -193,8 +200,8 @@ Field notes:
 | `providers.<name>.extra_headers` | Extra HTTP headers | Enterprise proxy or custom gateway integration |
 | `providers.ollama.api_base` | Local Ollama endpoint | Prefilled as `http://localhost:11434/v1` by `creative-claw init` |
 | `services.ark_api_key` | Volcengine Ark key | Seedream and Seedance paths |
-| `services.dds_api_key` | Grounding service key | Image grounding |
-| `services.serper_api_key` | Search service key | Search/image search features |
+| `services.dds_api_key` | DeepDataSpace key | Image grounding and image segmentation |
+| `services.serper_api_key` | Serper key | `SearchAgent` image mode |
 | `services.brave_api_key` | Brave search key | Built-in web search tool |
 | `channels.telegram.*` | Telegram defaults | Bot token and allow-list |
 | `channels.feishu.*` | Feishu defaults | App credentials and allow-list |
@@ -227,10 +234,23 @@ First-round text LLM providers:
 Feature-specific extra service keys:
 
 - `services.ark_api_key`: Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance`)
-- `services.dds_api_key`: `ImageGroundingAgent`
+- `services.dds_api_key`: `ImageGroundingAgent` and `ImageSegmentationAgent`
 - `services.serper_api_key`: `SearchAgent` image mode
 - `services.brave_api_key`: built-in `web_search` tool
 - `providers.gemini.api_key`: Gemini-backed image and VEO paths
+
+Additional compatibility aliases used by runtime code:
+
+- `ImageGroundingAgent`: accepts `DDS_API_KEY`, `DDS_TOKEN`, and `DINO_XSEEK_TOKEN`
+- `ImageSegmentationAgent`: accepts `DDS_API_KEY` and `DDS_TOKEN`
+
+Credentials not stored in `conf.json` today:
+
+- `ThreeDGenerationAgent` (`hy3d`) reads Tencent Cloud credentials directly from environment variables:
+  - `TENCENTCLOUD_SECRET_ID`
+  - `TENCENTCLOUD_SECRET_KEY`
+  - optional `TENCENTCLOUD_SESSION_TOKEN`
+  - optional `TENCENTCLOUD_REGION`
 
 ## Web Chat Notes
 
