@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from conf.app_config import load_app_config
 from src.logger import logger
 from src.runtime.workspace import generated_session_dir, resolve_workspace_path
 
@@ -109,15 +110,35 @@ def _image_file_to_base64(image_path: str) -> str:
 
 
 def _build_client_from_env() -> tuple[Any, Any, Any]:
-    """Create one Tencent Cloud AI3D client from environment variables."""
+    """Create one Tencent Cloud AI3D client from config with env fallback."""
     ai3d_client, models, credential_cls, sdk_exception_cls = _load_tencentcloud_sdk()
-    secret_id = os.getenv("TENCENTCLOUD_SECRET_ID", "").strip()
-    secret_key = os.getenv("TENCENTCLOUD_SECRET_KEY", "").strip()
-    session_token = os.getenv("TENCENTCLOUD_SESSION_TOKEN", "").strip() or None
-    region = os.getenv("TENCENTCLOUD_REGION", DEFAULT_REGION).strip() or DEFAULT_REGION
+    app_config = load_app_config(reload=True)
+    secret_id = (
+        str(app_config.services.tencentcloud_secret_id).strip()
+        or os.getenv("TENCENTCLOUD_SECRET_ID", "").strip()
+    )
+    secret_key = (
+        str(app_config.services.tencentcloud_secret_key).strip()
+        or os.getenv("TENCENTCLOUD_SECRET_KEY", "").strip()
+    )
+    session_token = (
+        str(app_config.services.tencentcloud_session_token).strip()
+        or os.getenv("TENCENTCLOUD_SESSION_TOKEN", "").strip()
+        or None
+    )
+    region = (
+        str(app_config.services.tencentcloud_region).strip()
+        or os.getenv("TENCENTCLOUD_REGION", "").strip()
+        or DEFAULT_REGION
+    )
 
     if not secret_id or not secret_key:
-        raise RuntimeError("Missing TENCENTCLOUD_SECRET_ID or TENCENTCLOUD_SECRET_KEY.")
+        raise RuntimeError(
+            "Missing Tencent Cloud 3D credentials. Set "
+            "`services.tencentcloud_secret_id` and `services.tencentcloud_secret_key` "
+            "in ~/.creative-claw/conf.json, or export "
+            "`TENCENTCLOUD_SECRET_ID` and `TENCENTCLOUD_SECRET_KEY`."
+        )
 
     credential = credential_cls(secret_id, secret_key, session_token)
     return ai3d_client.Ai3dClient(credential, region), models, sdk_exception_cls

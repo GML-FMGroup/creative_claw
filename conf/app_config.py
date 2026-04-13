@@ -105,6 +105,10 @@ def sync_env_from_config(config: CreativeClawConfig) -> None:
         "DDS_API_KEY": config.services.dds_api_key,
         "SERPER_API_KEY": config.services.serper_api_key,
         "BRAVE_API_KEY": config.services.brave_api_key,
+        "TENCENTCLOUD_SECRET_ID": config.services.tencentcloud_secret_id,
+        "TENCENTCLOUD_SECRET_KEY": config.services.tencentcloud_secret_key,
+        "TENCENTCLOUD_SESSION_TOKEN": config.services.tencentcloud_session_token,
+        "TENCENTCLOUD_REGION": config.services.tencentcloud_region,
         "TELEGRAM_BOT_TOKEN": config.channels.telegram.bot_token,
         "TELEGRAM_ALLOW_FROM": ",".join(config.channels.telegram.allow_from),
         "FEISHU_APP_ID": config.channels.feishu.app_id,
@@ -143,6 +147,10 @@ def apply_env_fallbacks(config: CreativeClawConfig) -> None:
         "dds_api_key": "DDS_API_KEY",
         "serper_api_key": "SERPER_API_KEY",
         "brave_api_key": "BRAVE_API_KEY",
+        "tencentcloud_secret_id": "TENCENTCLOUD_SECRET_ID",
+        "tencentcloud_secret_key": "TENCENTCLOUD_SECRET_KEY",
+        "tencentcloud_session_token": "TENCENTCLOUD_SESSION_TOKEN",
+        "tencentcloud_region": "TENCENTCLOUD_REGION",
     }
 
     for provider_name, env_var in provider_mappings.items():

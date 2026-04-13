@@ -52,7 +52,7 @@ Some capabilities use service credentials rather than the general text-LLM provi
 | Video generation (`seedance`) | `VideoGenerationAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | Search image mode | `SearchAgent` | Serper key | `services.serper_api_key` | `SERPER_API_KEY` | [Serper API Key](https://serper.dev/api-key) |
 | Built-in web search | `web_search` tool | Brave Search key | `services.brave_api_key` | `BRAVE_API_KEY` | [Brave Search API](https://brave.com/search/api/) |
-| 3D generation (`hy3d`) | `ThreeDGenerationAgent` | Tencent Cloud credentials | not stored in `conf.json` today | `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION` | [Tencent Cloud API Key](https://console.cloud.tencent.com/cam/capi) |
+| 3D generation (`hy3d`) | `ThreeDGenerationAgent` | Tencent Cloud credentials | `services.tencentcloud_secret_id`, `services.tencentcloud_secret_key`, optional `services.tencentcloud_session_token`, optional `services.tencentcloud_region` | `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION` | [Tencent Cloud API Key](https://console.cloud.tencent.com/cam/capi) |
 
 ## Notes
 

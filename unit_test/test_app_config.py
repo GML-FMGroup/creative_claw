@@ -62,6 +62,9 @@ class AppConfigTests(unittest.TestCase):
             config.providers.openai = ProviderConfig(api_key="openai-key")
             config.providers.gemini = ProviderConfig(api_key="google-key")
             config.services.ark_api_key = "ark-key"
+            config.services.tencentcloud_secret_id = "tc-secret-id"
+            config.services.tencentcloud_secret_key = "tc-secret-key"
+            config.services.tencentcloud_region = "ap-shanghai"
             save_app_config(config)
 
             loaded = load_app_config(reload=True)
@@ -70,6 +73,9 @@ class AppConfigTests(unittest.TestCase):
             self.assertEqual(os.environ["OPENAI_API_KEY"], "openai-key")
             self.assertEqual(os.environ["GOOGLE_API_KEY"], "google-key")
             self.assertEqual(os.environ["ARK_API_KEY"], "ark-key")
+            self.assertEqual(os.environ["TENCENTCLOUD_SECRET_ID"], "tc-secret-id")
+            self.assertEqual(os.environ["TENCENTCLOUD_SECRET_KEY"], "tc-secret-key")
+            self.assertEqual(os.environ["TENCENTCLOUD_REGION"], "ap-shanghai")
 
     def test_load_app_config_falls_back_to_environment_for_empty_api_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(
@@ -79,6 +85,9 @@ class AppConfigTests(unittest.TestCase):
                 "OPENAI_API_KEY": "env-openai-key",
                 "GOOGLE_API_KEY": "env-google-key",
                 "ARK_API_KEY": "env-ark-key",
+                "TENCENTCLOUD_SECRET_ID": "env-tc-secret-id",
+                "TENCENTCLOUD_SECRET_KEY": "env-tc-secret-key",
+                "TENCENTCLOUD_REGION": "ap-shanghai",
             },
             clear=False,
         ):
@@ -92,6 +101,9 @@ class AppConfigTests(unittest.TestCase):
             self.assertEqual(loaded.providers.openai.api_key, "env-openai-key")
             self.assertEqual(loaded.providers.gemini.api_key, "env-google-key")
             self.assertEqual(loaded.services.ark_api_key, "env-ark-key")
+            self.assertEqual(loaded.services.tencentcloud_secret_id, "env-tc-secret-id")
+            self.assertEqual(loaded.services.tencentcloud_secret_key, "env-tc-secret-key")
+            self.assertEqual(loaded.services.tencentcloud_region, "ap-shanghai")
 
     def test_load_app_config_prefers_conf_json_over_environment_for_api_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(

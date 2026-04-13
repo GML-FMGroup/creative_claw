@@ -48,6 +48,10 @@ class ServiceConfig(BaseModel):
     dds_api_key: str = ""
     serper_api_key: str = ""
     brave_api_key: str = ""
+    tencentcloud_secret_id: str = ""
+    tencentcloud_secret_key: str = ""
+    tencentcloud_session_token: str = ""
+    tencentcloud_region: str = ""
 
 
 class TelegramChannelConfig(BaseModel):

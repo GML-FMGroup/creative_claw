@@ -79,6 +79,84 @@ The default text setup is:
 }
 ```
 
+For beginners, a practical `conf.json` usually looks like this:
+
+```json
+{
+  "workspace": "~/.creative-claw/workspace",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5.4",
+    "temperature": 0.1,
+    "max_tokens": 8192
+  },
+  "providers": {
+    "openai": {
+      "api_key": "sk-your-openai-key",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "gemini": {
+      "api_key": "your-google-or-gemini-key",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    },
+    "anthropic": {
+      "api_key": "your-anthropic-key",
+      "api_base": null,
+      "api_version": null,
+      "extra_headers": {}
+    }
+  },
+  "services": {
+    "ark_api_key": "your-ark-key",
+    "dds_api_key": "your-dds-key",
+    "serper_api_key": "your-serper-key",
+    "brave_api_key": "your-brave-key",
+    "tencentcloud_secret_id": "your-tencentcloud-secret-id",
+    "tencentcloud_secret_key": "your-tencentcloud-secret-key",
+    "tencentcloud_session_token": "",
+    "tencentcloud_region": "ap-guangzhou"
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "your-telegram-bot-token",
+      "allow_from": ["123456789"]
+    },
+    "feishu": {
+      "app_id": "your-feishu-app-id",
+      "app_secret": "your-feishu-app-secret",
+      "encrypt_key": "",
+      "verification_token": "",
+      "allow_from": ["ou_xxxxx"]
+    },
+    "web": {
+      "host": "127.0.0.1",
+      "port": 18900,
+      "open_browser": false,
+      "title": "CreativeClaw Web Chat"
+    }
+  }
+}
+```
+
+How to fill it:
+
+- If you mainly use OpenAI text generation, fill `providers.openai.api_key`.
+- If you want Gemini image or VEO video support, fill `providers.gemini.api_key`.
+- If you want Anthropic text models, fill `providers.anthropic.api_key`.
+- If you want Seedream or Seedance, fill `services.ark_api_key`.
+- If you want image grounding or segmentation, fill `services.dds_api_key`.
+- If you want SearchAgent image search, fill `services.serper_api_key`.
+- If you want the built-in `web_search` tool, fill `services.brave_api_key`.
+- If you want Tencent Hunyuan 3D generation, fill `services.tencentcloud_secret_id` and `services.tencentcloud_secret_key`.
+- `services.tencentcloud_session_token` is optional. Most personal API-key setups can leave it empty.
+- `services.tencentcloud_region` is optional. If you are not sure, use `ap-guangzhou`.
+- If you do not use Telegram or Feishu, you can leave those channel fields empty.
+- `allow_from` means the user allow-list. Only listed user ids can access the bot.
+
 Useful config sections:
 
 - `workspace`: runtime file root
@@ -99,6 +177,13 @@ Current provider env-fallback coverage:
 - auto-fallback is implemented for `openai`, `anthropic`, `gemini`, `groq`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `mistral`, `stepfun`, and `qianfan`
 - `gemini` accepts `GOOGLE_API_KEY` as the primary env var and also accepts `GEMINI_API_KEY` as a compatibility alias
 - providers such as `openrouter`, `vllm`, `ollama`, `siliconflow`, `volcengine`, `byteplus`, `azure_openai`, and `custom` can still use `providers.<name>.api_key` from `conf.json`, but `apply_env_fallbacks()` does not currently auto-import them from provider-specific environment variables
+
+Common environment variables:
+
+- text providers: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `MINIMAX_API_KEY`, `MISTRAL_API_KEY`, `STEPFUN_API_KEY`, `QIANFAN_API_KEY`
+- service integrations: `ARK_API_KEY`, `DDS_API_KEY`, `SERPER_API_KEY`, `BRAVE_API_KEY`
+- Tencent Cloud 3D: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION`
+- channel credentials: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOW_FROM`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_ENCRYPT_KEY`, `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ALLOW_FROM`
 
 Reference fuller template:
 
@@ -153,7 +238,11 @@ Reference fuller template:
     "ark_api_key": "",
     "dds_api_key": "",
     "serper_api_key": "",
-    "brave_api_key": ""
+    "brave_api_key": "",
+    "tencentcloud_secret_id": "",
+    "tencentcloud_secret_key": "",
+    "tencentcloud_session_token": "",
+    "tencentcloud_region": ""
   },
   "channels": {
     "telegram": {
@@ -203,6 +292,9 @@ Field notes:
 | `services.dds_api_key` | DeepDataSpace key | Image grounding and image segmentation |
 | `services.serper_api_key` | Serper key | `SearchAgent` image mode |
 | `services.brave_api_key` | Brave search key | Built-in web search tool |
+| `services.tencentcloud_secret_id` / `services.tencentcloud_secret_key` | Tencent Cloud 3D credentials | `ThreeDGenerationAgent` (`hy3d`) |
+| `services.tencentcloud_session_token` | Tencent Cloud temporary-session token | Optional STS token for `ThreeDGenerationAgent` |
+| `services.tencentcloud_region` | Tencent Cloud region | Optional; defaults to `ap-guangzhou` when empty |
 | `channels.telegram.*` | Telegram defaults | Bot token and allow-list |
 | `channels.feishu.*` | Feishu defaults | App credentials and allow-list |
 | `channels.web.*` | Local web-chat defaults | Host, port, title, and browser behavior |
@@ -237,20 +329,15 @@ Feature-specific extra service keys:
 - `services.dds_api_key`: `ImageGroundingAgent` and `ImageSegmentationAgent`
 - `services.serper_api_key`: `SearchAgent` image mode
 - `services.brave_api_key`: built-in `web_search` tool
+- `services.tencentcloud_secret_id` and `services.tencentcloud_secret_key`: `ThreeDGenerationAgent` (`hy3d`)
+- `services.tencentcloud_session_token`: optional STS token for `ThreeDGenerationAgent`
+- `services.tencentcloud_region`: optional Tencent Cloud region for `ThreeDGenerationAgent`
 - `providers.gemini.api_key`: Gemini-backed image and VEO paths
 
 Additional compatibility aliases used by runtime code:
 
 - `ImageGroundingAgent`: accepts `DDS_API_KEY`, `DDS_TOKEN`, and `DINO_XSEEK_TOKEN`
 - `ImageSegmentationAgent`: accepts `DDS_API_KEY` and `DDS_TOKEN`
-
-Credentials not stored in `conf.json` today:
-
-- `ThreeDGenerationAgent` (`hy3d`) reads Tencent Cloud credentials directly from environment variables:
-  - `TENCENTCLOUD_SECRET_ID`
-  - `TENCENTCLOUD_SECRET_KEY`
-  - optional `TENCENTCLOUD_SESSION_TOKEN`
-  - optional `TENCENTCLOUD_REGION`
 
 ## Web Chat Notes
 

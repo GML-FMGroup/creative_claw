@@ -1,7 +1,11 @@
+import os
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from conf.schema import CreativeClawConfig
+from conf.app_config import save_app_config, get_config_path
 from src.agents.experts.three_d_generation import tool as generation_tools
 from src.agents.experts.three_d_generation.three_d_generation_agent import (
     ThreeDGenerationAgent,
@@ -104,6 +108,91 @@ class ThreeDGenerationAgentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
+    def test_build_client_from_env_reads_tencent_credentials_from_conf_json(self) -> None:
+        fake_models = object()
+        fake_sdk_exception = RuntimeError
+        fake_credential = object()
+        fake_credential_cls = unittest.mock.Mock(return_value=fake_credential)
+        fake_ai3d_client_module = SimpleNamespace(
+            Ai3dClient=unittest.mock.Mock(return_value="client-instance")
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(
+            os.environ,
+            {"CREATIVE_CLAW_HOME": tmp_dir},
+            clear=False,
+        ):
+            config = CreativeClawConfig(workspace=str(get_config_path().parent / "workspace"))
+            config.services.tencentcloud_secret_id = "conf-secret-id"
+            config.services.tencentcloud_secret_key = "conf-secret-key"
+            config.services.tencentcloud_session_token = "conf-session-token"
+            config.services.tencentcloud_region = "ap-shanghai"
+            save_app_config(config)
+
+            with patch(
+                "src.agents.experts.three_d_generation.tool._load_tencentcloud_sdk",
+                return_value=(
+                    fake_ai3d_client_module,
+                    fake_models,
+                    fake_credential_cls,
+                    fake_sdk_exception,
+                ),
+            ):
+                client, models, sdk_exception = generation_tools._build_client_from_env()
+
+        fake_credential_cls.assert_called_once_with(
+            "conf-secret-id",
+            "conf-secret-key",
+            "conf-session-token",
+        )
+        fake_ai3d_client_module.Ai3dClient.assert_called_once_with(fake_credential, "ap-shanghai")
+        self.assertEqual(client, "client-instance")
+        self.assertIs(models, fake_models)
+        self.assertIs(sdk_exception, fake_sdk_exception)
+
+    def test_build_client_from_env_falls_back_to_environment_variables(self) -> None:
+        fake_models = object()
+        fake_sdk_exception = RuntimeError
+        fake_credential = object()
+        fake_credential_cls = unittest.mock.Mock(return_value=fake_credential)
+        fake_ai3d_client_module = SimpleNamespace(
+            Ai3dClient=unittest.mock.Mock(return_value="client-instance")
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir, patch.dict(
+            os.environ,
+            {
+                "CREATIVE_CLAW_HOME": tmp_dir,
+                "TENCENTCLOUD_SECRET_ID": "env-secret-id",
+                "TENCENTCLOUD_SECRET_KEY": "env-secret-key",
+                "TENCENTCLOUD_SESSION_TOKEN": "env-session-token",
+                "TENCENTCLOUD_REGION": "ap-beijing",
+            },
+            clear=False,
+        ):
+            save_app_config(CreativeClawConfig(workspace=str(get_config_path().parent / "workspace")))
+
+            with patch(
+                "src.agents.experts.three_d_generation.tool._load_tencentcloud_sdk",
+                return_value=(
+                    fake_ai3d_client_module,
+                    fake_models,
+                    fake_credential_cls,
+                    fake_sdk_exception,
+                ),
+            ):
+                client, models, sdk_exception = generation_tools._build_client_from_env()
+
+        fake_credential_cls.assert_called_once_with(
+            "env-secret-id",
+            "env-secret-key",
+            "env-session-token",
+        )
+        fake_ai3d_client_module.Ai3dClient.assert_called_once_with(fake_credential, "ap-beijing")
+        self.assertEqual(client, "client-instance")
+        self.assertIs(models, fake_models)
+        self.assertIs(sdk_exception, fake_sdk_exception)
+
     async def test_hy3d_generate_tool_returns_downloaded_files(self) -> None:
         fake_output_path = (
             workspace_root()
