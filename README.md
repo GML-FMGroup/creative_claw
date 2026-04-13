@@ -49,6 +49,10 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 - Seedance
 - Veo
 
+### 📦 3D Generation
+ - HY 3D
+
+
 ## 🚀 Quick Start
 
 ### 1. Set up the environment
