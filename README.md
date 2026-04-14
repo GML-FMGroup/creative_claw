@@ -18,7 +18,7 @@ No more jumping back and forth between different tools.
 With CreativeClaw, you can keep iterating around a single idea and move from inspiration to final output in one flow.
 
 ## 📰 News
- - 2026-04-14: Added support for HY 3D generation, along with new basic video and audio operation experts.
+ - 2026-04-14: Added HY 3D support, merged image-to-prompt into image understanding, and introduced 5 new experts across text, video, speech, and music.
  - 2026-04-13: Expanded support to 20 LLM providers and added image segmentation.
  - 2026-04-12: Released v0.1.1, introducing basic image and video operations across Web, CLI, and Feishu chat.
 
@@ -41,6 +41,11 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ## 🤖 Supported Models
 
+### 🧠 Text and Multimodal Understanding
+
+- Uses your configured text or multimodal LLM provider for `TextTransformExpert`, `ImageUnderstandingAgent`, `VideoUnderstandingExpert`, and `SpeechTranscriptionExpert`
+- First-round text LLM providers: `openai`, `anthropic`, `gemini`, `openrouter`, `deepseek`, `groq`, `zhipu`, `dashscope`, `vllm`, `ollama`, `moonshot`, `minimax`, `mistral`, `stepfun`, `siliconflow`, `volcengine`, `byteplus`, `qianfan`, `azure_openai`, `custom`
+
 ### 🖼️ Image Generation
 
 - Nano Banana Pro
@@ -54,6 +59,14 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ### 📦 3D Generation
  - HY 3D
+
+### 🔊 Speech Synthesis
+
+- Volcengine streaming TTS API
+
+### 🎵 Music Generation
+
+- MiniMax Music Generation API
 
 
 ## 🚀 Quick Start
