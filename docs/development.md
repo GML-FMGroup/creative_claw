@@ -405,6 +405,114 @@ Example `invoke_agent` payloads:
 {"input_path":"inbox/cli/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
 ```
 
+## Deterministic Media Operations
+
+CreativeClaw also exposes deterministic local media-processing experts:
+
+- `ImageBasicOperations`
+- `VideoBasicOperations`
+- `AudioBasicOperations`
+
+These experts are for workspace-local file inspection and transformation, not for model generation.
+
+System dependency note:
+
+- image operations rely on Pillow only
+- video and audio operations require both `ffmpeg` and `ffprobe` on `PATH`
+- for a parameter-by-parameter quick reference, see [media_basic_operations.md](media_basic_operations.md)
+
+Recommended `invoke_agent` payloads:
+
+### ImageBasicOperations
+
+Read image metadata:
+
+```json
+{"operation":"info","input_path":"inbox/cli/session_1/sample.png"}
+```
+
+Crop an image:
+
+```json
+{"operation":"crop","input_path":"inbox/cli/session_1/sample.png","left":32,"top":24,"right":640,"bottom":512}
+```
+
+Rotate an image:
+
+```json
+{"operation":"rotate","input_path":"inbox/cli/session_1/sample.png","degrees":90,"expand":true}
+```
+
+Resize an image:
+
+```json
+{"operation":"resize","input_path":"inbox/cli/session_1/sample.png","width":1024,"height":1024,"keep_aspect_ratio":true,"resample":"lanczos"}
+```
+
+Convert an image:
+
+```json
+{"operation":"convert","input_path":"inbox/cli/session_1/sample.png","output_format":"jpg","quality":90}
+```
+
+### VideoBasicOperations
+
+Read video metadata:
+
+```json
+{"operation":"info","input_path":"inbox/cli/session_1/clip.mp4"}
+```
+
+Extract one frame:
+
+```json
+{"operation":"extract_frame","input_path":"inbox/cli/session_1/clip.mp4","timestamp":"00:00:01.500","output_format":"png"}
+```
+
+Trim one clip:
+
+```json
+{"operation":"trim","input_path":"inbox/cli/session_1/clip.mp4","start_time":"00:00:02","duration":"3.0"}
+```
+
+Concatenate two clips:
+
+```json
+{"operation":"concat","input_paths":["inbox/cli/session_1/part1.mp4","inbox/cli/session_1/part2.mp4"],"output_format":"mp4"}
+```
+
+Convert a clip:
+
+```json
+{"operation":"convert","input_path":"inbox/cli/session_1/clip.mp4","output_format":"mov"}
+```
+
+### AudioBasicOperations
+
+Read audio metadata:
+
+```json
+{"operation":"info","input_path":"inbox/cli/session_1/voice.wav"}
+```
+
+Trim one clip:
+
+```json
+{"operation":"trim","input_path":"inbox/cli/session_1/voice.wav","start_time":"00:00:01","end_time":"00:00:04"}
+```
+
+Concatenate two clips:
+
+```json
+{"operation":"concat","input_paths":["inbox/cli/session_1/a.wav","inbox/cli/session_1/b.wav"],"output_format":"wav"}
+```
+
+Convert audio:
+
+```json
+{"operation":"convert","input_path":"inbox/cli/session_1/voice.wav","output_format":"mp3","bitrate":"192k","sample_rate":44100,"channels":2}
+```
+
 ## Running
 
 ### Local CLI

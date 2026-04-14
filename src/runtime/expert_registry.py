@@ -87,6 +87,30 @@ _EXPERT_SPECS = {
         mirrored_output_keys=("image_understanding_results",),
         notes="Requires image path; default mode is description.",
     ),
+    "ImageBasicOperations": ExpertSpec(
+        name="ImageBasicOperations",
+        default_prompt_key="operation",
+        supports_plain_prompt=False,
+        required_parameters=("operation", "input_path or input_paths"),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("operation",), description="operation"),
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+        ),
+        allowed_values={
+            "operation": ("crop", "rotate", "flip", "info", "resize", "convert"),
+            "direction": ("horizontal", "vertical"),
+            "resample": ("nearest", "bilinear", "bicubic", "lanczos"),
+            "output_format": ("png", "jpg", "jpeg", "webp"),
+        },
+        mirrored_output_keys=("image_basic_operation_results",),
+        notes=(
+            "Deterministic image operations only. "
+            "Use operation plus operation-specific parameters such as crop box, degrees, direction, size, or output_format."
+        ),
+    ),
     "ImageToPromptAgent": ExpertSpec(
         name="ImageToPromptAgent",
         default_prompt_key="prompt",
@@ -180,6 +204,50 @@ _EXPERT_SPECS = {
             "resolution": ("720p", "1080p"),
         },
         notes="Use prompt-only or image-guided video generation with optional provider, mode, aspect_ratio, and resolution.",
+    ),
+    "VideoBasicOperations": ExpertSpec(
+        name="VideoBasicOperations",
+        default_prompt_key="operation",
+        supports_plain_prompt=False,
+        required_parameters=("operation", "input_path or input_paths"),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("operation",), description="operation"),
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+        ),
+        allowed_values={
+            "operation": ("info", "extract_frame", "trim", "concat", "convert"),
+            "output_format": ("png", "jpg", "jpeg", "webp", "mp4", "mov", "mkv", "webm"),
+        },
+        mirrored_output_keys=("video_basic_operation_results",),
+        notes=(
+            "Deterministic video operations only. "
+            "Use operation plus operation-specific parameters such as timestamp, start_time, end_time, duration, input_paths, or output_format."
+        ),
+    ),
+    "AudioBasicOperations": ExpertSpec(
+        name="AudioBasicOperations",
+        default_prompt_key="operation",
+        supports_plain_prompt=False,
+        required_parameters=("operation", "input_path or input_paths"),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("operation",), description="operation"),
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+        ),
+        allowed_values={
+            "operation": ("info", "trim", "concat", "convert"),
+            "output_format": ("mp3", "wav", "aac", "m4a", "flac", "ogg"),
+        },
+        mirrored_output_keys=("audio_basic_operation_results",),
+        notes=(
+            "Deterministic audio operations only. "
+            "Use operation plus operation-specific parameters such as start_time, end_time, duration, sample_rate, bitrate, channels, or output_format."
+        ),
     ),
     "3DGeneration": ExpertSpec(
         name="3DGeneration",

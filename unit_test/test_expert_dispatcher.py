@@ -1,5 +1,7 @@
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from google.adk.agents import BaseAgent
 from google.adk.artifacts import InMemoryArtifactService
@@ -136,6 +138,14 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
                 state={},
             )
 
+    def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_basic_operations(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
+            normalize_invoke_agent_parameters(
+                agent_name="ImageBasicOperations",
+                prompt="rotate this image",
+                state={},
+            )
+
     def test_normalize_invoke_agent_parameters_rejects_invalid_search_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid `mode` value"):
             normalize_invoke_agent_parameters(
@@ -157,6 +167,17 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
             normalize_invoke_agent_parameters(
                 agent_name="3DGeneration",
                 prompt='{"prompt":"cats","generate_type":"weird"}',
+                state={},
+            )
+
+    def test_normalize_invoke_agent_parameters_rejects_invalid_video_basic_operation(self) -> None:
+        with (
+            patch("src.runtime.expert_dispatcher.resolve_workspace_path", return_value=Path.cwd()),
+            self.assertRaisesRegex(ValueError, "invalid `operation` value"),
+        ):
+            normalize_invoke_agent_parameters(
+                agent_name="VideoBasicOperations",
+                prompt='{"operation":"weird","input_path":"generated/demo.mp4"}',
                 state={},
             )
 

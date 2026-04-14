@@ -29,6 +29,8 @@ With CreativeClaw, you can keep iterating around a single idea and move from ins
 - **Iterative through conversation**: send a reference image for analysis, then keep asking follow-up questions, editing, and refining prompts.
 - **Extensible by design**: skills let you add specialized workflows such as MiniMax CLI.
 - **Coding-based asset processing**: besides generating content directly, it can also help process assets in batches through OpenCV / Python scripts.
+- **Deterministic media operations**: supports local image, video, and audio inspection and transformation through `ImageBasicOperations`, `VideoBasicOperations`, and `AudioBasicOperations`.
+  See [docs/media_basic_operations.md](docs/media_basic_operations.md) for a quick reference.
 
 ## 🏗️ Architecture
 
@@ -65,6 +67,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 ```
+
+If you want deterministic local video or audio operations, also make sure `ffmpeg` and `ffprobe` are installed and available on `PATH`.
+For operation parameters and example payloads, see [docs/media_basic_operations.md](docs/media_basic_operations.md).
 
 ### 2. Initialize the runtime directory
 

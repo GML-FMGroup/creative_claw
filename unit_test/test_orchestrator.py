@@ -35,6 +35,9 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)
         self.assertIn("image_flip", instruction)
+        self.assertIn("image_info", instruction)
+        self.assertIn("video_info", instruction)
+        self.assertIn("audio_info", instruction)
         self.assertIn("glob", instruction)
         self.assertIn("grep", instruction)
         self.assertIn("exec_command", instruction)
@@ -66,6 +69,9 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("plain_prompt=yes", instruction)
         self.assertIn("ImageEditingAgent: required=prompt, input_path or input_paths", instruction)
         self.assertIn("plain_prompt=no", instruction)
+        self.assertIn("ImageBasicOperations", instruction)
+        self.assertIn("VideoBasicOperations", instruction)
+        self.assertIn("AudioBasicOperations", instruction)
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(

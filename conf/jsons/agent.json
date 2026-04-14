@@ -38,6 +38,12 @@
             "parameters": "`{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'ocr']}`"
         },
         {
+            "name": "ImageBasicOperations",
+            "enable": true,
+            "description": "Run one deterministic image operation inside the workspace. Supported operations are `crop`, `rotate`, `flip`, `info`, `resize`, and `convert`. Use this expert when the task is local image manipulation or metadata inspection rather than model-based image understanding or generation.",
+            "parameters": "`{'operation': 'crop', 'input_path': 'workspace/path.png', 'left': 10, 'top': 20, 'right': 200, 'bottom': 180}` or `{'operation': 'rotate', 'input_path': 'workspace/path.png', 'degrees': 90, 'expand': true}` or `{'operation': 'flip', 'input_path': 'workspace/path.png', 'direction': 'horizontal|vertical'}` or `{'operation': 'info', 'input_path': 'workspace/path.png'}` or `{'operation': 'resize', 'input_path': 'workspace/path.png', 'width': 1024, 'height': 1024, 'keep_aspect_ratio': true, 'resample': 'nearest|bilinear|bicubic|lanczos'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.png', 'output_format': 'png|jpg|jpeg|webp', 'mode': 'RGB'(optional), 'quality': 90(optional)}`"
+        },
+        {
             "name": "ImageToPromptAgent",
             "enable": true,
             "description": "Reverse engineer one or more input images into detailed image-generation prompts. Use this when the goal is to infer a likely creation prompt for later reuse, variation, or recreation, rather than just describing the image contents.",
@@ -54,6 +60,18 @@
             "enable": true,
             "description": "Generate one or more videos from a text prompt alone or from prompt-plus-image guidance. Supported providers are `seedance` and `veo`, where `seedance` is the default. Supported modes are `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, and `reference_style`. Use `input_path` or `input_paths` for workspace images when the selected mode needs image guidance.",
             "parameters": "`{'prompt': 'make a cinematic cat video', 'provider': 'seedance|veo'(optional), 'mode': 'prompt|first_frame|first_frame_and_last_frame|reference_asset|reference_style'(optional), 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_path': 'workspace/path.png', 'prompt': 'animate this image'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame|reference_asset|reference_style', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_paths': ['workspace/first.png', 'workspace/last.png'], 'prompt': 'transition between them'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame_and_last_frame', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}`"
+        },
+        {
+            "name": "VideoBasicOperations",
+            "enable": true,
+            "description": "Run one deterministic video operation inside the workspace. Supported operations are `info`, `extract_frame`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local video inspection and file-level processing rather than model-based video generation.",
+            "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.mp4'}` or `{'operation': 'extract_frame', 'input_path': 'workspace/path.mp4', 'timestamp': '00:00:01.500', 'output_format': 'png|jpg|jpeg|webp'(optional)}` or `{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.mp4', 'workspace/b.mp4'], 'output_format': 'mp4|mov|mkv|webm'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.mp4', 'output_format': 'mp4|mov|mkv|webm', 'video_codec': 'libx264'(optional), 'audio_codec': 'aac'(optional)}`"
+        },
+        {
+            "name": "AudioBasicOperations",
+            "enable": true,
+            "description": "Run one deterministic audio operation inside the workspace. Supported operations are `info`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local audio inspection and file-level processing rather than transcription or synthesis.",
+            "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.wav'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.wav', 'workspace/b.wav'], 'output_format': 'mp3|wav|aac|m4a|flac|ogg'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.wav', 'output_format': 'mp3|wav|aac|m4a|flac|ogg', 'sample_rate': 44100(optional), 'bitrate': '192k'(optional), 'channels': 2(optional)}`"
         },
         {
             "name": "3DGeneration",

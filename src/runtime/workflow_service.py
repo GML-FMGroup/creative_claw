@@ -13,6 +13,8 @@ from google.genai.types import Content, Part
 
 from conf.system import SYS_CONFIG
 from src.agents.experts import (
+    AudioBasicOperationsAgent,
+    ImageBasicOperationsAgent,
     ImageGroundingAgent,
     ImageSegmentationAgent,
     ImageEditingAgent,
@@ -21,6 +23,7 @@ from src.agents.experts import (
     ImageUnderstandingAgent,
     KnowledgeAgent,
     SearchAgent,
+    VideoBasicOperationsAgent,
     VideoGenerationAgent,
     ThreeDGenerationAgent,
 )
@@ -52,6 +55,8 @@ _PROGRESS_STAGE_TITLES = {
     "inspection": "Inspecting Context",
     "editing": "Editing Content",
     "image_processing": "Processing Image",
+    "video_processing": "Processing Video",
+    "audio_processing": "Processing Audio",
     "execution": "Running Command",
     "research": "Researching",
     "expert_execution": "Calling Expert Agent",
@@ -131,6 +136,11 @@ class CreativeClawRuntime:
         expert_origin_path = Path(__file__).resolve().parents[1] / "agents"
 
         self.expert_agents = {
+            "ImageBasicOperations": annotate_agent_origin(
+                ImageBasicOperationsAgent(name="ImageBasicOperations"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
             "ImageGroundingAgent": annotate_agent_origin(
                 ImageGroundingAgent(name="ImageGroundingAgent"),
                 app_name=SYS_CONFIG.app_name,
@@ -171,8 +181,18 @@ class CreativeClawRuntime:
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
+            "VideoBasicOperations": annotate_agent_origin(
+                VideoBasicOperationsAgent(name="VideoBasicOperations"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
             "VideoGenerationAgent": annotate_agent_origin(
                 VideoGenerationAgent(name="VideoGenerationAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "AudioBasicOperations": annotate_agent_origin(
+                AudioBasicOperationsAgent(name="AudioBasicOperations"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),

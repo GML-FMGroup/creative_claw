@@ -128,6 +128,22 @@ def _summarize_write_like_result(result_text: str) -> str:
     return stringify_value(result_text, max_chars=200)
 
 
+def _summarize_json_metadata_result(result_text: str) -> str:
+    try:
+        payload = json.loads(result_text)
+    except Exception:
+        return stringify_value(result_text, max_chars=220)
+    if not isinstance(payload, dict):
+        return stringify_value(result_text, max_chars=220)
+    preview_items = []
+    for key in ("format", "width", "height", "mode", "duration_seconds", "fps", "codec", "video_codec", "audio_codec", "sample_rate", "channels"):
+        if key in payload:
+            preview_items.append(f"{key}={payload[key]}")
+    if not preview_items:
+        preview_items = [f"{key}={value}" for key, value in list(payload.items())[:4]]
+    return f"Metadata loaded. Preview: {stringify_value('; '.join(preview_items), max_chars=200)}"
+
+
 def _summarize_glob_result(result_text: str) -> str:
     if (
         result_text.startswith("Error")
@@ -281,6 +297,21 @@ def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
         "read_file": _summarize_read_file_result,
         "write_file": _summarize_write_like_result,
         "edit_file": _summarize_write_like_result,
+        "image_crop": _summarize_write_like_result,
+        "image_rotate": _summarize_write_like_result,
+        "image_flip": _summarize_write_like_result,
+        "image_info": _summarize_json_metadata_result,
+        "image_resize": _summarize_write_like_result,
+        "image_convert": _summarize_write_like_result,
+        "video_info": _summarize_json_metadata_result,
+        "video_extract_frame": _summarize_write_like_result,
+        "video_trim": _summarize_write_like_result,
+        "video_concat": _summarize_write_like_result,
+        "video_convert": _summarize_write_like_result,
+        "audio_info": _summarize_json_metadata_result,
+        "audio_trim": _summarize_write_like_result,
+        "audio_concat": _summarize_write_like_result,
+        "audio_convert": _summarize_write_like_result,
         "exec_command": _summarize_exec_result,
         "process_session": _summarize_process_result,
         "web_search": _summarize_web_search_result,

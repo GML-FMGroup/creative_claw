@@ -1,5 +1,8 @@
+import json
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -8,11 +11,65 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from conf.api import API_CONFIG
 from src.tools.builtin_tools import (
     BuiltinToolbox,
     exec_command,
     web_fetch,
 )
+
+
+_HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def _run_media_command(args: list[str]) -> None:
+    subprocess.run(
+        args,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _create_test_video(path: Path, *, color: str, tone: int) -> None:
+    _run_media_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={color}:s=320x240:d=1.0",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency={tone}:duration=1.0",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ]
+    )
+
+
+def _create_test_audio(path: Path, *, tone: int) -> None:
+    _run_media_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency={tone}:duration=1.0",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ]
+    )
 
 
 class BuiltinToolTests(unittest.TestCase):
@@ -94,7 +151,7 @@ class BuiltinToolTests(unittest.TestCase):
         self.assertIn("Only http/https URLs are supported.", result)
 
     def test_web_search_reports_missing_api_key_without_crashing(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.object(API_CONFIG, "BRAVE_API_KEY", ""):
             result = BuiltinToolbox(Path.cwd()).web_search("creative claw")
 
         self.assertEqual(result, "Error: BRAVE_API_KEY not configured")
@@ -125,6 +182,73 @@ class BuiltinToolTests(unittest.TestCase):
             self.assertTrue((root / cropped_path).exists())
             self.assertTrue((root / rotated_path).exists())
             self.assertTrue((root / flipped_path).exists())
+
+    def test_image_info_resize_and_convert_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            toolbox = BuiltinToolbox(root)
+            source = root / "sample.png"
+            Image.new("RGBA", (120, 80), color=(255, 0, 0, 200)).save(source)
+
+            info = json.loads(toolbox.image_info("sample.png"))
+            resized_path = toolbox.image_resize("sample.png", width=60)
+            converted_path = toolbox.image_convert("sample.png", "jpg", quality=80)
+
+            self.assertEqual(info["format"], "PNG")
+            self.assertEqual(info["width"], 120)
+            self.assertEqual(info["height"], 80)
+            self.assertEqual(info["mode"], "RGBA")
+            self.assertEqual(resized_path, "sample_resize_60x40.png")
+            self.assertEqual(converted_path, "sample_convert.jpg")
+            self.assertTrue((root / resized_path).exists())
+            self.assertTrue((root / converted_path).exists())
+
+    @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg/ffprobe not available")
+    def test_video_tools_info_extract_trim_concat_and_convert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            toolbox = BuiltinToolbox(root)
+            _create_test_video(root / "clip_a.mp4", color="red", tone=440)
+            _create_test_video(root / "clip_b.mp4", color="blue", tone=660)
+
+            info = json.loads(toolbox.video_info("clip_a.mp4"))
+            frame_path = toolbox.video_extract_frame("clip_a.mp4", "0.2")
+            trimmed_path = toolbox.video_trim("clip_a.mp4", "0", duration="0.5")
+            concat_path = toolbox.video_concat(["clip_a.mp4", "clip_b.mp4"])
+            converted_path = toolbox.video_convert("clip_a.mp4", "mov")
+
+            self.assertEqual(info["width"], 320)
+            self.assertEqual(info["height"], 240)
+            self.assertEqual(frame_path, "clip_a_frame_0.2.png")
+            self.assertEqual(trimmed_path, "clip_a_trim.mp4")
+            self.assertEqual(concat_path, "clip_a_concat.mp4")
+            self.assertEqual(converted_path, "clip_a_convert.mov")
+            self.assertTrue((root / frame_path).exists())
+            self.assertTrue((root / trimmed_path).exists())
+            self.assertTrue((root / concat_path).exists())
+            self.assertTrue((root / converted_path).exists())
+
+    @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg/ffprobe not available")
+    def test_audio_tools_info_trim_concat_and_convert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            toolbox = BuiltinToolbox(root)
+            _create_test_audio(root / "tone_a.wav", tone=440)
+            _create_test_audio(root / "tone_b.wav", tone=660)
+
+            info = json.loads(toolbox.audio_info("tone_a.wav"))
+            trimmed_path = toolbox.audio_trim("tone_a.wav", "0", duration="0.5")
+            concat_path = toolbox.audio_concat(["tone_a.wav", "tone_b.wav"])
+            converted_path = toolbox.audio_convert("tone_a.wav", "mp3", bitrate="128k")
+
+            self.assertEqual(info["sample_rate"], 44100)
+            self.assertEqual(info["channels"], 1)
+            self.assertEqual(trimmed_path, "tone_a_trim.wav")
+            self.assertEqual(concat_path, "tone_a_concat.wav")
+            self.assertEqual(converted_path, "tone_a_convert.mp3")
+            self.assertTrue((root / trimmed_path).exists())
+            self.assertTrue((root / concat_path).exists())
+            self.assertTrue((root / converted_path).exists())
 
     def test_background_exec_and_process_session_follow_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
