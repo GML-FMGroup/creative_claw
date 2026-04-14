@@ -9,6 +9,7 @@ from PIL import Image
 from google.genai.types import Content, Part
 
 from src.agents.experts.image_understanding import tool as understanding_tool
+from src.agents.experts.image_to_prompt import tool as image_to_prompt_tool
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.runtime.workspace import workspace_relative_path, workspace_root
 
@@ -25,6 +26,39 @@ def _build_ctx(state: dict) -> SimpleNamespace:
 
 
 class ImageUnderstandingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_supports_prompt_mode(self) -> None:
+        agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "input_path": "inbox/session/reference.png",
+                    "mode": "prompt",
+                }
+            }
+        )
+
+        with patch(
+            "src.agents.experts.image_understanding.image_understanding_agent.image_to_text_tool",
+            new=AsyncMock(
+                return_value={
+                    "status": "success",
+                    "message": "prompt-result",
+                    "analysis_text": "prompt-result",
+                    "basic_info": "info",
+                    "input_path": "inbox/session/reference.png",
+                    "mode": "prompt",
+                    "provider": "google_adk",
+                    "model_name": "gemini-test",
+                }
+            ),
+        ) as tool_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(tool_mock.await_args.args[1:], ("inbox/session/reference.png", "prompt"))
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["results"][0]["mode"], "prompt")
+        self.assertIn("image inbox/session/reference.png prompt: prompt-result", current_output["output_text"])
+
     async def test_agent_passes_individual_modes_to_tool(self) -> None:
         agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")
         ctx = _build_ctx(
@@ -156,6 +190,65 @@ class ImageUnderstandingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["model_name"], understanding_tool.SYS_CONFIG.llm_model)
         user_prompt = captured_llm_request["contents"][0].parts[0].text
         self.assertIn("Finally, extract all readable text from the image", user_prompt)
+
+    async def test_tool_supports_prompt_mode(self) -> None:
+        captured_llm_request: dict[str, object] = {}
+
+        class _FakeEvent:
+            def __init__(self, text: str) -> None:
+                self.content = Content(role="model", parts=[Part(text=text)])
+
+            def is_final_response(self) -> bool:
+                return True
+
+        class _FakeLlmAgent:
+            def __init__(self, **kwargs) -> None:
+                self.before_model_callback = kwargs["before_model_callback"]
+                captured_llm_request["instruction"] = kwargs["instruction"]
+
+            async def run_async(self, ctx) -> AsyncGenerator[_FakeEvent, None]:
+                llm_request = SimpleNamespace(contents=[])
+                self.before_model_callback(SimpleNamespace(state={}), llm_request)
+                captured_llm_request["contents"] = llm_request.contents
+                yield _FakeEvent("reverse prompt result")
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmp_dir:
+            image_path = Path(tmp_dir) / "poster.png"
+            Image.new("RGB", (8, 6), color=(0, 128, 255)).save(image_path)
+            relative_path = workspace_relative_path(image_path)
+
+            with patch("src.agents.experts.image_understanding.tool.LlmAgent", _FakeLlmAgent):
+                result = await understanding_tool.image_to_text_tool(_build_ctx({}), relative_path, mode="prompt")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["analysis_text"], "reverse prompt result")
+        user_prompt = captured_llm_request["contents"][0].parts[0].text
+        self.assertIn("## System Role", user_prompt)
+        self.assertIn("### 1. Long Prompt", user_prompt)
+        self.assertIn("### 2. Negative Prompt", user_prompt)
+
+    async def test_image_to_prompt_tool_delegates_to_prompt_mode(self) -> None:
+        with patch(
+            "src.agents.experts.image_to_prompt.tool.image_to_text_tool",
+            new=AsyncMock(
+                return_value={
+                    "status": "success",
+                    "message": "wrapped message",
+                    "analysis_text": "reverse prompt body",
+                    "provider": "google_adk",
+                    "model_name": "openai/gpt-5.4",
+                }
+            ),
+        ) as tool_mock:
+            result = await image_to_prompt_tool.image_to_prompt_tool(
+                _build_ctx({}),
+                "inbox/session/reference.png",
+            )
+
+        self.assertEqual(tool_mock.await_args.args[1:], ("inbox/session/reference.png",))
+        self.assertEqual(tool_mock.await_args.kwargs["mode"], "prompt")
+        self.assertEqual(result["message"], "reverse prompt body")
+        self.assertEqual(result["provider"], "google_adk")
 
     async def test_agent_persists_structured_results_on_success(self) -> None:
         agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")

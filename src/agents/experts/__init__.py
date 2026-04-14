@@ -5,9 +5,14 @@ from src.agents.experts.image_basic_operations.image_basic_operations_agent impo
 from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
 from src.agents.experts.image_generation.image_generation_agent import ImageGenerationAgent
 from src.agents.experts.image_to_prompt.image_to_prompt_agent import ImageToPromptAgent
-from src.agents.experts.search.search_agent import SearchAgent
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
+from src.agents.experts.music_generation.music_generation_expert import MusicGenerationExpert
+from src.agents.experts.search.search_agent import SearchAgent
+from src.agents.experts.speech_synthesis.speech_synthesis_expert import SpeechSynthesisExpert
+from src.agents.experts.speech_transcription.speech_transcription_expert import SpeechTranscriptionExpert
+from src.agents.experts.text_transform.text_transform_expert import TextTransformExpert
 from src.agents.experts.video_basic_operations.video_basic_operations_agent import VideoBasicOperationsAgent
 from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent
+from src.agents.experts.video_understanding.video_understanding_expert import VideoUnderstandingExpert
 from src.agents.experts.three_d_generation.three_d_generation_agent import ThreeDGenerationAgent

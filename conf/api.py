@@ -27,6 +27,8 @@ class APIConfig(BaseModel):
     DDS_API_KEY: str = ""
     SERPER_API_KEY: str = ""
     BRAVE_API_KEY: str = ""
+    VOLCENGINE_APPID: str = ""
+    VOLCENGINE_ACCESS_TOKEN: str = ""
     TENCENTCLOUD_SECRET_ID: str = ""
     TENCENTCLOUD_SECRET_KEY: str = ""
     TENCENTCLOUD_SESSION_TOKEN: str = ""
@@ -54,6 +56,8 @@ def load_api_config() -> APIConfig:
         DDS_API_KEY=config.services.dds_api_key.strip(),
         SERPER_API_KEY=config.services.serper_api_key.strip(),
         BRAVE_API_KEY=config.services.brave_api_key.strip(),
+        VOLCENGINE_APPID=config.services.volcengine_app_id.strip(),
+        VOLCENGINE_ACCESS_TOKEN=config.services.volcengine_access_token.strip(),
         TENCENTCLOUD_SECRET_ID=config.services.tencentcloud_secret_id.strip(),
         TENCENTCLOUD_SECRET_KEY=config.services.tencentcloud_secret_key.strip(),
         TENCENTCLOUD_SESSION_TOKEN=config.services.tencentcloud_session_token.strip(),

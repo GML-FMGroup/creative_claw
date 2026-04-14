@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 
@@ -16,6 +17,25 @@ def _build_ctx(state: dict) -> SimpleNamespace:
 
 
 class ImageUnderstandingAgentValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_accepts_prompt_mode(self) -> None:
+        agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "input_path": "inbox/session/a.png",
+                    "mode": "prompt",
+                }
+            }
+        )
+
+        with patch(
+            "src.agents.experts.image_understanding.image_understanding_agent.image_to_text_tool",
+            new=AsyncMock(return_value={"status": "success", "message": "ok"}),
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(events[0].actions.state_delta["current_output"]["status"], "success")
+
     async def test_agent_rejects_missing_image_inputs(self) -> None:
         agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")
         ctx = _build_ctx({"current_parameters": {"mode": "description"}})

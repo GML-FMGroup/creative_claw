@@ -57,6 +57,23 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(getattr(three_d_agent, "_adk_origin_path", None))
 
+    def test_runtime_registers_new_understanding_and_transform_experts(self) -> None:
+        runtime = CreativeClawRuntime()
+
+        for expert_name in (
+            "TextTransformExpert",
+            "VideoUnderstandingExpert",
+            "SpeechTranscriptionExpert",
+            "SpeechSynthesisExpert",
+            "MusicGenerationExpert",
+        ):
+            self.assertIn(expert_name, runtime.expert_agents)
+            self.assertEqual(
+                getattr(runtime.expert_agents[expert_name], "_adk_origin_app_name", None),
+                SYS_CONFIG.app_name,
+            )
+            self.assertIsNotNone(getattr(runtime.expert_agents[expert_name], "_adk_origin_path", None))
+
     def test_runtime_expert_metadata_keeps_runner_app_alignment_clean(self) -> None:
         runtime = CreativeClawRuntime()
 

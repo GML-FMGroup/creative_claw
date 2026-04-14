@@ -83,9 +83,12 @@ _EXPERT_SPECS = {
             ),
             RequiredParameterGroup(keys=("mode",), description="mode"),
         ),
-        allowed_values={"mode": ("description", "style", "ocr", "all")},
+        allowed_values={"mode": ("description", "style", "ocr", "all", "prompt")},
         mirrored_output_keys=("image_understanding_results",),
-        notes="Requires image path; default mode is description.",
+        notes=(
+            "Requires image path; default mode is description. "
+            "Use mode `prompt` when the goal is reverse-prompt extraction or recreation guidance."
+        ),
     ),
     "ImageBasicOperations": ExpertSpec(
         name="ImageBasicOperations",
@@ -124,6 +127,24 @@ _EXPERT_SPECS = {
         ),
         mirrored_output_keys=("image_to_prompt_results",),
         notes="Requires one or more image paths.",
+    ),
+    "TextTransformExpert": ExpertSpec(
+        name="TextTransformExpert",
+        default_prompt_key="input_text",
+        supports_plain_prompt=False,
+        required_parameters=("input_text or text", "mode"),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("input_text", "text"), description="input_text or text"),
+            RequiredParameterGroup(keys=("mode",), description="mode"),
+        ),
+        allowed_values={
+            "mode": ("rewrite", "expand", "compress", "translate", "structure", "title", "script"),
+        },
+        mirrored_output_keys=("text_transform_results",),
+        notes=(
+            "Atomic text transformation only. "
+            "Optional parameters: target_language, style, constraints."
+        ),
     ),
     "ImageGroundingAgent": ExpertSpec(
         name="ImageGroundingAgent",
@@ -205,6 +226,23 @@ _EXPERT_SPECS = {
         },
         notes="Use prompt-only or image-guided video generation with optional provider, mode, aspect_ratio, and resolution.",
     ),
+    "VideoUnderstandingExpert": ExpertSpec(
+        name="VideoUnderstandingExpert",
+        default_prompt_key="mode",
+        supports_plain_prompt=False,
+        default_parameters={"mode": "description"},
+        required_parameters=("input_path or input_paths", "mode"),
+        required_parameter_groups=(
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+            RequiredParameterGroup(keys=("mode",), description="mode"),
+        ),
+        allowed_values={"mode": ("description", "shot_breakdown", "ocr", "prompt")},
+        mirrored_output_keys=("video_understanding_results",),
+        notes="Atomic video understanding only. Use mode prompt for prompt reverse engineering.",
+    ),
     "VideoBasicOperations": ExpertSpec(
         name="VideoBasicOperations",
         default_prompt_key="operation",
@@ -247,6 +285,52 @@ _EXPERT_SPECS = {
         notes=(
             "Deterministic audio operations only. "
             "Use operation plus operation-specific parameters such as start_time, end_time, duration, sample_rate, bitrate, channels, or output_format."
+        ),
+    ),
+    "SpeechTranscriptionExpert": ExpertSpec(
+        name="SpeechTranscriptionExpert",
+        default_prompt_key="input_path",
+        supports_plain_prompt=False,
+        required_parameters=("input_path or input_paths",),
+        required_parameter_groups=(
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+        ),
+        mirrored_output_keys=("speech_transcription_results",),
+        notes=(
+            "Audio or video to text only. "
+            "Optional parameters: language, timestamps."
+        ),
+    ),
+    "SpeechSynthesisExpert": ExpertSpec(
+        name="SpeechSynthesisExpert",
+        default_prompt_key="text",
+        supports_plain_prompt=True,
+        required_parameters=("text or ssml",),
+        required_parameter_groups=(
+            RequiredParameterGroup(keys=("text", "ssml"), description="text or ssml"),
+        ),
+        allowed_values={"audio_format": ("mp3", "wav", "flac", "pcm")},
+        mirrored_output_keys=("speech_synthesis_results",),
+        notes=(
+            "Text-to-speech only. "
+            "Uses the ByteDance HTTP streaming TTS path. Optional parameters: speaker, resource_id, audio_format, sample_rate, language, enable_timestamp, latex_parser."
+        ),
+    ),
+    "MusicGenerationExpert": ExpertSpec(
+        name="MusicGenerationExpert",
+        default_prompt_key="prompt",
+        supports_plain_prompt=True,
+        default_parameters={"instrumental": True},
+        required_parameters=("prompt",),
+        required_parameter_groups=(RequiredParameterGroup(keys=("prompt",), description="prompt"),),
+        allowed_values={"audio_format": ("mp3", "wav", "flac")},
+        mirrored_output_keys=("music_generation_results",),
+        notes=(
+            "Generate a music or BGM clip from text instructions. "
+            "Optional parameters: lyrics, instrumental, audio_format, sample_rate, bitrate, model."
         ),
     ),
     "3DGeneration": ExpertSpec(

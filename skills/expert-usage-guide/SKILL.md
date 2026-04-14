@@ -116,8 +116,8 @@ Prefer this over segmentation when:
 
 Use when:
 
-- The user wants description, style analysis, OCR, or a combined understanding pass.
-- The task says "describe this image", "read the text in this image", "analyze the style", or similar.
+- The user wants description, style analysis, OCR, prompt reverse engineering, or a combined understanding pass.
+- The task says "describe this image", "read the text in this image", "analyze the style", "reverse prompt this image", or similar.
 
 Recommended parameters:
 
@@ -129,6 +129,10 @@ Recommended parameters:
 {"input_path":"inbox/cli/source.png","mode":"all"}
 ```
 
+```json
+{"input_path":"inbox/cli/reference.png","mode":"prompt"}
+```
+
 Prefer this before generation or editing when:
 
 - The image contents are unclear.
@@ -138,8 +142,8 @@ Prefer this before generation or editing when:
 
 Use when:
 
-- The user wants a reusable generation prompt inferred from an image.
-- The goal is "reverse prompt", "recreate this image", or "write the likely generation prompt".
+- Backward compatibility matters and an existing flow still explicitly calls this expert by name.
+- Otherwise, prefer `ImageUnderstandingAgent` with `mode="prompt"`.
 
 Recommended parameters:
 
@@ -147,9 +151,22 @@ Recommended parameters:
 {"input_path":"inbox/cli/reference.png"}
 ```
 
-Prefer this over `ImageUnderstandingAgent` when:
+### `TextTransformExpert`
 
-- The output should look like a generation-ready prompt, not general analysis text.
+Use when:
+
+- The task is one atomic text transform only.
+- The user wants rewrite, expand, compress, translate, structure, title, or script.
+
+Recommended parameters:
+
+```json
+{"input_text":"Launch a summer tea campaign.","mode":"rewrite"}
+```
+
+```json
+{"input_text":"Launch a summer tea campaign.","mode":"translate","target_language":"zh-CN"}
+```
 
 ### `VideoGenerationAgent`
 
@@ -170,6 +187,74 @@ Recommended parameters:
 Do not use when:
 
 - The task is only to generate still images.
+
+### `VideoUnderstandingExpert`
+
+Use when:
+
+- The task is about understanding an existing video, not generating one.
+- The user wants description, shot breakdown, OCR, or prompt reverse engineering from a reference video.
+
+Recommended parameters:
+
+```json
+{"input_path":"inbox/cli/reference.mp4","mode":"description"}
+```
+
+```json
+{"input_path":"inbox/cli/reference.mp4","mode":"prompt"}
+```
+
+### `SpeechTranscriptionExpert`
+
+Use when:
+
+- The user wants audio or video converted into text.
+- The task is transcript-first, not audio editing or synthesis.
+
+Recommended parameters:
+
+```json
+{"input_path":"inbox/cli/interview.wav"}
+```
+
+```json
+{"input_path":"inbox/cli/interview.mp4","timestamps":true,"language":"en"}
+```
+
+### `SpeechSynthesisExpert`
+
+Use when:
+
+- The user wants text or SSML converted into spoken audio.
+- The task is voiceover, narration, or TTS.
+
+Recommended parameters:
+
+```json
+{"text":"Hello from Creative Claw."}
+```
+
+```json
+{"ssml":"<speak>Hello<break time=\"500ms\"/>world</speak>","speaker":"zh_female_yingyujiaoyu_mars_bigtts"}
+```
+
+### `MusicGenerationExpert`
+
+Use when:
+
+- The user wants a generated song draft or BGM clip from text instructions.
+- The task is music creation rather than speech synthesis.
+
+Recommended parameters:
+
+```json
+{"prompt":"cinematic orchestral background music","instrumental":true}
+```
+
+```json
+{"prompt":"warm folk pop song","lyrics":"custom lyric lines"}
+```
 
 ### `SearchAgent`
 
@@ -215,8 +300,18 @@ Prefer this before generation when:
 
 ### Reference Image -> Better Prompt -> New Image
 
-1. `ImageToPromptAgent`
+1. `ImageUnderstandingAgent` with `mode="prompt"`
 2. `ImageGenerationAgent`
+
+### Video Reference -> Understand -> Decide Next Step
+
+1. `VideoUnderstandingExpert`
+2. Then choose `VideoGenerationAgent`, `KnowledgeAgent`, or file tools based on the result
+
+### Speech Media -> Transcript -> Script Rewrite
+
+1. `SpeechTranscriptionExpert`
+2. `TextTransformExpert`
 
 ### Uploaded Image -> Understand -> Decide Edit Direction
 
@@ -243,11 +338,16 @@ Prefer this before generation when:
 
 - If the user says "generate", start from `ImageGenerationAgent`.
 - If the user says "edit this image", start from `ImageEditingAgent`.
-- If the user says "describe / OCR / analyze style", start from `ImageUnderstandingAgent`.
-- If the user says "reverse prompt / recreate from reference", start from `ImageToPromptAgent`.
+- If the user says "describe / OCR / analyze style / reverse prompt image", start from `ImageUnderstandingAgent`.
+- If an older workflow explicitly names `ImageToPromptAgent`, it is still acceptable as a compatibility path.
+- If the user says "rewrite / translate / compress / title / script", start from `TextTransformExpert`.
 - If the user says "find where", start from `ImageGroundingAgent`.
 - If the user says "mask / cutout / segment", start from `ImageSegmentationAgent`.
-- If the user says "video", start from `VideoGenerationAgent`.
+- If the user says "analyze this video / break down shots / OCR video / reverse prompt video", start from `VideoUnderstandingExpert`.
+- If the user says "video generation", start from `VideoGenerationAgent`.
+- If the user says "transcribe audio / transcribe video / speech to text", start from `SpeechTranscriptionExpert`.
+- If the user says "text to speech / narration / voiceover", start from `SpeechSynthesisExpert`.
+- If the user says "BGM / generate music / song draft", start from `MusicGenerationExpert`.
 - If the user says "search references / web info", start from `SearchAgent`.
 - If the user says "give me design directions / creative plan", start from `KnowledgeAgent`.
 

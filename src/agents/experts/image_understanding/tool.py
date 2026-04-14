@@ -43,6 +43,52 @@ def _describe_image_metadata(image_path) -> str:
         return f"Basic image info unavailable: {_format_exception_summary(exc)}"
 
 
+_IMAGE_TO_PROMPT_PROMPT = """
+## System Role
+
+You are a professional reverse-prompt and image-analysis expert. You specialize in extracting key visual information from an image and turning it into a clear, structured, high-quality prompt for image generation systems.
+Infer the most likely prompt that could have produced the image and present it in a normalized structure.
+
+You must:
+
+1. Observe the image precisely and analyze:
+   - Main subject, such as person, object, character, or animal
+   - Actions, pose, and expression
+   - Scene, background, and environment
+   - Style, such as photorealistic, anime, oil painting, or cyberpunk
+   - Photography details when relevant, including focal length, depth of field, lighting, and lens type
+   - Color palette, atmosphere, and composition elements
+   - Fine-grained modifiers such as texture, material, and surface quality
+
+2. Infer the most likely prompt structure, for example:
+   - "subject + modifiers + style + camera details + quality terms"
+   - "artist style + composition + environment + texture + color palette"
+
+3. Return the result in the required format below:
+
+### 1. Long Prompt
+Include a complete prompt that covers subject, style, composition, lighting, atmosphere, and quality terms.
+
+### 2. Negative Prompt
+Infer an appropriate negative prompt to reduce common generation issues such as noise, malformed anatomy, distorted hands, and artifacts.
+
+### 3. Key Attributes Breakdown
+Break down the image by category so the prompt composition is easy to understand.
+
+Rules:
+- Do not exaggerate details that are not visible in the image.
+- Do not invent story elements; describe only what can actually be observed.
+- Keep the output concise, professional, and structured.
+- Make the result directly usable for image-generation prompting.
+- If something is uncertain, use wording such as "possibly" or "likely".
+- Pay extra attention to style, layout, and any visible text so reproduction mistakes are less likely.
+- Layout descriptions should cover image dimensions, text placement, the main visual subject, and the position of important decorative elements in as much detail as possible.
+- OCR details must be accurate and preserve the original language.
+
+Output only the prompt content. Do not add explanations or extra commentary.
+""".strip()
+
+
 def _build_analysis_prompt(mode: str) -> str:
     """Return the analysis prompt for one requested understanding mode."""
     prompts_map = {
@@ -54,6 +100,7 @@ def _build_analysis_prompt(mode: str) -> str:
             "and possible storyline. Then analyze the artistic style, such as painting style, color application, composition, "
             "lighting, and overall mood. Finally, extract all readable text from the image and separate different languages if present."
         ),
+        "prompt": _IMAGE_TO_PROMPT_PROMPT,
     }
     return prompts_map.get(mode, prompts_map["description"])
 
@@ -86,7 +133,10 @@ async def image_to_text_tool(ctx: InvocationContext, input_path: str, mode: str 
         llm = LlmAgent(
             name="ImageUnderstandingToolAgent",
             model=build_llm(),
-            instruction="You are a professional image analyst. Follow the requested mode exactly and return a clear, faithful result.",
+            instruction=(
+                "You are a professional image analyst. "
+                "Follow the requested mode exactly and return a clear, faithful result."
+            ),
             include_contents="none",
             before_model_callback=before_model_callback,
         )

@@ -62,6 +62,8 @@ class AppConfigTests(unittest.TestCase):
             config.providers.openai = ProviderConfig(api_key="openai-key")
             config.providers.gemini = ProviderConfig(api_key="google-key")
             config.services.ark_api_key = "ark-key"
+            config.services.volcengine_app_id = "volc-app-id"
+            config.services.volcengine_access_token = "volc-access-token"
             config.services.tencentcloud_secret_id = "tc-secret-id"
             config.services.tencentcloud_secret_key = "tc-secret-key"
             config.services.tencentcloud_region = "ap-shanghai"
@@ -73,6 +75,8 @@ class AppConfigTests(unittest.TestCase):
             self.assertEqual(os.environ["OPENAI_API_KEY"], "openai-key")
             self.assertEqual(os.environ["GOOGLE_API_KEY"], "google-key")
             self.assertEqual(os.environ["ARK_API_KEY"], "ark-key")
+            self.assertEqual(os.environ["VOLCENGINE_APPID"], "volc-app-id")
+            self.assertEqual(os.environ["VOLCENGINE_ACCESS_TOKEN"], "volc-access-token")
             self.assertEqual(os.environ["TENCENTCLOUD_SECRET_ID"], "tc-secret-id")
             self.assertEqual(os.environ["TENCENTCLOUD_SECRET_KEY"], "tc-secret-key")
             self.assertEqual(os.environ["TENCENTCLOUD_REGION"], "ap-shanghai")
@@ -85,6 +89,8 @@ class AppConfigTests(unittest.TestCase):
                 "OPENAI_API_KEY": "env-openai-key",
                 "GOOGLE_API_KEY": "env-google-key",
                 "ARK_API_KEY": "env-ark-key",
+                "VOLCENGINE_APPID": "env-volc-app-id",
+                "VOLCENGINE_ACCESS_TOKEN": "env-volc-access-token",
                 "TENCENTCLOUD_SECRET_ID": "env-tc-secret-id",
                 "TENCENTCLOUD_SECRET_KEY": "env-tc-secret-key",
                 "TENCENTCLOUD_REGION": "ap-shanghai",
@@ -101,6 +107,8 @@ class AppConfigTests(unittest.TestCase):
             self.assertEqual(loaded.providers.openai.api_key, "env-openai-key")
             self.assertEqual(loaded.providers.gemini.api_key, "env-google-key")
             self.assertEqual(loaded.services.ark_api_key, "env-ark-key")
+            self.assertEqual(loaded.services.volcengine_app_id, "env-volc-app-id")
+            self.assertEqual(loaded.services.volcengine_access_token, "env-volc-access-token")
             self.assertEqual(loaded.services.tencentcloud_secret_id, "env-tc-secret-id")
             self.assertEqual(loaded.services.tencentcloud_secret_key, "env-tc-secret-key")
             self.assertEqual(loaded.services.tencentcloud_region, "ap-shanghai")

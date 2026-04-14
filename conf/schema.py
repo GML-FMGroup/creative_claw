@@ -48,6 +48,8 @@ class ServiceConfig(BaseModel):
     dds_api_key: str = ""
     serper_api_key: str = ""
     brave_api_key: str = ""
+    volcengine_app_id: str = ""
+    volcengine_access_token: str = ""
     tencentcloud_secret_id: str = ""
     tencentcloud_secret_key: str = ""
     tencentcloud_session_token: str = ""

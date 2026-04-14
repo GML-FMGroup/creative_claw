@@ -34,8 +34,8 @@
         {
             "name": "ImageUnderstandingAgent",
             "enable": true,
-            "description": "Analyze one or more workspace images and return structured understanding results plus user-readable text. Supported modes are `description`, `style`, `ocr`, and `all`. You may pass one mode string to reuse across all input images, or a mode list whose length matches `input_paths`.",
-            "parameters": "`{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'ocr']}`"
+            "description": "Analyze one or more workspace images and return structured understanding results plus user-readable text. Supported modes are `description`, `style`, `ocr`, `all`, and `prompt`. Use `prompt` when the goal is to reverse engineer a reusable image-generation prompt from a reference image. You may pass one mode string to reuse across all input images, or a mode list whose length matches `input_paths`.",
+            "parameters": "`{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all|prompt'}` or `{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all|prompt'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'prompt']}`"
         },
         {
             "name": "ImageBasicOperations",
@@ -50,6 +50,12 @@
             "parameters": "`{'input_path': 'workspace/path.png'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png']}`"
         },
         {
+            "name": "TextTransformExpert",
+            "enable": true,
+            "description": "Run one atomic text transformation only. Supported modes are `rewrite`, `expand`, `compress`, `translate`, `structure`, `title`, and `script`. Use this expert when the task is transforming text rather than understanding files or generating media.",
+            "parameters": "`{'input_text': 'source text', 'mode': 'rewrite|expand|compress|translate|structure|title|script'}` or `{'text': 'source text', 'mode': 'translate', 'target_language': 'zh-CN'}`"
+        },
+        {
             "name": "SearchAgent",
             "enable": true,
             "description": "Search the Internet for pictures or text related to the input parameter query, has three modes: image, text, all. How to choose mode: If the task requires images as a reference, choose `image`; If the task requires obtaining knowledge-based information such as design concepts, choose `text`; If both, choose `all`",
@@ -62,6 +68,12 @@
             "parameters": "`{'prompt': 'make a cinematic cat video', 'provider': 'seedance|veo'(optional), 'mode': 'prompt|first_frame|first_frame_and_last_frame|reference_asset|reference_style'(optional), 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_path': 'workspace/path.png', 'prompt': 'animate this image'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame|reference_asset|reference_style', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}` or `{'input_paths': ['workspace/first.png', 'workspace/last.png'], 'prompt': 'transition between them'(optional), 'provider': 'seedance|veo'(optional), 'mode': 'first_frame_and_last_frame', 'aspect_ratio': '16:9|9:16'(optional), 'resolution': '720p|1080p'(optional)}`"
         },
         {
+            "name": "VideoUnderstandingExpert",
+            "enable": true,
+            "description": "Analyze one or more workspace videos and return structured understanding results plus user-readable text. Supported modes are `description`, `shot_breakdown`, `ocr`, and `prompt`. Use `prompt` when the goal is to reverse engineer a reusable creative prompt or recreation brief from a reference video.",
+            "parameters": "`{'input_path': 'workspace/path.mp4', 'mode': 'description|shot_breakdown|ocr|prompt'}` or `{'input_paths': ['workspace/path1.mp4', 'workspace/path2.mp4'], 'mode': ['description', 'prompt']}`"
+        },
+        {
             "name": "VideoBasicOperations",
             "enable": true,
             "description": "Run one deterministic video operation inside the workspace. Supported operations are `info`, `extract_frame`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local video inspection and file-level processing rather than model-based video generation.",
@@ -72,6 +84,24 @@
             "enable": true,
             "description": "Run one deterministic audio operation inside the workspace. Supported operations are `info`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local audio inspection and file-level processing rather than transcription or synthesis.",
             "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.wav'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.wav', 'workspace/b.wav'], 'output_format': 'mp3|wav|aac|m4a|flac|ogg'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.wav', 'output_format': 'mp3|wav|aac|m4a|flac|ogg', 'sample_rate': 44100(optional), 'bitrate': '192k'(optional), 'channels': 2(optional)}`"
+        },
+        {
+            "name": "SpeechTranscriptionExpert",
+            "enable": true,
+            "description": "Convert one or more workspace audio or video files into transcript text only. Use this expert when the task is transcription, not audio editing, synthesis, or music generation.",
+            "parameters": "`{'input_path': 'workspace/path.wav'}` or `{'input_path': 'workspace/path.mp4', 'timestamps': true, 'language': 'en'}` or `{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'timestamps': false}`"
+        },
+        {
+            "name": "SpeechSynthesisExpert",
+            "enable": true,
+            "description": "Generate one speech audio file from text or SSML only. This expert uses the ByteDance HTTP streaming TTS path and is intended for narration or voiceover generation rather than transcription or music creation.",
+            "parameters": "`{'text': 'Hello from Creative Claw.'}` or `{'ssml': '<speak>Hello<break time=\"500ms\"/>world</speak>', 'speaker': 'zh_female_yingyujiaoyu_mars_bigtts', 'audio_format': 'mp3', 'enable_timestamp': true}`"
+        },
+        {
+            "name": "MusicGenerationExpert",
+            "enable": true,
+            "description": "Generate one music or BGM clip from text instructions. You can provide optional lyrics for song-like output, or omit lyrics and keep `instrumental=true` for BGM-style generation.",
+            "parameters": "`{'prompt': 'cinematic orchestral background music', 'instrumental': true}` or `{'prompt': 'warm folk pop song', 'lyrics': 'custom lyric lines', 'audio_format': 'mp3'}`"
         },
         {
             "name": "3DGeneration",

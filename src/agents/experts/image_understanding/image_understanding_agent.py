@@ -12,7 +12,7 @@ from src.agents.experts.image_understanding.tool import image_to_text_tool
 from src.logger import logger
 
 
-_SUPPORTED_MODES = {"description", "style", "ocr", "all"}
+_SUPPORTED_MODES = {"description", "style", "ocr", "all", "prompt"}
 
 
 class ImageUnderstandingAgent(BaseAgent):

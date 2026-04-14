@@ -22,9 +22,14 @@ from src.agents.experts import (
     ImageToPromptAgent,
     ImageUnderstandingAgent,
     KnowledgeAgent,
+    MusicGenerationExpert,
     SearchAgent,
+    SpeechSynthesisExpert,
+    SpeechTranscriptionExpert,
+    TextTransformExpert,
     VideoBasicOperationsAgent,
     VideoGenerationAgent,
+    VideoUnderstandingExpert,
     ThreeDGenerationAgent,
 )
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
@@ -171,6 +176,11 @@ class CreativeClawRuntime:
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
+            "TextTransformExpert": annotate_agent_origin(
+                TextTransformExpert(name="TextTransformExpert"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
             "KnowledgeAgent": annotate_agent_origin(
                 KnowledgeAgent(name="KnowledgeAgent"),
                 app_name=SYS_CONFIG.app_name,
@@ -178,6 +188,11 @@ class CreativeClawRuntime:
             ),
             "SearchAgent": annotate_agent_origin(
                 SearchAgent(name="SearchAgent"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "SpeechSynthesisExpert": annotate_agent_origin(
+                SpeechSynthesisExpert(name="SpeechSynthesisExpert"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
@@ -191,8 +206,23 @@ class CreativeClawRuntime:
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
+            "VideoUnderstandingExpert": annotate_agent_origin(
+                VideoUnderstandingExpert(name="VideoUnderstandingExpert"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
             "AudioBasicOperations": annotate_agent_origin(
                 AudioBasicOperationsAgent(name="AudioBasicOperations"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "SpeechTranscriptionExpert": annotate_agent_origin(
+                SpeechTranscriptionExpert(name="SpeechTranscriptionExpert"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "MusicGenerationExpert": annotate_agent_origin(
+                MusicGenerationExpert(name="MusicGenerationExpert"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
