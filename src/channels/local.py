@@ -24,7 +24,8 @@ class LocalChannel(BaseChannel):
         self._running = False
 
     async def send(self, message: OutboundMessage) -> None:
-        payload = message.text.strip() if message.text else "[empty message]"
-        self._writer(payload)
+        payload = message.text.strip() if message.text else ""
+        if payload or not message.artifact_paths:
+            self._writer(payload or "[empty message]")
         for artifact_path in message.artifact_paths:
             self._writer(f"[artifact] {artifact_path}")

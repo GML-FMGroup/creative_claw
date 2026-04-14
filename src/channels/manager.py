@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from src.runtime.models import InboundMessage, WorkflowEvent
+from src.runtime.outbound_delivery import configure_outbound_message_publisher
 from src.runtime.workflow_service import CreativeClawRuntime
 from src.runtime.step_events import configure_step_event_publisher
 from src.runtime.tool_context import route_context
@@ -18,6 +19,7 @@ class ChannelManager:
         self.runtime = runtime
         self.channels: dict[str, BaseChannel] = {}
         configure_step_event_publisher(self._publish_realtime_outbound)
+        configure_outbound_message_publisher(self._publish_realtime_outbound)
 
     def register(self, channel: BaseChannel) -> None:
         """Register one channel implementation by name."""

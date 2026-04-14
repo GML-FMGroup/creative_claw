@@ -27,6 +27,7 @@ from src.runtime.step_events import (
 )
 from src.runtime.expert_dispatcher import dispatch_expert_call
 from src.runtime.expert_registry import build_expert_contract_summary
+from src.runtime.outbound_delivery import publish_outbound_message
 from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
 from src.runtime.workspace import (
     build_workspace_file_record,
@@ -240,6 +241,9 @@ class Orchestrator:
                 self.process_session,
                 self.web_search,
                 self.web_fetch,
+                self.message,
+                self.message_file,
+                self.message_image,
                 self.list_session_files,
                 self.set_final_files,
                 self.invoke_agent,
@@ -286,8 +290,11 @@ Rules:
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
-- Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state, especially before calling `set_final_files`.
-- Use `set_final_files(paths=[...])` when you need to explicitly choose which workspace files should be attached to the final reply.
+- Use `message(content=...)` when you want to explicitly send a text reply to the user in the current conversation.
+- Use `message_file(paths=..., caption=...)` when you want to explicitly deliver one or more workspace files to the user in the current conversation.
+- Use `message_image(paths=..., caption=...)` when you want to explicitly deliver one or more workspace images to the user in the current conversation.
+- Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state before calling an explicit send tool.
+- `set_final_files(paths=[...])` is legacy final-reply attachment selection. Prefer the explicit `message_file(...)` / `message_image(...)` send actions for user-visible delivery.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
 - Inspect local files with `list_dir`, `glob`, `grep`, and `read_file` before changing them when the path or contents are uncertain.
 - Use local image, video, and audio tools for lightweight deterministic preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
@@ -306,8 +313,9 @@ Rules:
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
-- If the user asks you to send one or more workspace files back in the current conversation, call `set_final_files(paths=[...])` with the exact workspace-relative paths and then answer normally.
-- Selecting final files does not require GUI control. The runtime will attach the selected workspace files to the final channel reply when the channel supports attachments.
+- If the user asks you to send one or more workspace files back in the current conversation, call `message_file(...)` or `message_image(...)` with the exact workspace-relative paths.
+- Treat explicit `message(...)`, `message_file(...)`, and `message_image(...)` calls as the real user-visible delivery action for the current turn.
+- Do not rely on the runtime to automatically attach the latest generated files to the final reply.
 - Only choose an expert agent when the task needs specialized image, search, or other expert capability that built-in tools and direct reasoning cannot handle well.
 - When calling `invoke_agent`, pass a complete expert brief.
 - For experts that need several parameters, encode the `prompt` argument as a JSON object string that contains the exact expert parameters.
@@ -330,6 +338,7 @@ Creative workflow routing hints:
 
 Response Requirements:
 - Reply to the user in natural language after you finish the needed tool and expert calls.
+- If you use an explicit send tool for the current conversation, put the user-facing wording inside that send action instead of relying on an extra final reply.
 - Do not output internal workflow JSON.
 - Do not expose internal bookkeeping such as `current_output`, `workflow_status`, or private planning notes.
 - If the task is unfinished because a tool or expert failed, explain the blocker directly and say what remains.
@@ -1106,6 +1115,131 @@ Expert parameter contracts:
             allowed = ", ".join(payload_by_section.keys())
             return f"Error: Unsupported section `{section}`. Allowed: {allowed}"
         return json.dumps(payload_by_section[normalized_section], ensure_ascii=False, indent=2)
+
+    def message(self, content: str, tool_context: ToolContext | None = None) -> str:
+        """Explicitly send one text reply to the current conversation."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="message",
+            stage="finalizing",
+            args={"content": content},
+            runner=lambda: self._send_message(content=content, artifact_paths=[], tool_context=tool_context),
+        )
+
+    def message_file(
+        self,
+        paths: Any,
+        caption: str = "",
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Explicitly send one or more workspace files to the current conversation."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="message_file",
+            stage="finalizing",
+            args={"paths": paths, "caption": caption},
+            runner=lambda: self._message_file(paths, caption=caption, tool_context=tool_context),
+        )
+
+    def message_image(
+        self,
+        paths: Any,
+        caption: str = "",
+        tool_context: ToolContext | None = None,
+    ) -> str:
+        """Explicitly send one or more workspace images to the current conversation."""
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="message_image",
+            stage="finalizing",
+            args={"paths": paths, "caption": caption},
+            runner=lambda: self._message_image(paths, caption=caption, tool_context=tool_context),
+        )
+
+    @staticmethod
+    def _normalize_send_paths(paths: Any, *, image_only: bool = False) -> tuple[list[str], str | None]:
+        """Resolve one string or list of workspace paths for explicit sending."""
+        raw_paths: list[str] = []
+        if isinstance(paths, str):
+            normalized = paths.strip()
+            if normalized:
+                raw_paths.append(normalized)
+        elif isinstance(paths, list):
+            for item in paths:
+                if not isinstance(item, str):
+                    return [], "Error: Each send path must be a string."
+                normalized = item.strip()
+                if normalized:
+                    raw_paths.append(normalized)
+        else:
+            return [], "Error: `paths` must be a string or a list of strings."
+
+        resolved_paths: list[str] = []
+        seen_paths: set[str] = set()
+        for raw_path in raw_paths:
+            try:
+                resolved = resolve_workspace_path(raw_path)
+            except Exception as exc:
+                return [], f"Error: Invalid workspace path `{raw_path}`: {exc}"
+            if not resolved.exists():
+                return [], f"Error: File not found: {raw_path}"
+            if not resolved.is_file():
+                return [], f"Error: Not a file: {raw_path}"
+            if image_only and not looks_like_image(resolved):
+                return [], f"Error: Not an image file: {raw_path}"
+            resolved_text = str(resolved)
+            if resolved_text in seen_paths:
+                continue
+            seen_paths.add(resolved_text)
+            resolved_paths.append(resolved_text)
+        return resolved_paths, None
+
+    @staticmethod
+    def _mark_direct_outbound_sent(tool_context: ToolContext) -> None:
+        """Mark that this turn already delivered a user-visible explicit outbound message."""
+        tool_context.state["direct_outbound_sent"] = True
+        tool_context.state["final_file_paths"] = []
+
+    def _send_message(
+        self,
+        *,
+        content: str,
+        artifact_paths: list[str],
+        tool_context: ToolContext | None,
+    ) -> str:
+        """Publish one explicit outbound message to the current route."""
+        if tool_context is None:
+            return "Error: tool context is required to send a message."
+
+        text = str(content or "").strip()
+        if not text and not artifact_paths:
+            return "Error: Either `content` or at least one file path is required."
+
+        published = publish_outbound_message(text=text, artifact_paths=artifact_paths)
+        if not published:
+            return "Error: Outbound message publisher is not configured for the current route."
+
+        self._mark_direct_outbound_sent(tool_context)
+
+        if artifact_paths:
+            if text:
+                return f"Sent a message with {len(artifact_paths)} attachment(s) to the current conversation."
+            return f"Sent {len(artifact_paths)} attachment(s) to the current conversation."
+        return "Sent a message to the current conversation."
+
+    def _message_file(self, paths: Any, *, caption: str, tool_context: ToolContext | None) -> str:
+        """Resolve file paths and send them to the current conversation."""
+        resolved_paths, error_text = self._normalize_send_paths(paths)
+        if error_text:
+            return error_text
+        return self._send_message(content=caption, artifact_paths=resolved_paths, tool_context=tool_context)
+
+    def _message_image(self, paths: Any, *, caption: str, tool_context: ToolContext | None) -> str:
+        """Resolve image paths and send them to the current conversation."""
+        resolved_paths, error_text = self._normalize_send_paths(paths, image_only=True)
+        if error_text:
+            return error_text
+        return self._send_message(content=caption, artifact_paths=resolved_paths, tool_context=tool_context)
 
     def set_final_files(
         self,

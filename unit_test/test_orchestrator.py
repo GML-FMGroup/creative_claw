@@ -1,6 +1,7 @@
+import json
+import asyncio
 import tempfile
 import unittest
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -14,7 +15,10 @@ from conf.system import SYS_CONFIG
 from src.agents.experts.image_grounding.image_grounding_agent import ImageGroundingAgent
 from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrator_before_model_callback
 from src.runtime.adk_compat import annotate_agent_origin
+from src.runtime.outbound_delivery import configure_outbound_message_publisher
+from src.runtime.tool_context import route_context
 from src.runtime.workspace import workspace_relative_path, workspace_root
+from src.channels.events import OutboundMessage
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -60,8 +64,11 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("input_path", instruction)
         self.assertIn("`input_name` is legacy", instruction)
         self.assertIn("list_session_files(section=...)", instruction)
+        self.assertIn("message(content=...)", instruction)
+        self.assertIn("message_file(paths=..., caption=...)", instruction)
+        self.assertIn("message_image(paths=..., caption=...)", instruction)
         self.assertIn("set_final_files(paths=[...])", instruction)
-        self.assertIn("runtime will attach the selected workspace files", instruction)
+        self.assertIn("Do not rely on the runtime to automatically attach the latest generated files", instruction)
         self.assertIn("aligned with the user's language", instruction)
         self.assertIn("If the user mixes languages", instruction)
         self.assertIn("Expert parameter contracts", instruction)
@@ -301,6 +308,44 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("generated/session/a.png", summary)
 
 class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_message_file_publishes_explicit_outbound_and_marks_turn_state(self) -> None:
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_agents={},
+        )
+        tool_context = SimpleNamespace(state={})
+        sent_messages: list[OutboundMessage] = []
+
+        async def _capture(message: OutboundMessage) -> None:
+            sent_messages.append(message)
+
+        configure_outbound_message_publisher(_capture)
+        try:
+            with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+                file_path = Path(tmpdir) / "result.mp4"
+                file_path.write_bytes(b"fake-video")
+                relative_path = workspace_relative_path(file_path)
+
+                with route_context("cli", "chat-1"):
+                    result = orchestrator.message_file(
+                        [relative_path],
+                        caption="Here is the generated video.",
+                        tool_context=tool_context,
+                    )
+                await asyncio.sleep(0)
+        finally:
+            configure_outbound_message_publisher(None)
+
+        self.assertIn("Sent a message with 1 attachment", result)
+        self.assertTrue(tool_context.state["direct_outbound_sent"])
+        self.assertEqual(tool_context.state["final_file_paths"], [])
+        self.assertEqual(len(sent_messages), 1)
+        self.assertEqual(sent_messages[0].channel, "cli")
+        self.assertEqual(sent_messages[0].chat_id, "chat-1")
+        self.assertEqual(sent_messages[0].text, "Here is the generated video.")
+        self.assertEqual(sent_messages[0].artifact_paths, [str(file_path.resolve())])
+
     async def test_before_model_callback_includes_workspace_file_history_without_new_upload(self) -> None:
         callback_context = SimpleNamespace(
             state={

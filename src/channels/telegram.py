@@ -68,8 +68,9 @@ class TelegramChannel(BaseChannel):
 
     async def send(self, message: OutboundMessage) -> None:
         """Send one outbound Telegram message and its artifacts."""
-        text = message.text.strip() if message.text else "[empty message]"
-        await self._api_call("sendMessage", {"chat_id": message.chat_id, "text": text})
+        text = message.text.strip() if message.text else ""
+        if text or not message.artifact_paths:
+            await self._api_call("sendMessage", {"chat_id": message.chat_id, "text": text or "[empty message]"})
 
         for artifact_path in message.artifact_paths:
             cleaned_path = artifact_path.strip()

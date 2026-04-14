@@ -163,6 +163,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state["input_files"], [])
         self.assertEqual(session.state["new_files"], [])
         self.assertIsNone(session.state["final_file_paths"])
+        self.assertFalse(session.state["direct_outbound_sent"])
 
     async def test_initial_state_persists_uploaded_files_in_history(self) -> None:
         runtime = CreativeClawRuntime()
@@ -449,6 +450,54 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_event.artifact_paths, [str(selected_file.resolve())])
         self.assertEqual(final_event.text, "Sent the selected file.")
 
+    async def test_build_final_event_does_not_replay_latest_generated_outputs_when_selection_is_unset(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="cli",
+            sender_id="cli-user",
+            chat_id="terminal",
+            text="which model generated that video",
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            generated_file = Path(tmpdir) / "latest.mp4"
+            generated_file.write_bytes(b"video")
+            generated_record = build_workspace_file_record(
+                generated_file,
+                description="generated video",
+                source="video_generation",
+            )
+
+            user_id, session_id = await runtime._ensure_session(inbound)
+            session = await runtime.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            await runtime.session_service.append_event(
+                session,
+                Event(
+                    author="unit_test",
+                    actions=EventActions(
+                        state_delta={
+                            "files_history": [[generated_record]],
+                            "final_file_paths": None,
+                            "final_response": "It used the Veo provider.",
+                            "direct_outbound_sent": False,
+                        }
+                    ),
+                ),
+            )
+
+            final_event = await runtime._build_final_event(
+                user_id=user_id,
+                session_id=session_id,
+                final_summary="fallback reply",
+            )
+
+        self.assertEqual(final_event.artifact_paths, [])
+        self.assertEqual(final_event.text, "It used the Veo provider.")
+
     async def test_build_final_event_respects_explicit_empty_final_file_selection(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
@@ -495,6 +544,44 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(final_event.artifact_paths, [])
         self.assertEqual(final_event.text, "Return text only.")
+
+    async def test_build_final_event_hides_runtime_final_when_explicit_outbound_was_sent(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="cli",
+            sender_id="cli-user",
+            chat_id="terminal",
+            text="send me the result",
+        )
+
+        user_id, session_id = await runtime._ensure_session(inbound)
+        session = await runtime.session_service.get_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await runtime.session_service.append_event(
+            session,
+            Event(
+                author="unit_test",
+                actions=EventActions(
+                    state_delta={
+                        "direct_outbound_sent": True,
+                        "final_response": "This text should stay hidden.",
+                    }
+                ),
+            ),
+        )
+
+        final_event = await runtime._build_final_event(
+            user_id=user_id,
+            session_id=session_id,
+            final_summary="fallback reply",
+        )
+
+        self.assertEqual(final_event.event_type, "final")
+        self.assertEqual(final_event.text, "")
+        self.assertFalse(final_event.metadata["visible"])
 
     async def test_run_message_surfaces_orchestrator_failure(self) -> None:
         runtime = CreativeClawRuntime()
@@ -552,6 +639,68 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
                 events = [event async for event in runtime.run_message(inbound)]
 
         self.assertEqual(events[-1].event_type, "final")
+        self.assertEqual(events[-1].artifact_paths, [])
+
+    async def test_run_message_follow_up_does_not_replay_previous_generated_video(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="cli",
+            sender_id="cli-user",
+            chat_id="terminal",
+            text="which model generated that video",
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            generated_file = Path(tmpdir) / "generated_video.mp4"
+            generated_file.write_bytes(b"video")
+            generated_record = build_workspace_file_record(
+                generated_file,
+                description="previous generated video",
+                source="video_generation",
+            )
+
+            user_id, session_id = await runtime._ensure_session(inbound)
+            session = await runtime.session_service.get_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            await runtime.session_service.append_event(
+                session,
+                Event(
+                    author="unit_test",
+                    actions=EventActions(
+                        state_delta={
+                            "files_history": [[generated_record]],
+                            "summary_history": [],
+                            "message_history": [],
+                            "text_history": [],
+                            "final_file_paths": None,
+                            "direct_outbound_sent": False,
+                        }
+                    ),
+                ),
+            )
+
+            class _FakeOrchestrator:
+                def __init__(self, **_kwargs) -> None:
+                    self.uid = ""
+                    self.sid = ""
+
+                async def run_until_done(self) -> dict:
+                    return {
+                        "workflow_status": "finished",
+                        "final_summary": "It was generated with Veo.",
+                        "final_response": "It was generated with Veo.",
+                        "last_output_message": "It was generated with Veo.",
+                        "new_orchestration_events": [],
+                    }
+
+            with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+                events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(events[-1].event_type, "final")
+        self.assertEqual(events[-1].text, "It was generated with Veo.")
         self.assertEqual(events[-1].artifact_paths, [])
 
 

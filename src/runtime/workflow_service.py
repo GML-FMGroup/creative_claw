@@ -416,6 +416,7 @@ class CreativeClawRuntime:
         state_delta["final_summary"] = ""
         state_delta["final_response"] = ""
         state_delta["final_file_paths"] = None
+        state_delta["direct_outbound_sent"] = False
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
@@ -493,16 +494,19 @@ class CreativeClawRuntime:
                 metadata={"session_id": session_id},
             )
 
+        if bool(final_session.state.get("direct_outbound_sent")):
+            return WorkflowEvent(
+                event_type="final",
+                text="",
+                metadata={
+                    "session_id": session_id,
+                    "display_style": "final",
+                    "visible": False,
+                },
+            )
+
         explicit_final_file_paths = final_session.state.get("final_file_paths")
         artifact_paths = _resolve_final_artifact_paths(explicit_final_file_paths)
-        if explicit_final_file_paths is None:
-            files_history = final_session.state.get("files_history") or []
-            final_files = _select_latest_output_files(files_history)
-            artifact_paths = [
-                str(resolve_workspace_path(file_info.get("path", "")).resolve())
-                for file_info in final_files
-                if str(file_info.get("path", "")).strip()
-            ]
 
         state_response = final_session.state.get("final_response")
         if state_response:
@@ -556,11 +560,3 @@ def _resolve_final_artifact_paths(selected_paths: object) -> list[str]:
         seen_paths.add(resolved_text)
         artifact_paths.append(resolved_text)
     return artifact_paths
-
-
-def _select_latest_output_files(files_history: list[list[dict]]) -> list[dict]:
-    """Return the latest non-channel file batch from history."""
-    for file_group in reversed(files_history):
-        if file_group and any(str(file_info.get("source", "")).strip() != "channel" for file_info in file_group):
-            return file_group
-    return []

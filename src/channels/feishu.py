@@ -284,11 +284,13 @@ class FeishuChannel(BaseChannel):
 
     def _send_sync(self, message: OutboundMessage) -> None:
         """Blocking Feishu send path."""
-        text = message.text.strip() if message.text else "[empty message]"
-        if _should_use_interactive_card(text, message.metadata):
-            self._send_card_message_sync(message.chat_id, text, message.metadata)
-        else:
-            self._send_text_sync(message.chat_id, text)
+        text = message.text.strip() if message.text else ""
+        if text or not message.artifact_paths:
+            rendered_text = text or "[empty message]"
+            if _should_use_interactive_card(rendered_text, message.metadata):
+                self._send_card_message_sync(message.chat_id, rendered_text, message.metadata)
+            else:
+                self._send_text_sync(message.chat_id, rendered_text)
         total_artifacts = len(message.artifact_paths)
         for index, artifact_path in enumerate(message.artifact_paths, start=1):
             cleaned_path = artifact_path.strip()
