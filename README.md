@@ -41,10 +41,9 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ## 🤖 Supported Models
 
-### 🧠 Text and Multimodal Understanding
+### 🧠 LLM
 
-- Uses your configured text or multimodal LLM provider for `TextTransformExpert`, `ImageUnderstandingAgent`, `VideoUnderstandingExpert`, `SpeechRecognitionExpert`, and the compatibility alias `SpeechTranscriptionExpert`
-- First-round text LLM providers: `openai`, `anthropic`, `gemini`, `openrouter`, `deepseek`, `groq`, `zhipu`, `dashscope`, `vllm`, `ollama`, `moonshot`, `minimax`, `mistral`, `stepfun`, `siliconflow`, `volcengine`, `byteplus`, `qianfan`, `azure_openai`, `custom`
+-  `openai`, `anthropic`, `gemini`, `openrouter`, `deepseek`, `groq`, `zhipu`, `dashscope`, `vllm`, `ollama`, `moonshot`, `minimax`, `mistral`, `stepfun`, `siliconflow`, `volcengine`, `byteplus`, `qianfan`, `azure_openai`, `custom`
 
 ### 🖼️ Image Generation
 
@@ -67,6 +66,9 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 ### 🎵 Music Generation
 
 - MiniMax Music Generation API
+
+### 🎤 Speech Recognition
+ - Volcengine
 
 
 ## 🚀 Quick Start
