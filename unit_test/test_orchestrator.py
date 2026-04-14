@@ -72,6 +72,14 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("ImageBasicOperations", instruction)
         self.assertIn("VideoBasicOperations", instruction)
         self.assertIn("AudioBasicOperations", instruction)
+        self.assertIn("Creative workflow routing hints", instruction)
+        self.assertIn("creative-brief-to-storyboard", instruction)
+        self.assertIn("narration-to-visual-prompts", instruction)
+        self.assertIn("asset-to-script", instruction)
+        self.assertIn("style-brief-to-prompt", instruction)
+        self.assertIn("creative-workflow-router", instruction)
+        self.assertIn("creative-qc", instruction)
+        self.assertIn("do not skip straight to `ImageGenerationAgent` or `VideoGenerationAgent`", instruction)
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
