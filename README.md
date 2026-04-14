@@ -18,9 +18,10 @@ No more jumping back and forth between different tools.
 With CreativeClaw, you can keep iterating around a single idea and move from inspiration to final output in one flow.
 
 ## 📰 News
- - 2026-04-14: Support HY 3D generation.
- - 2026-04-13: Support 20 LLM providers. Support image segmentation.
- - 2026-04-12: Release v0.1.1. Supports basic image and video operations, with chat-based usage through Web, CLI, and Feishu.
+ - 2026-04-14: Added support for HY 3D generation, along with new basic video and audio operation experts.
+ - 2026-04-13: Expanded support to 20 LLM providers and added image segmentation.
+ - 2026-04-12: Released v0.1.1, introducing basic image and video operations across Web, CLI, and Feishu chat.
+
 
 ## ✨ Key Features of CreativeClaw
 
