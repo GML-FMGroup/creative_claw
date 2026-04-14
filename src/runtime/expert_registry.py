@@ -287,10 +287,11 @@ _EXPERT_SPECS = {
             "Use operation plus operation-specific parameters such as start_time, end_time, duration, sample_rate, bitrate, channels, or output_format."
         ),
     ),
-    "SpeechTranscriptionExpert": ExpertSpec(
-        name="SpeechTranscriptionExpert",
+    "SpeechRecognitionExpert": ExpertSpec(
+        name="SpeechRecognitionExpert",
         default_prompt_key="input_path",
         supports_plain_prompt=False,
+        default_parameters={"task": "auto"},
         required_parameters=("input_path or input_paths",),
         required_parameter_groups=(
             RequiredParameterGroup(
@@ -298,10 +299,40 @@ _EXPERT_SPECS = {
                 description="input_path or input_paths",
             ),
         ),
-        mirrored_output_keys=("speech_transcription_results",),
+        allowed_values={
+            "task": ("auto", "asr", "subtitle"),
+            "subtitle_format": ("srt", "vtt"),
+            "caption_type": ("auto", "speech", "singing"),
+        },
+        mirrored_output_keys=("speech_recognition_results", "speech_transcription_results"),
         notes=(
-            "Audio or video to text only. "
-            "Optional parameters: language, timestamps."
+            "Speech recognition and subtitle generation for audio or video files. "
+            "Optional parameters: task, language, timestamps, subtitle_format, output_path, "
+            "subtitle_text/audio_text, caption_type, sta_punc_mode, words_per_line, max_lines."
+        ),
+    ),
+    "SpeechTranscriptionExpert": ExpertSpec(
+        name="SpeechTranscriptionExpert",
+        default_prompt_key="input_path",
+        supports_plain_prompt=False,
+        default_parameters={"task": "auto"},
+        required_parameters=("input_path or input_paths",),
+        required_parameter_groups=(
+            RequiredParameterGroup(
+                keys=("input_path", "input_paths"),
+                description="input_path or input_paths",
+            ),
+        ),
+        allowed_values={
+            "task": ("auto", "asr", "subtitle"),
+            "subtitle_format": ("srt", "vtt"),
+            "caption_type": ("auto", "speech", "singing"),
+        },
+        mirrored_output_keys=("speech_recognition_results", "speech_transcription_results"),
+        notes=(
+            "Compatibility alias for SpeechRecognitionExpert. "
+            "Optional parameters: task, language, timestamps, subtitle_format, output_path, "
+            "subtitle_text/audio_text, caption_type, sta_punc_mode, words_per_line, max_lines."
         ),
     ),
     "SpeechSynthesisExpert": ExpertSpec(

@@ -9,6 +9,7 @@ from src.agents.experts.image_understanding.image_understanding_agent import Ima
 from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
 from src.agents.experts.music_generation.music_generation_expert import MusicGenerationExpert
 from src.agents.experts.search.search_agent import SearchAgent
+from src.agents.experts.speech_recognition.speech_recognition_expert import SpeechRecognitionExpert
 from src.agents.experts.speech_synthesis.speech_synthesis_expert import SpeechSynthesisExpert
 from src.agents.experts.speech_transcription.speech_transcription_expert import SpeechTranscriptionExpert
 from src.agents.experts.text_transform.text_transform_expert import TextTransformExpert

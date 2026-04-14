@@ -114,6 +114,7 @@ creative-claw init
 
 - 这已经足够体验默认的 CLI 聊天流程。
 - 图片、视频、搜索和某些特定 provider 只在用到时才需要额外凭证。
+- `SpeechRecognitionExpert` 以及兼容别名 `SpeechTranscriptionExpert` 依赖 Volcengine 语音服务。除了 `VOLCENGINE_APPID` 和 `VOLCENGINE_ACCESS_TOKEN` 之外，当前后端还需要开通这些资源权限：`volc.bigasr.auc_turbo` 用于 `task=asr`，`vc.async.default` 用于直接生成字幕，`volc.ata.default` 用于在传入 `subtitle_text` / `audio_text` 时做自动字幕打轴。开通入口是 [Volcengine 语音控制台](https://console.volcengine.com/speech/app)。未开通时，接口通常会返回 `requested resource not granted` 或 `requested grant not found`。
 - 读取顺序是：`conf.json` 优先；如果某个 API key 在 `conf.json` 里是空字符串，运行时会回退到同名环境变量。
 - 第一轮文本 LLM provider 已支持：`openai`、`anthropic`、`gemini`、`openrouter`、`deepseek`、`groq`、`zhipu`、`dashscope`、`vllm`、`ollama`、`moonshot`、`minimax`、`mistral`、`stepfun`、`siliconflow`、`volcengine`、`byteplus`、`qianfan`、`azure_openai`、`custom`。
 - 更完整的环境与凭证说明、完整模板参考、以及常用字段解释，统一见 [docs/development.md](docs/development.md)。

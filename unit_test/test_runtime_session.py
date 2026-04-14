@@ -63,6 +63,7 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         for expert_name in (
             "TextTransformExpert",
             "VideoUnderstandingExpert",
+            "SpeechRecognitionExpert",
             "SpeechTranscriptionExpert",
             "SpeechSynthesisExpert",
             "MusicGenerationExpert",

@@ -115,6 +115,8 @@ For beginners, a practical `conf.json` usually looks like this:
     "dds_api_key": "your-dds-key",
     "serper_api_key": "your-serper-key",
     "brave_api_key": "your-brave-key",
+    "volcengine_app_id": "your-volcengine-app-id",
+    "volcengine_access_token": "your-volcengine-access-token",
     "tencentcloud_secret_id": "your-tencentcloud-secret-id",
     "tencentcloud_secret_key": "your-tencentcloud-secret-key",
     "tencentcloud_session_token": "",
@@ -151,6 +153,7 @@ How to fill it:
 - If you want image grounding or segmentation, fill `services.dds_api_key`.
 - If you want SearchAgent image search, fill `services.serper_api_key`.
 - If you want the built-in `web_search` tool, fill `services.brave_api_key`.
+- If you want `SpeechRecognitionExpert` ASR or subtitle capabilities, fill `services.volcengine_app_id` and `services.volcengine_access_token`. The service activation entry is the [Volcengine speech console](https://console.volcengine.com/speech/app).
 - If you want Tencent Hunyuan 3D generation, fill `services.tencentcloud_secret_id` and `services.tencentcloud_secret_key`.
 - `services.tencentcloud_session_token` is optional. Most personal API-key setups can leave it empty.
 - `services.tencentcloud_region` is optional. If you are not sure, use `ap-guangzhou`.
@@ -164,6 +167,17 @@ Useful config sections:
 - `providers.*`: credentials and API base settings for text LLM providers
 - `services.*`: extra keys for image/video/search integrations
 - `channels.*`: Telegram, Feishu, and Web channel defaults
+
+Speech recognition and subtitle service grants:
+
+- `SpeechRecognitionExpert` and the compatibility alias `SpeechTranscriptionExpert` route `task=asr` and `task=subtitle` through Volcengine speech services.
+- In addition to `services.volcengine_app_id` and `services.volcengine_access_token`, the current backend requires these Volcengine resource grants:
+  - `volc.bigasr.auc_turbo`: required for `task=asr`
+  - `vc.async.default`: required for subtitle generation from audio or video
+  - `volc.ata.default`: required for subtitle timing when `subtitle_text` or `audio_text` is provided
+- Open or grant these resources from the [Volcengine speech console](https://console.volcengine.com/speech/app).
+- If a grant is missing, the live API usually returns `requested resource not granted` or `requested grant not found`.
+- The resource names above align with the current CreativeClaw backend routes and the official Volcengine speech product docs / live validation responses.
 
 Credential resolution rule:
 
@@ -181,7 +195,7 @@ Current provider env-fallback coverage:
 Common environment variables:
 
 - text providers: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `MINIMAX_API_KEY`, `MISTRAL_API_KEY`, `STEPFUN_API_KEY`, `QIANFAN_API_KEY`
-- service integrations: `ARK_API_KEY`, `DDS_API_KEY`, `SERPER_API_KEY`, `BRAVE_API_KEY`
+- service integrations: `ARK_API_KEY`, `DDS_API_KEY`, `SERPER_API_KEY`, `BRAVE_API_KEY`, `VOLCENGINE_APPID`, `VOLCENGINE_ACCESS_TOKEN`
 - Tencent Cloud 3D: `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION`
 - channel credentials: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOW_FROM`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_ENCRYPT_KEY`, `FEISHU_VERIFICATION_TOKEN`, `FEISHU_ALLOW_FROM`
 

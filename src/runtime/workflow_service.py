@@ -24,6 +24,7 @@ from src.agents.experts import (
     KnowledgeAgent,
     MusicGenerationExpert,
     SearchAgent,
+    SpeechRecognitionExpert,
     SpeechSynthesisExpert,
     SpeechTranscriptionExpert,
     TextTransformExpert,
@@ -213,6 +214,11 @@ class CreativeClawRuntime:
             ),
             "AudioBasicOperations": annotate_agent_origin(
                 AudioBasicOperationsAgent(name="AudioBasicOperations"),
+                app_name=SYS_CONFIG.app_name,
+                origin_path=expert_origin_path,
+            ),
+            "SpeechRecognitionExpert": annotate_agent_origin(
+                SpeechRecognitionExpert(name="SpeechRecognitionExpert"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),
