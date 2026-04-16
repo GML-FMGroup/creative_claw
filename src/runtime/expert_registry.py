@@ -114,20 +114,6 @@ _EXPERT_SPECS = {
             "Use operation plus operation-specific parameters such as crop box, degrees, direction, size, or output_format."
         ),
     ),
-    "ImageToPromptAgent": ExpertSpec(
-        name="ImageToPromptAgent",
-        default_prompt_key="prompt",
-        supports_plain_prompt=False,
-        required_parameters=("input_path or input_paths",),
-        required_parameter_groups=(
-            RequiredParameterGroup(
-                keys=("input_path", "input_paths"),
-                description="input_path or input_paths",
-            ),
-        ),
-        mirrored_output_keys=("image_to_prompt_results",),
-        notes="Requires one or more image paths.",
-    ),
     "TextTransformExpert": ExpertSpec(
         name="TextTransformExpert",
         default_prompt_key="input_text",

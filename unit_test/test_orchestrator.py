@@ -53,7 +53,6 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("main conversational agent", instruction.lower())
         self.assertIn("coding, debugging, and file-editing tasks", instruction.lower())
         self.assertIn("background=true", instruction)
-        self.assertIn("ImageToPromptAgent", instruction)
         self.assertIn("aspect_ratio", instruction)
         self.assertIn("resolution", instruction)
         self.assertIn("nano_banana", instruction)

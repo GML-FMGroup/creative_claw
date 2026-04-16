@@ -16,7 +16,6 @@
 | `KnowledgeAgent` | 运行时 `llm.model` | 通用 LLM | 待补 | 待补 | 取决于 provider | 待补 |
 | `TextTransformExpert` | 运行时 `llm.model` | 通用 LLM | 待补 | 待补 | 取决于 provider | 待补 |
 | `ImageUnderstandingAgent` | 运行时 `llm.model` | 通用多模态 LLM | 待补 | 待补 | 取决于 provider | 待补 |
-| `ImageToPromptAgent` | `gemini-3-pro-preview` | Gemini 3 Pro Preview | 待补 | 待补 | 待补 | 待补 |
 | `VideoUnderstandingExpert` | 运行时 `llm.model` | 通用多模态 LLM | 待补 | 待补 | 取决于 provider | 待补 |
 | `ImageGenerationAgent` | `gemini-3.1-flash-image-preview` | Gemini 3.1 Flash Image Preview | 待补 | 待补 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | 待补 |
 | `ImageGenerationAgent` | `doubao-seedream-5-0-260128` | Seedream 5.0 | 待补 | 待补 | `ARK_API_KEY` | 待补 |
@@ -49,7 +48,6 @@
 - `TextTransformExpert`
 - `ImageUnderstandingAgent`
 - `VideoUnderstandingExpert`
-- 以及当前代码实现下的 `ImageToPromptAgent`
 
 | Provider | 运行时模型 ID | 典型示例 | Key / Token | Key 获取链接 | 备注 |
 | --- | --- | --- | --- | --- | --- |
@@ -78,4 +76,4 @@
 
 - `ImageGenerationAgent`、`ImageEditingAgent`、`VideoGenerationAgent` 现在都应该按“一个 provider 一行”来看，不适合再合并成一个笼统描述。
 - `SpeechRecognitionExpert` 当前不是通用 LLM，而是三条火山语音资源路径：`volc.bigasr.auc_turbo`、`vc.async.default`、`volc.ata.default`。
-- `ImageToPromptAgent` 有一处需要后续再确认：`docs/model_and_token_map.md` 里写的是 `gemini-3-pro-preview`，但当前实现代码本身走的是通用多模态 LLM 调用路径。
+- 图片反推 prompt 已统一归入 `ImageUnderstandingAgent` 的 `prompt` 模式，不再单独作为一个 expert 维护。

@@ -9,7 +9,6 @@ from PIL import Image
 from google.genai.types import Content, Part
 
 from src.agents.experts.image_understanding import tool as understanding_tool
-from src.agents.experts.image_to_prompt import tool as image_to_prompt_tool
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.runtime.workspace import workspace_relative_path, workspace_root
 
@@ -226,29 +225,6 @@ class ImageUnderstandingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("## System Role", user_prompt)
         self.assertIn("### 1. Long Prompt", user_prompt)
         self.assertIn("### 2. Negative Prompt", user_prompt)
-
-    async def test_image_to_prompt_tool_delegates_to_prompt_mode(self) -> None:
-        with patch(
-            "src.agents.experts.image_to_prompt.tool.image_to_text_tool",
-            new=AsyncMock(
-                return_value={
-                    "status": "success",
-                    "message": "wrapped message",
-                    "analysis_text": "reverse prompt body",
-                    "provider": "google_adk",
-                    "model_name": "openai/gpt-5.4",
-                }
-            ),
-        ) as tool_mock:
-            result = await image_to_prompt_tool.image_to_prompt_tool(
-                _build_ctx({}),
-                "inbox/session/reference.png",
-            )
-
-        self.assertEqual(tool_mock.await_args.args[1:], ("inbox/session/reference.png",))
-        self.assertEqual(tool_mock.await_args.kwargs["mode"], "prompt")
-        self.assertEqual(result["message"], "reverse prompt body")
-        self.assertEqual(result["provider"], "google_adk")
 
     async def test_agent_persists_structured_results_on_success(self) -> None:
         agent = ImageUnderstandingAgent(name="ImageUnderstandingAgent")

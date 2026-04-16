@@ -19,7 +19,6 @@ from src.agents.experts import (
     ImageSegmentationAgent,
     ImageEditingAgent,
     ImageGenerationAgent,
-    ImageToPromptAgent,
     ImageUnderstandingAgent,
     KnowledgeAgent,
     MusicGenerationExpert,
@@ -164,11 +163,6 @@ class CreativeClawRuntime:
             ),
             "ImageEditingAgent": annotate_agent_origin(
                 ImageEditingAgent(name="ImageEditingAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageToPromptAgent": annotate_agent_origin(
-                ImageToPromptAgent(name="ImageToPromptAgent"),
                 app_name=SYS_CONFIG.app_name,
                 origin_path=expert_origin_path,
             ),

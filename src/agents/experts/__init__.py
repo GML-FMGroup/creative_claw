@@ -4,7 +4,6 @@ from src.agents.experts.image_segmentation.image_segmentation_agent import Image
 from src.agents.experts.image_basic_operations.image_basic_operations_agent import ImageBasicOperationsAgent
 from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
 from src.agents.experts.image_generation.image_generation_agent import ImageGenerationAgent
-from src.agents.experts.image_to_prompt.image_to_prompt_agent import ImageToPromptAgent
 from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
 from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
 from src.agents.experts.music_generation.music_generation_expert import MusicGenerationExpert

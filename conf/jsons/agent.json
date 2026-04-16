@@ -44,12 +44,6 @@
             "parameters": "`{'operation': 'crop', 'input_path': 'workspace/path.png', 'left': 10, 'top': 20, 'right': 200, 'bottom': 180}` or `{'operation': 'rotate', 'input_path': 'workspace/path.png', 'degrees': 90, 'expand': true}` or `{'operation': 'flip', 'input_path': 'workspace/path.png', 'direction': 'horizontal|vertical'}` or `{'operation': 'info', 'input_path': 'workspace/path.png'}` or `{'operation': 'resize', 'input_path': 'workspace/path.png', 'width': 1024, 'height': 1024, 'keep_aspect_ratio': true, 'resample': 'nearest|bilinear|bicubic|lanczos'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.png', 'output_format': 'png|jpg|jpeg|webp', 'mode': 'RGB'(optional), 'quality': 90(optional)}`"
         },
         {
-            "name": "ImageToPromptAgent",
-            "enable": true,
-            "description": "Reverse engineer one or more input images into detailed image-generation prompts. Use this when the goal is to infer a likely creation prompt for later reuse, variation, or recreation, rather than just describing the image contents.",
-            "parameters": "`{'input_path': 'workspace/path.png'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png']}`"
-        },
-        {
             "name": "TextTransformExpert",
             "enable": true,
             "description": "Run one atomic text transformation only. Supported modes are `rewrite`, `expand`, `compress`, `translate`, `structure`, `title`, and `script`. Use this expert when the task is transforming text rather than understanding files or generating media.",

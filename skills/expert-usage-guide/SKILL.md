@@ -138,19 +138,6 @@ Prefer this before generation or editing when:
 - The image contents are unclear.
 - You need to understand a reference before deciding the next step.
 
-### `ImageToPromptAgent`
-
-Use when:
-
-- Backward compatibility matters and an existing flow still explicitly calls this expert by name.
-- Otherwise, prefer `ImageUnderstandingAgent` with `mode="prompt"`.
-
-Recommended parameters:
-
-```json
-{"input_path":"inbox/cli/reference.png"}
-```
-
 ### `TextTransformExpert`
 
 Use when:
@@ -339,7 +326,6 @@ Prefer this before generation when:
 - If the user says "generate", start from `ImageGenerationAgent`.
 - If the user says "edit this image", start from `ImageEditingAgent`.
 - If the user says "describe / OCR / analyze style / reverse prompt image", start from `ImageUnderstandingAgent`.
-- If an older workflow explicitly names `ImageToPromptAgent`, it is still acceptable as a compatibility path.
 - If the user says "rewrite / translate / compress / title / script", start from `TextTransformExpert`.
 - If the user says "find where", start from `ImageGroundingAgent`.
 - If the user says "mask / cutout / segment", start from `ImageSegmentationAgent`.

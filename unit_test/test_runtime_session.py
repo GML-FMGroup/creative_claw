@@ -13,16 +13,16 @@ from src.runtime.workspace import build_workspace_file_record, workspace_relativ
 
 
 class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
-    def test_runtime_registers_image_to_prompt_expert(self) -> None:
+    def test_runtime_registers_image_understanding_expert(self) -> None:
         runtime = CreativeClawRuntime()
-        image_to_prompt_agent = runtime.expert_agents["ImageToPromptAgent"]
+        image_understanding_agent = runtime.expert_agents["ImageUnderstandingAgent"]
 
-        self.assertIn("ImageToPromptAgent", runtime.expert_agents)
+        self.assertIn("ImageUnderstandingAgent", runtime.expert_agents)
         self.assertEqual(
-            getattr(image_to_prompt_agent, "_adk_origin_app_name", None),
+            getattr(image_understanding_agent, "_adk_origin_app_name", None),
             SYS_CONFIG.app_name,
         )
-        self.assertIsNotNone(getattr(image_to_prompt_agent, "_adk_origin_path", None))
+        self.assertIsNotNone(getattr(image_understanding_agent, "_adk_origin_path", None))
 
     def test_runtime_registers_image_segmentation_expert(self) -> None:
         runtime = CreativeClawRuntime()
