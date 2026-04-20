@@ -17,7 +17,7 @@ from src.runtime.workspace import build_workspace_file_record, save_binary_outpu
 
 
 class VideoGenerationAgent(BaseAgent):
-    """Generate one or more videos from prompt-only or image-guided inputs."""
+    """Generate one or more videos from prompt, image, or video-guided inputs."""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -50,6 +50,10 @@ class VideoGenerationAgent(BaseAgent):
         mode = video_tools.normalize_video_mode(str(current_parameters.get("mode", "prompt")))
         aspect_ratio = video_tools.normalize_video_aspect_ratio(current_parameters.get("aspect_ratio", "16:9"))
         resolution = video_tools.normalize_video_resolution(current_parameters.get("resolution", "720p"))
+        duration_seconds = video_tools.normalize_video_duration(
+            current_parameters.get("duration_seconds", 8)
+        )
+        negative_prompt = str(current_parameters.get("negative_prompt", "") or "").strip()
 
         if not any(prompt_list) and not input_paths:
             error_text = f"Missing parameters provided to {self.name}, must include prompt or input_path/input_paths."
@@ -65,28 +69,42 @@ class VideoGenerationAgent(BaseAgent):
             yield self.format_event(error_text, {"current_output": current_output})
             return
 
-        if mode == "first_frame_and_last_frame" and len(input_paths) < 2:
-            error_text = f"{self.name} requires at least two input images for mode=first_frame_and_last_frame."
+        try:
+            enhance_prompt = video_tools.normalize_optional_boolean(
+                current_parameters.get("enhance_prompt"),
+                parameter_name="enhance_prompt",
+            )
+            person_generation = video_tools.normalize_person_generation(
+                current_parameters.get("person_generation")
+            )
+            seed = video_tools.normalize_video_seed(current_parameters.get("seed"))
+            video_tools._validate_mode_input_paths(mode, input_paths)
+        except ValueError as exc:
+            error_text = f"{self.name} got invalid parameters: {exc}"
             current_output = {"status": "error", "message": error_text}
             logger.error(error_text)
             yield self.format_event(error_text, {"current_output": current_output})
             return
 
-        enhanced_prompt_results = await asyncio.gather(
-            *[
-                video_tools.prompt_enhancement_tool(ctx, prompt)
-                if prompt
-                else asyncio.sleep(0, result={"status": "success", "message": ""})
-                for prompt in prompt_list
-            ]
-        )
-        normalized_prompts: list[str] = []
-        for original_prompt, result in zip(prompt_list, enhanced_prompt_results):
-            if result["status"] == "success":
-                normalized_prompts.append(str(result["message"]).strip())
-            else:
-                logger.warning("%s: prompt enhancement failed, using original prompt", self.name)
-                normalized_prompts.append(original_prompt)
+        skip_local_prompt_enhancement = provider == "veo" and enhance_prompt is False
+        if skip_local_prompt_enhancement:
+            normalized_prompts = prompt_list
+        else:
+            enhanced_prompt_results = await asyncio.gather(
+                *[
+                    video_tools.prompt_enhancement_tool(ctx, prompt)
+                    if prompt
+                    else asyncio.sleep(0, result={"status": "success", "message": ""})
+                    for prompt in prompt_list
+                ]
+            )
+            normalized_prompts = []
+            for original_prompt, result in zip(prompt_list, enhanced_prompt_results):
+                if result["status"] == "success":
+                    normalized_prompts.append(str(result["message"]).strip())
+                else:
+                    logger.warning("%s: prompt enhancement failed, using original prompt", self.name)
+                    normalized_prompts.append(original_prompt)
 
         if provider == "veo":
             generation_tasks = [
@@ -96,6 +114,11 @@ class VideoGenerationAgent(BaseAgent):
                     mode=mode,
                     aspect_ratio=aspect_ratio,
                     resolution=resolution,
+                    duration_seconds=duration_seconds,
+                    negative_prompt=negative_prompt,
+                    person_generation=person_generation,
+                    seed=seed,
+                    enhance_prompt=enhance_prompt,
                 )
                 for prompt in normalized_prompts
             ]

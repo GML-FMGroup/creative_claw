@@ -309,6 +309,7 @@ Rules:
 - `input_name` is legacy and should not be used unless compatibility fallback is absolutely required.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
+- When using `VideoGenerationAgent`, you may pass optional `provider`, `mode`, `aspect_ratio`, `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, and `enhance_prompt`. For provider `veo`, mode `video_extension` accepts one workspace video via `input_path` or `input_paths`, and audio should be described in the prompt rather than passed as a separate file.
 - For cutout, local edit, inpaint-style masking, or region-targeted image workflows, prefer calling `ImageSegmentationAgent` first, then read `current_output.results[0].mask_path` from the expert result and reuse that workspace path in the next step.
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.

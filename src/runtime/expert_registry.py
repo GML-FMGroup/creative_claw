@@ -190,6 +190,7 @@ _EXPERT_SPECS = {
             "mode": "prompt",
             "aspect_ratio": "16:9",
             "resolution": "720p",
+            "duration_seconds": 8,
         },
         required_parameters=("prompt or input_path/input_paths",),
         required_parameter_groups=(
@@ -206,11 +207,20 @@ _EXPERT_SPECS = {
                 "first_frame_and_last_frame",
                 "reference_asset",
                 "reference_style",
+                "video_extension",
             ),
             "aspect_ratio": ("16:9", "9:16"),
-            "resolution": ("720p", "1080p"),
+            "resolution": ("720p", "1080p", "4k"),
+            "duration_seconds": ("4", "6", "8"),
+            "person_generation": ("allow_all", "allow_adult"),
         },
-        notes="Use prompt-only or image-guided video generation with optional provider, mode, aspect_ratio, and resolution.",
+        notes=(
+            "Use prompt-only, image-guided, or video-extension generation with optional provider, "
+            "mode, aspect_ratio, resolution, duration_seconds, negative_prompt, person_generation, "
+            "seed, and enhance_prompt. "
+            "For provider `veo`, mode `video_extension` uses one workspace video from input_path/input_paths. "
+            "Veo 3.1 generates synchronized native audio from prompt cues; do not pass a separate audio file."
+        ),
     ),
     "VideoUnderstandingExpert": ExpertSpec(
         name="VideoUnderstandingExpert",

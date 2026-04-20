@@ -107,6 +107,7 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["mode"], "prompt")
         self.assertEqual(parameters["aspect_ratio"], "16:9")
         self.assertEqual(parameters["resolution"], "720p")
+        self.assertEqual(parameters["duration_seconds"], 8)
 
     def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:
         parameters = normalize_invoke_agent_parameters(

@@ -7,7 +7,6 @@ import base64
 import mimetypes
 import os
 from dataclasses import dataclass
-from io import BytesIO
 from typing import Any
 
 from google import genai
@@ -19,7 +18,6 @@ from google.genai import types
 from google.genai.types import Content, Part
 
 from conf.llm import build_llm
-from conf.system import SYS_CONFIG
 from src.logger import logger
 from src.runtime.workspace import resolve_workspace_path
 
@@ -29,9 +27,12 @@ _SUPPORTED_MODES = {
     "first_frame_and_last_frame",
     "reference_asset",
     "reference_style",
+    "video_extension",
 }
 _SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
-_SUPPORTED_RESOLUTIONS = {"720p", "1080p"}
+_SUPPORTED_RESOLUTIONS = {"720p", "1080p", "4k"}
+_SUPPORTED_VEO_DURATIONS = {4, 6, 8}
+_SUPPORTED_PERSON_GENERATION = {"allow_all", "allow_adult"}
 _SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
 _VEO_MODEL_NAME = "veo-3.1-generate-preview"
 
@@ -60,8 +61,63 @@ def normalize_video_aspect_ratio(raw_value: str) -> str:
 
 def normalize_video_resolution(raw_value: str) -> str:
     """Return one supported output resolution for VEO generation."""
-    value = str(raw_value or "").strip()
+    value = str(raw_value or "").strip().lower()
     return value if value in _SUPPORTED_RESOLUTIONS else "720p"
+
+
+def normalize_video_duration(raw_value: Any) -> int:
+    """Return one supported Veo duration in seconds."""
+    if raw_value is None or str(raw_value).strip() == "":
+        return 8
+    try:
+        value = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return 8
+    return value if value in _SUPPORTED_VEO_DURATIONS else 8
+
+
+def normalize_optional_boolean(raw_value: Any, *, parameter_name: str) -> bool | None:
+    """Parse one optional boolean-like value."""
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        return raw_value
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError(f"{parameter_name} must be a boolean value.")
+
+
+def normalize_video_seed(raw_value: Any) -> int | None:
+    """Parse one optional Veo seed value."""
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    try:
+        value = int(str(raw_value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("seed must be an integer.") from exc
+    if value < 0 or value > 4_294_967_295:
+        raise ValueError("seed must be between 0 and 4294967295.")
+    return value
+
+
+def normalize_person_generation(raw_value: Any) -> str | None:
+    """Return one supported Veo person generation value when provided."""
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip().lower()
+    if not value:
+        return None
+    if value not in _SUPPORTED_PERSON_GENERATION:
+        raise ValueError(
+            "person_generation must be one of: "
+            f"{sorted(_SUPPORTED_PERSON_GENERATION)}."
+        )
+    return value
 
 
 def _guess_image_mime_type(path: str) -> str:
@@ -89,6 +145,48 @@ def _read_workspace_image_as_genai_image(path: str) -> types.Image:
         image_bytes=_read_workspace_image_bytes(path),
         mime_type=_guess_image_mime_type(path),
     )
+
+
+def _read_workspace_video_as_genai_video(path: str) -> types.Video:
+    """Load one workspace video into a `google.genai.types.Video` object."""
+    return types.Video.from_file(location=str(resolve_workspace_path(path)))
+
+
+def _validate_mode_input_paths(mode: str, input_paths: list[str]) -> None:
+    """Validate mode-specific input count constraints before provider calls."""
+    current_count = len(input_paths)
+    if mode == "first_frame" and current_count != 1:
+        raise ValueError("mode=first_frame requires exactly one input image.")
+    if mode == "first_frame_and_last_frame" and current_count != 2:
+        raise ValueError("mode=first_frame_and_last_frame requires exactly two input images.")
+    if mode in {"reference_asset", "reference_style"} and not 1 <= current_count <= 3:
+        raise ValueError(f"mode={mode} requires between one and three input images.")
+    if mode == "video_extension" and current_count != 1:
+        raise ValueError("mode=video_extension requires exactly one input video.")
+
+
+def _validate_veo_constraints(
+    *,
+    mode: str,
+    resolution: str,
+    duration_seconds: int,
+    person_generation: str | None,
+) -> None:
+    """Validate Veo-specific parameter combinations before API invocation."""
+    if resolution in {"1080p", "4k"} and duration_seconds != 8:
+        raise ValueError(f"resolution={resolution} requires duration_seconds=8 for Veo.")
+    if mode in {"reference_asset", "reference_style"} and duration_seconds != 8:
+        raise ValueError(f"mode={mode} requires duration_seconds=8 for Veo.")
+    if mode == "video_extension":
+        if duration_seconds != 8:
+            raise ValueError("mode=video_extension requires duration_seconds=8 for Veo.")
+        if resolution != "720p":
+            raise ValueError("mode=video_extension only supports resolution=720p for Veo.")
+    if mode in {"first_frame", "first_frame_and_last_frame", "reference_asset", "reference_style"}:
+        if person_generation == "allow_all":
+            raise ValueError(
+                f"mode={mode} only supports person_generation=allow_adult for Veo."
+            )
 
 
 async def prompt_enhancement_tool(ctx: InvocationContext, prompt: str) -> dict[str, str]:
@@ -175,6 +273,14 @@ async def seedance_video_generation_tool(
     current_mode = normalize_video_mode(mode)
     current_paths = input_paths or []
     current_ratio = normalize_video_aspect_ratio(aspect_ratio)
+    if current_mode == "video_extension":
+        return {
+            "status": "error",
+            "message": "seedance does not support mode=video_extension.",
+            "provider": "seedance",
+            "model_name": _SEEDANCE_MODEL_NAME,
+        }
+    _validate_mode_input_paths(current_mode, current_paths)
     image_urls = [_read_workspace_image_as_data_url(path) for path in current_paths]
 
     try:
@@ -267,14 +373,22 @@ async def veo_video_generation_tool(
     mode: str = "prompt",
     aspect_ratio: str = "16:9",
     resolution: str = "720p",
+    duration_seconds: int = 8,
+    negative_prompt: str = "",
+    person_generation: str | None = None,
+    seed: int | None = None,
+    enhance_prompt: bool | None = None,
 ) -> dict[str, Any]:
     """Generate one video via Google's VEO API."""
     logger.info("calling veo for video generation ...")
-    google_api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+    google_api_key = (
+        os.environ.get("GOOGLE_API_KEY", "").strip()
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+    )
     if not google_api_key:
         return {
             "status": "error",
-            "message": "GOOGLE_API_KEY is not set.",
+            "message": "GOOGLE_API_KEY or GEMINI_API_KEY is not set.",
             "provider": "veo",
             "model_name": _VEO_MODEL_NAME,
         }
@@ -283,8 +397,24 @@ async def veo_video_generation_tool(
     current_paths = input_paths or []
     current_ratio = normalize_video_aspect_ratio(aspect_ratio)
     current_resolution = normalize_video_resolution(resolution)
+    current_duration = normalize_video_duration(duration_seconds)
+    current_negative_prompt = str(negative_prompt or "").strip()
 
     try:
+        current_enhance_prompt = normalize_optional_boolean(
+            enhance_prompt,
+            parameter_name="enhance_prompt",
+        )
+        current_person_generation = normalize_person_generation(person_generation)
+        current_seed = normalize_video_seed(seed)
+        _validate_mode_input_paths(current_mode, current_paths)
+        _validate_veo_constraints(
+            mode=current_mode,
+            resolution=current_resolution,
+            duration_seconds=current_duration,
+            person_generation=current_person_generation,
+        )
+
         client = genai.Client(api_key=google_api_key)
 
         source = types.GenerateVideosSource(prompt=prompt or None)
@@ -292,7 +422,16 @@ async def veo_video_generation_tool(
             "number_of_videos": 1,
             "aspect_ratio": current_ratio,
             "resolution": current_resolution,
+            "duration_seconds": current_duration,
         }
+        if current_negative_prompt:
+            config_kwargs["negative_prompt"] = current_negative_prompt
+        if current_person_generation:
+            config_kwargs["person_generation"] = current_person_generation
+        if current_seed is not None:
+            config_kwargs["seed"] = current_seed
+        if current_enhance_prompt is not None:
+            config_kwargs["enhance_prompt"] = current_enhance_prompt
 
         if current_mode == "first_frame":
             source.image = _read_workspace_image_as_genai_image(current_paths[0])
@@ -312,6 +451,8 @@ async def veo_video_generation_tool(
                 )
                 for path in current_paths
             ]
+        elif current_mode == "video_extension":
+            source.video = _read_workspace_video_as_genai_video(current_paths[0])
 
         operation = await client.aio.models.generate_videos(
             model=_VEO_MODEL_NAME,

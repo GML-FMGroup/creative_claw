@@ -408,6 +408,14 @@ Supported modes:
 - `first_frame_and_last_frame`
 - `reference_asset`
 - `reference_style`
+- `video_extension` (`veo` only)
+
+Important `veo` notes:
+
+- audio is generated natively from prompt cues such as dialogue, ambience, and sound effects
+- do not pass a separate audio file to `VideoGenerationAgent`
+- optional `veo` controls include `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, and `enhance_prompt`
+- `video_extension` accepts one workspace video path through `input_path` or `input_paths`
 
 Example `invoke_agent` payloads:
 
@@ -417,6 +425,10 @@ Example `invoke_agent` payloads:
 
 ```json
 {"input_path":"inbox/cli/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
+```
+
+```json
+{"input_path":"generated/session_1/clip.mp4","prompt":"Continue the motion naturally with wind and crowd ambience","provider":"veo","mode":"video_extension","resolution":"720p","duration_seconds":8,"negative_prompt":"glitches, abrupt cuts","seed":123}
 ```
 
 ## Deterministic Media Operations
