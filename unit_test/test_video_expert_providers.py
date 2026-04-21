@@ -1,8 +1,11 @@
 import unittest
 import os
+import requests
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from PIL import Image
 
 from src.agents.experts.video_generation import tool as video_tools
 from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent
@@ -162,6 +165,68 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             enhance_prompt=False,
         )
 
+    async def test_video_generation_uses_kling_when_requested(self) -> None:
+        agent = VideoGenerationAgent(name="VideoGenerationAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "kling",
+                    "mode": "multi_reference",
+                    "input_paths": ["generated/a.png", "generated/b.png"],
+                    "prompt": "keep the subject consistent",
+                    "duration_seconds": 10,
+                    "kling_mode": "pro",
+                    "model_name": "kling-v1-6",
+                },
+                "step": 0,
+            }
+        )
+
+        with (
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.prompt_enhancement_tool",
+                new=AsyncMock(return_value={"status": "success", "message": "enhanced kling prompt"}),
+            ),
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_video_generation_output0.mp4",
+            ),
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.kling_video_generation_tool",
+                new=AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "message": b"video-data",
+                        "provider": "kling",
+                        "model_name": "kling-v1-6",
+                    }
+                ),
+            ) as kling_mock,
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.seedance_video_generation_tool",
+                new=AsyncMock(),
+            ) as seedance_mock,
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.veo_video_generation_tool",
+                new=AsyncMock(),
+            ) as veo_mock,
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        kling_mock.assert_awaited_once_with(
+            "enhanced kling prompt",
+            input_paths=["generated/a.png", "generated/b.png"],
+            mode="multi_reference",
+            aspect_ratio="16:9",
+            duration_seconds=10,
+            negative_prompt="",
+            model_name="kling-v1-6",
+            kling_mode="pro",
+        )
+        seedance_mock.assert_not_called()
+        veo_mock.assert_not_called()
+
     async def test_video_generation_reports_output_artifact_name_in_message(self) -> None:
         agent = VideoGenerationAgent(name="VideoGenerationAgent")
         ctx = _build_ctx({"current_parameters": {"prompt": "draw a cat video"}, "step": 0})
@@ -199,6 +264,12 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
 
 
 class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        video_tools._resolved_kling_api_base = None
+
+    def tearDown(self) -> None:
+        video_tools._resolved_kling_api_base = None
+
     async def test_seedance_tool_uses_top_level_ratio_argument(self) -> None:
         create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))
         get_mock = MagicMock(return_value=SimpleNamespace(status="failed", error="mock error"))
@@ -411,6 +482,257 @@ class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertIn("mode=video_extension only supports resolution=720p", result["message"])
+
+    async def test_kling_tool_supports_multi_reference_images(self) -> None:
+        submit_mock = MagicMock(return_value={"code": 0, "data": {"task_id": "task-1"}})
+        poll_mock = MagicMock(
+            return_value={
+                "code": 0,
+                "data": {
+                    "task_status": "succeed",
+                    "task_result": {"videos": [{"url": "https://example.com/video.mp4"}]},
+                },
+            }
+        )
+        download_mock = MagicMock(return_value=b"video-data")
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "KLING_ACCESS_KEY": "test-access",
+                    "KLING_SECRET_KEY": "test-secret",
+                    "KLING_API_BASE": "https://api-beijing.klingai.com",
+                },
+                clear=False,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._submit_kling_task_sync",
+                submit_mock,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._get_kling_task_sync",
+                poll_mock,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._download_binary_sync",
+                download_mock,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._validate_kling_input_images",
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._read_workspace_file_as_base64",
+                side_effect=["base64-a", "base64-b"],
+            ),
+        ):
+            result = await video_tools.kling_video_generation_tool(
+                "keep the subject consistent",
+                input_paths=["generated/a.png", "generated/b.png"],
+                mode="multi_reference",
+                duration_seconds=10,
+                kling_mode="pro",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["model_name"], "kling-v1-6")
+        submit_kwargs = submit_mock.call_args.kwargs
+        self.assertEqual(submit_kwargs["endpoint"], "/v1/videos/multi-image2video")
+        self.assertEqual(
+            submit_kwargs["payload"]["image_list"],
+            [{"image": "base64-a"}, {"image": "base64-b"}],
+        )
+        self.assertEqual(submit_kwargs["payload"]["mode"], "pro")
+        self.assertEqual(submit_kwargs["payload"]["duration"], "10")
+        poll_mock.assert_called_once_with(
+            api_base="https://api-beijing.klingai.com",
+            endpoint="/v1/videos/multi-image2video/task-1",
+            headers=submit_kwargs["headers"],
+        )
+        download_mock.assert_called_once_with("https://example.com/video.mp4")
+
+    async def test_kling_tool_uses_v3_default_for_basic_prompt_route(self) -> None:
+        submit_mock = MagicMock(return_value={"code": 0, "data": {"task_id": "task-1"}})
+        poll_mock = MagicMock(
+            return_value={
+                "code": 0,
+                "data": {
+                    "task_status": "succeed",
+                    "task_result": {"videos": [{"url": "https://example.com/video.mp4"}]},
+                },
+            }
+        )
+        download_mock = MagicMock(return_value=b"video-data")
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "KLING_ACCESS_KEY": "test-access",
+                    "KLING_SECRET_KEY": "test-secret",
+                    "KLING_API_BASE": "https://api-beijing.klingai.com",
+                },
+                clear=False,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._submit_kling_task_sync",
+                submit_mock,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._get_kling_task_sync",
+                poll_mock,
+            ),
+            patch(
+                "src.agents.experts.video_generation.tool._download_binary_sync",
+                download_mock,
+            ),
+        ):
+            result = await video_tools.kling_video_generation_tool("draw a cat video")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["model_name"], "kling-v3")
+        self.assertEqual(
+            submit_mock.call_args.kwargs["payload"]["model_name"],
+            "kling-v3",
+        )
+        self.assertEqual(
+            submit_mock.call_args.kwargs["endpoint"],
+            "/v1/videos/text2video",
+        )
+
+    def test_kling_http_session_disables_environment_trust(self) -> None:
+        session = video_tools._build_kling_http_session()
+        try:
+            self.assertFalse(session.trust_env)
+        finally:
+            session.close()
+
+    def test_kling_api_base_probe_prefers_first_working_candidate_and_caches_it(self) -> None:
+        with patch(
+            "src.agents.experts.video_generation.tool._probe_kling_api_base_sync",
+            side_effect=[False, True],
+        ) as probe_mock:
+            resolved_base = video_tools._resolve_kling_api_base("test-access", "test-secret")
+            resolved_base_again = video_tools._resolve_kling_api_base("test-access", "test-secret")
+
+        self.assertEqual(resolved_base, "https://api-singapore.klingai.com")
+        self.assertEqual(resolved_base_again, "https://api-singapore.klingai.com")
+        self.assertEqual(probe_mock.call_count, 2)
+
+    def test_kling_api_base_probe_skips_when_user_configures_explicit_base(self) -> None:
+        with patch(
+            "src.agents.experts.video_generation.tool._probe_kling_api_base_sync",
+        ) as probe_mock:
+            resolved_base = video_tools._resolve_kling_api_base(
+                "test-access",
+                "test-secret",
+                "https://api-beijing.klingai.com/",
+            )
+
+        self.assertEqual(resolved_base, "https://api-beijing.klingai.com")
+        probe_mock.assert_not_called()
+
+    def test_kling_task_query_retries_transient_ssl_error(self) -> None:
+        session = MagicMock()
+        response = MagicMock()
+        response.json.return_value = {"code": 0, "data": {"task_status": "processing"}}
+        session.get.side_effect = [
+            requests.exceptions.SSLError("unexpected eof"),
+            response,
+        ]
+        session.__enter__.return_value = session
+        session.__exit__.return_value = None
+
+        with (
+            patch(
+                "src.agents.experts.video_generation.tool._build_kling_http_session",
+                return_value=session,
+            ),
+            patch("src.agents.experts.video_generation.tool.time.sleep"),
+        ):
+            payload = video_tools._get_kling_task_sync(
+                api_base="https://api-beijing.klingai.com",
+                endpoint="/v1/videos/image2video/task-1",
+                headers={"Authorization": "Bearer token"},
+            )
+
+        self.assertEqual(payload["data"]["task_status"], "processing")
+        self.assertEqual(session.get.call_count, 2)
+
+    def test_kling_binary_download_retries_transient_ssl_error(self) -> None:
+        session = MagicMock()
+        response = MagicMock()
+        response.content = b"video-data"
+        session.get.side_effect = [
+            requests.exceptions.SSLError("unexpected eof"),
+            response,
+        ]
+        session.__enter__.return_value = session
+        session.__exit__.return_value = None
+
+        with (
+            patch(
+                "src.agents.experts.video_generation.tool._build_kling_http_session",
+                return_value=session,
+            ),
+            patch("src.agents.experts.video_generation.tool.time.sleep"),
+        ):
+            payload = video_tools._download_binary_sync("https://example.com/video.mp4")
+
+        self.assertEqual(payload, b"video-data")
+        self.assertEqual(session.get.call_count, 2)
+
+    def test_kling_image_validation_rejects_small_inputs_without_auto_resize(self) -> None:
+        relative_path = "generated/unit_test/kling_small.png"
+        image_path = workspace_root() / relative_path
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (200, 200), color="white").save(image_path)
+
+        try:
+            with self.assertRaisesRegex(ValueError, "does not auto-resize"):
+                video_tools._validate_kling_input_images(
+                    mode="first_frame",
+                    input_paths=[relative_path],
+                )
+        finally:
+            image_path.unlink(missing_ok=True)
+
+    async def test_kling_multi_reference_rejects_unsupported_model_name(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "KLING_ACCESS_KEY": "test-access",
+                "KLING_SECRET_KEY": "test-secret",
+            },
+            clear=False,
+        ):
+            result = await video_tools.kling_video_generation_tool(
+                "keep the subject consistent",
+                input_paths=["generated/a.png", "generated/b.png"],
+                mode="multi_reference",
+                model_name="kling-v2-6",
+            )
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("supports only model_name=kling-v1-6", result["message"])
+
+    async def test_kling_tool_rejects_unsupported_video_extension_mode(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "KLING_ACCESS_KEY": "test-access",
+                "KLING_SECRET_KEY": "test-secret",
+            },
+            clear=False,
+        ):
+            result = await video_tools.kling_video_generation_tool(
+                "continue the motion naturally",
+                input_paths=["generated/session/source.mp4"],
+                mode="video_extension",
+            )
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("supports only mode=prompt", result["message"])
 
 
 if __name__ == "__main__":

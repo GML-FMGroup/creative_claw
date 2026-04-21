@@ -10,6 +10,8 @@ This document lists the concrete model names currently used in the codebase, the
 | `veo-3.1-generate-preview` | `VideoGenerationAgent` (`veo`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `doubao-seedream-5-0-260128` | `ImageGenerationAgent` (`seedream`), `ImageEditingAgent` (`seedream`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `doubao-seedance-1-0-pro-250528` | `VideoGenerationAgent` (`seedance`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `kling-v3` | `VideoGenerationAgent` (`kling`, default basic-route model) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
+| `kling-v1-6` | `VideoGenerationAgent` (`kling`, `multi_reference`) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | `DINO-XSeek-1.0` | `ImageGroundingAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
 | `DINO-X-1.0` | `ImageSegmentationAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
 
@@ -49,6 +51,7 @@ Some capabilities use service credentials rather than the general text-LLM provi
 | Image generation (`seedream`) | `ImageGenerationAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | Image editing (`seedream`) | `ImageEditingAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | Video generation (`seedance`) | `VideoGenerationAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| Video generation (`kling`) | `VideoGenerationAgent` | Kling API access key and secret key | `services.kling_access_key`, `services.kling_secret_key`, optional `services.kling_api_base` | `KLING_ACCESS_KEY`, `KLING_SECRET_KEY`, optional `KLING_API_BASE` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | Search image mode | `SearchAgent` | Serper key | `services.serper_api_key` | `SERPER_API_KEY` | [Serper API Key](https://serper.dev/api-key) |
 | Built-in web search | `web_search` tool | Brave Search key | `services.brave_api_key` | `BRAVE_API_KEY` | [Brave Search API](https://brave.com/search/api/) |
 | 3D generation (`hy3d`) | `ThreeDGenerationAgent` | Tencent Cloud credentials | `services.tencentcloud_secret_id`, `services.tencentcloud_secret_key`, optional `services.tencentcloud_session_token`, optional `services.tencentcloud_region` | `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION` | [Tencent Cloud API Key](https://console.cloud.tencent.com/cam/capi) |
@@ -58,6 +61,7 @@ Some capabilities use service credentials rather than the general text-LLM provi
 - The table lists concrete model names that are explicitly used by the current code.
 - The text-LLM layer supports more providers than the single default example `gpt-5.4`, so this document also includes provider-level credential mapping for runtime configuration.
 - Some experts select providers dynamically. In those cases, the table records the model names that are actually invoked by the provider-specific code paths.
+- Kling now defaults to `kling-v3` for prompt and image-guided routes in the built-in provider path, while `multi_reference` follows the official `kling-v1-6` schema. When `KLING_API_BASE` is not configured explicitly, the provider probes the official Beijing and Singapore gateways and caches the first working base. Kling input images are validated against the documented file constraints, but the expert does not auto-resize or auto-crop them.
 - Gemini runtime accepts `GOOGLE_API_KEY` as the primary fallback environment variable and also accepts `GEMINI_API_KEY` as a compatibility alias.
 - DeepDataSpace runtime primarily uses `DDS_API_KEY`, and some code paths also accept compatibility aliases such as `DDS_TOKEN` and `DINO_XSEEK_TOKEN`.
 - For providers marked as "no dedicated fallback env var", the runtime config field still works, but `apply_env_fallbacks()` does not currently auto-import that provider from a provider-specific environment variable.

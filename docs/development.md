@@ -340,6 +340,8 @@ First-round text LLM providers:
 Feature-specific extra service keys:
 
 - `services.ark_api_key`: Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance`)
+- `services.kling_access_key` and `services.kling_secret_key`: `VideoGenerationAgent` (`kling`)
+- `services.kling_api_base`: optional Kling API base override; when omitted, the provider probes the official Beijing and Singapore gateways and caches the first working base
 - `services.dds_api_key`: `ImageGroundingAgent` and `ImageSegmentationAgent`
 - `services.serper_api_key`: `SearchAgent` image mode
 - `services.brave_api_key`: built-in `web_search` tool
@@ -396,16 +398,18 @@ mmx auth status --output json --non-interactive
 
 ## Video Generation Expert
 
-`VideoGenerationAgent` supports two providers:
+`VideoGenerationAgent` supports three providers:
 
 - `seedance`: default provider, requires `services.ark_api_key`
 - `veo`: Google VEO provider, requires `providers.gemini.api_key`
+- `kling`: Kling official video API, requires `services.kling_access_key` and `services.kling_secret_key`
 
 Supported modes:
 
 - `prompt`
 - `first_frame`
 - `first_frame_and_last_frame`
+- `multi_reference` (`kling` only)
 - `reference_asset`
 - `reference_style`
 - `video_extension` (`veo` only)
@@ -417,6 +421,19 @@ Important `veo` notes:
 - optional `veo` controls include `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, and `enhance_prompt`
 - `video_extension` accepts one workspace video path through `input_path` or `input_paths`
 
+Important `kling` notes:
+
+- current CreativeClaw integration supports only `prompt`, `first_frame`, `first_frame_and_last_frame`, and `multi_reference`
+- prompt / image-guided Kling routes now default to `kling-v3`
+- `multi_reference` requires 2-4 workspace images through `input_paths`
+- `multi_reference` currently follows the official `create-multi-image-to-video` schema, which supports `model_name=kling-v1-6`
+- official Kling multi-reference images must be `.jpg/.jpeg/.png`, each at most 10MB, at least 300px, and within aspect ratio `1:2.5 ~ 2.5:1`
+- Kling image-guided paths validate the documented input constraints but do not auto-resize or auto-crop images; let the main agent decide whether to preprocess with local image tools
+- Kling does not support `reference_asset`, `reference_style`, or `video_extension` in the current integration
+- optional Kling controls include `model_name`, `kling_mode` (`std|pro`), `negative_prompt`, `duration_seconds`, and `aspect_ratio`
+- Kling image-guided paths send workspace images as raw base64 strings to the official video API
+- when `KLING_API_BASE` is not set explicitly, the provider probes the official Beijing and Singapore gateways and caches the first working base
+
 Example `invoke_agent` payloads:
 
 ```json
@@ -425,6 +442,10 @@ Example `invoke_agent` payloads:
 
 ```json
 {"input_path":"inbox/cli/session_1/cat.png","prompt":"Animate this cat blinking and turning toward the camera","provider":"veo","mode":"first_frame","aspect_ratio":"9:16","resolution":"720p"}
+```
+
+```json
+{"input_paths":["inbox/cli/session_1/look_a.png","inbox/cli/session_1/look_b.png"],"prompt":"Keep the same subject and motion language across both references","provider":"kling","mode":"multi_reference","duration_seconds":10,"kling_mode":"pro","model_name":"kling-v1-6"}
 ```
 
 ```json

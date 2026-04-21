@@ -200,26 +200,49 @@ _EXPERT_SPECS = {
             ),
         ),
         allowed_values={
-            "provider": ("seedance", "veo"),
+            "provider": ("seedance", "veo", "kling"),
             "mode": (
                 "prompt",
                 "first_frame",
                 "first_frame_and_last_frame",
+                "multi_reference",
                 "reference_asset",
                 "reference_style",
                 "video_extension",
             ),
-            "aspect_ratio": ("16:9", "9:16"),
+            "aspect_ratio": ("16:9", "9:16", "1:1"),
             "resolution": ("720p", "1080p", "4k"),
-            "duration_seconds": ("4", "6", "8"),
+            "duration_seconds": (
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                "15",
+            ),
             "person_generation": ("allow_all", "allow_adult"),
+            "kling_mode": ("std", "pro"),
         },
         notes=(
             "Use prompt-only, image-guided, or video-extension generation with optional provider, "
             "mode, aspect_ratio, resolution, duration_seconds, negative_prompt, person_generation, "
-            "seed, and enhance_prompt. "
+            "seed, enhance_prompt, model_name, and kling_mode. "
             "For provider `veo`, mode `video_extension` uses one workspace video from input_path/input_paths. "
-            "Veo 3.1 generates synchronized native audio from prompt cues; do not pass a separate audio file."
+            "Veo 3.1 generates synchronized native audio from prompt cues; do not pass a separate audio file. "
+            "For provider `kling`, use mode `prompt`, `first_frame`, `first_frame_and_last_frame`, "
+            "or `multi_reference`; Kling currently does not support `reference_asset`, `reference_style`, "
+            "or `video_extension` in this integration. For `multi_reference`, the current official API "
+            "schema supports `model_name=kling-v1-6`. The built-in Kling basic routes now default to "
+            "`kling-v3`. When Kling input images do not meet the official size constraints, inspect them "
+            "with `image_info` and decide whether to preprocess with local image tools first; the expert "
+            "does not auto-resize or auto-crop inputs."
         ),
     ),
     "VideoUnderstandingExpert": ExpertSpec(

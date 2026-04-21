@@ -109,6 +109,22 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["resolution"], "720p")
         self.assertEqual(parameters["duration_seconds"], 8)
 
+    def test_normalize_invoke_agent_parameters_accepts_kling_multi_reference(self) -> None:
+        with patch("src.runtime.expert_dispatcher.resolve_workspace_path", return_value=Path.cwd()):
+            parameters = normalize_invoke_agent_parameters(
+                agent_name="VideoGenerationAgent",
+                prompt=(
+                    '{"provider":"kling","mode":"multi_reference","input_paths":["generated/a.png","generated/b.png"],'
+                    '"duration_seconds":5,"kling_mode":"pro"}'
+                ),
+                state={},
+            )
+
+        self.assertEqual(parameters["provider"], "kling")
+        self.assertEqual(parameters["mode"], "multi_reference")
+        self.assertEqual(parameters["duration_seconds"], 5)
+        self.assertEqual(parameters["kling_mode"], "pro")
+
     def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:
         parameters = normalize_invoke_agent_parameters(
             agent_name="3DGeneration",

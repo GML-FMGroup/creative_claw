@@ -55,6 +55,7 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 - Seedance
 - Veo
+- Kling
 
 ### 📦 3D Generation
  - HY 3D
@@ -121,6 +122,9 @@ Notes:
 
 - This is enough to try the default CLI chat flow.
 - Image, video, search, and some provider-specific capabilities only need extra credentials when you actually use them.
+- For `VideoGenerationAgent` with `provider="kling"`, prompt and image-guided routes now default to `kling-v3`, while `mode="multi_reference"` follows the official `kling-v1-6` schema.
+- If `services.kling_api_base` or `KLING_API_BASE` is not set explicitly, the built-in Kling provider probes the official Beijing and Singapore gateways and caches the first working base.
+- Kling image-guided routes validate the documented input constraints but do not auto-resize or auto-crop input images. If preprocessing is needed, do it first with local image tools before calling `VideoGenerationAgent`.
 - `SpeechRecognitionExpert` and the compatibility alias `SpeechTranscriptionExpert` use Volcengine speech services. Besides `VOLCENGINE_APPID` and `VOLCENGINE_ACCESS_TOKEN`, the current backend also needs these resource grants: `volc.bigasr.auc_turbo` for `task=asr`, `vc.async.default` for subtitle generation, and `volc.ata.default` for subtitle timing when `subtitle_text` / `audio_text` is provided. The activation entry is the [Volcengine speech console](https://console.volcengine.com/speech/app). Missing grants usually surface as `requested resource not granted` or `requested grant not found`.
 - Resolution order is: `conf.json` first; if an API key is empty in `conf.json`, runtime falls back to the matching environment variable.
 - The first-round text LLM providers include `openai`, `anthropic`, `gemini`, `openrouter`, `deepseek`, `groq`, `zhipu`, `dashscope`, `vllm`, `ollama`, `moonshot`, `minimax`, `mistral`, `stepfun`, `siliconflow`, `volcengine`, `byteplus`, `qianfan`, `azure_openai`, and `custom`.
@@ -263,6 +267,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
 - [docs/model_and_token_map.md](docs/model_and_token_map.md): model names, mapped experts, and token application links
+- [docs/expert_model_capability_map_zh.md](docs/expert_model_capability_map_zh.md): current expert capability boundaries, including Kling route coverage and constraints
 
 ## 🛠️ TODO
 

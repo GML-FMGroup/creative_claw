@@ -45,6 +45,9 @@ class ServiceConfig(BaseModel):
     """Non-LLM service credentials used by experts and tools."""
 
     ark_api_key: str = ""
+    kling_access_key: str = ""
+    kling_secret_key: str = ""
+    kling_api_base: str = ""
     dds_api_key: str = ""
     serper_api_key: str = ""
     brave_api_key: str = ""

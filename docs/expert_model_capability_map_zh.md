@@ -28,6 +28,7 @@
 | `SearchAgent` | DuckDuckGo 文本搜索接口 | DuckDuckGo Search | 待补 | 待补 | 无或待补 | 待补 |
 | `VideoGenerationAgent` | `doubao-seedance-1-0-pro-250528` | Seedance 1.0 Pro | 待补 | 待补 | `ARK_API_KEY` | 待补 |
 | `VideoGenerationAgent` | `veo-3.1-generate-preview` | Veo 3.1 Generate Preview | 待补 | 待补 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | 待补 |
+| `VideoGenerationAgent` | `kling-v3` | Kling 3（文生/图生默认模型；`multi_reference` 当前走 `kling-v1-6`） | 待补 | 待补 | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | 待补 |
 | `SpeechRecognitionExpert` | `volc.bigasr.auc_turbo` | Volcengine BigASR Flash | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
 | `SpeechRecognitionExpert` | `vc.async.default` | Volcengine Subtitle Generation | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
 | `SpeechRecognitionExpert` | `volc.ata.default` | Volcengine Subtitle Alignment | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
@@ -75,5 +76,9 @@
 ## 3. 当前最需要注意的几个点
 
 - `ImageGenerationAgent`、`ImageEditingAgent`、`VideoGenerationAgent` 现在都应该按“一个 provider 一行”来看，不适合再合并成一个笼统描述。
+- `VideoGenerationAgent` 新增了 `kling` 候选 provider，但当前只开放这四种 mode：`prompt`、`first_frame`、`first_frame_and_last_frame`、`multi_reference`。
+- `kling` 的基础文生/图生默认模型已切到 `kling-v3`；`multi_reference` 仍按官方独立接口走 `kling-v1-6`。
+- `kling` 当前不支持 `reference_asset`、`reference_style`、`video_extension` 这三个集成层 mode，主 agent 路由时要避开。
+- Kling 输入图像如果不满足官方限制，当前 expert 只会报错，不会自动 resize 或裁剪；需要时应先让主 agent 调 `image_info` / `image_resize` 等本地工具。
 - `SpeechRecognitionExpert` 当前不是通用 LLM，而是三条火山语音资源路径：`volc.bigasr.auc_turbo`、`vc.async.default`、`volc.ata.default`。
 - 图片反推 prompt 已统一归入 `ImageUnderstandingAgent` 的 `prompt` 模式，不再单独作为一个 expert 维护。

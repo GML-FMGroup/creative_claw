@@ -48,12 +48,27 @@ class VideoGenerationAgent(BaseAgent):
 
         provider = str(current_parameters.get("provider", "seedance")).strip().lower() or "seedance"
         mode = video_tools.normalize_video_mode(str(current_parameters.get("mode", "prompt")))
-        aspect_ratio = video_tools.normalize_video_aspect_ratio(current_parameters.get("aspect_ratio", "16:9"))
-        resolution = video_tools.normalize_video_resolution(current_parameters.get("resolution", "720p"))
-        duration_seconds = video_tools.normalize_video_duration(
-            current_parameters.get("duration_seconds", 8)
-        )
+        if provider == "kling":
+            aspect_ratio = video_tools.normalize_kling_aspect_ratio(
+                current_parameters.get("aspect_ratio", "16:9")
+            )
+            resolution = ""
+            duration_seconds = video_tools.normalize_kling_duration(
+                current_parameters.get("duration_seconds", 5)
+            )
+        else:
+            aspect_ratio = video_tools.normalize_video_aspect_ratio(
+                current_parameters.get("aspect_ratio", "16:9")
+            )
+            resolution = video_tools.normalize_video_resolution(
+                current_parameters.get("resolution", "720p")
+            )
+            duration_seconds = video_tools.normalize_video_duration(
+                current_parameters.get("duration_seconds", 8)
+            )
         negative_prompt = str(current_parameters.get("negative_prompt", "") or "").strip()
+        kling_model_name = str(current_parameters.get("model_name", "") or "").strip()
+        kling_mode = video_tools.normalize_kling_mode(current_parameters.get("kling_mode", "std"))
 
         if not any(prompt_list) and not input_paths:
             error_text = f"Missing parameters provided to {self.name}, must include prompt or input_path/input_paths."
@@ -119,6 +134,20 @@ class VideoGenerationAgent(BaseAgent):
                     person_generation=person_generation,
                     seed=seed,
                     enhance_prompt=enhance_prompt,
+                )
+                for prompt in normalized_prompts
+            ]
+        elif provider == "kling":
+            generation_tasks = [
+                video_tools.kling_video_generation_tool(
+                    prompt,
+                    input_paths=input_paths,
+                    mode=mode,
+                    aspect_ratio=aspect_ratio,
+                    duration_seconds=duration_seconds,
+                    negative_prompt=negative_prompt,
+                    model_name=kling_model_name,
+                    kling_mode=kling_mode,
                 )
                 for prompt in normalized_prompts
             ]

@@ -102,6 +102,9 @@ def sync_env_from_config(config: CreativeClawConfig) -> None:
         "STEPFUN_API_KEY": config.providers.stepfun.api_key,
         "QIANFAN_API_KEY": config.providers.qianfan.api_key,
         "ARK_API_KEY": config.services.ark_api_key,
+        "KLING_ACCESS_KEY": config.services.kling_access_key,
+        "KLING_SECRET_KEY": config.services.kling_secret_key,
+        "KLING_API_BASE": config.services.kling_api_base,
         "DDS_API_KEY": config.services.dds_api_key,
         "SERPER_API_KEY": config.services.serper_api_key,
         "BRAVE_API_KEY": config.services.brave_api_key,
@@ -146,6 +149,9 @@ def apply_env_fallbacks(config: CreativeClawConfig) -> None:
     }
     service_mappings = {
         "ark_api_key": "ARK_API_KEY",
+        "kling_access_key": "KLING_ACCESS_KEY",
+        "kling_secret_key": "KLING_SECRET_KEY",
+        "kling_api_base": "KLING_API_BASE",
         "dds_api_key": "DDS_API_KEY",
         "serper_api_key": "SERPER_API_KEY",
         "brave_api_key": "BRAVE_API_KEY",

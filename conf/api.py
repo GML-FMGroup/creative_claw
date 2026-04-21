@@ -24,6 +24,9 @@ class APIConfig(BaseModel):
     STEPFUN_API_KEY: str = ""
     QIANFAN_API_KEY: str = ""
     ARK_API_KEY: str = ""
+    KLING_ACCESS_KEY: str = ""
+    KLING_SECRET_KEY: str = ""
+    KLING_API_BASE: str = ""
     DDS_API_KEY: str = ""
     SERPER_API_KEY: str = ""
     BRAVE_API_KEY: str = ""
@@ -53,6 +56,9 @@ def load_api_config() -> APIConfig:
         STEPFUN_API_KEY=config.providers.stepfun.api_key.strip(),
         QIANFAN_API_KEY=config.providers.qianfan.api_key.strip(),
         ARK_API_KEY=config.services.ark_api_key.strip(),
+        KLING_ACCESS_KEY=config.services.kling_access_key.strip(),
+        KLING_SECRET_KEY=config.services.kling_secret_key.strip(),
+        KLING_API_BASE=config.services.kling_api_base.strip(),
         DDS_API_KEY=config.services.dds_api_key.strip(),
         SERPER_API_KEY=config.services.serper_api_key.strip(),
         BRAVE_API_KEY=config.services.brave_api_key.strip(),
