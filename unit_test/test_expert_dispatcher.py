@@ -8,6 +8,7 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
 from google.adk.sessions.state import State
 
+from src.runtime.expert_registry import build_expert_contract_summary
 from src.runtime.expert_dispatcher import (
     dispatch_expert_call,
     normalize_invoke_agent_parameters,
@@ -106,8 +107,8 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["provider"], "seedance")
         self.assertEqual(parameters["mode"], "prompt")
         self.assertEqual(parameters["aspect_ratio"], "16:9")
-        self.assertEqual(parameters["resolution"], "720p")
-        self.assertEqual(parameters["duration_seconds"], 8)
+        self.assertNotIn("resolution", parameters)
+        self.assertNotIn("duration_seconds", parameters)
 
     def test_normalize_invoke_agent_parameters_accepts_kling_multi_reference(self) -> None:
         with patch("src.runtime.expert_dispatcher.resolve_workspace_path", return_value=Path.cwd()):
@@ -124,6 +125,29 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["mode"], "multi_reference")
         self.assertEqual(parameters["duration_seconds"], 5)
         self.assertEqual(parameters["kling_mode"], "pro")
+
+    def test_normalize_invoke_agent_parameters_rejects_invalid_veo_duration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "provider `veo` does not support `duration_seconds=16`"):
+            normalize_invoke_agent_parameters(
+                agent_name="VideoGenerationAgent",
+                prompt='{"prompt":"cats","provider":"veo","duration_seconds":16}',
+                state={},
+            )
+
+    def test_normalize_invoke_agent_parameters_rejects_resolution_for_seedance(self) -> None:
+        with self.assertRaisesRegex(ValueError, "parameter `resolution` is not supported for provider `seedance`"):
+            normalize_invoke_agent_parameters(
+                agent_name="VideoGenerationAgent",
+                prompt='{"prompt":"cats","provider":"seedance","resolution":"720p"}',
+                state={},
+            )
+
+    def test_build_expert_contract_summary_uses_video_capability_notes(self) -> None:
+        summary = build_expert_contract_summary()
+
+        self.assertIn("provider `veo`", summary)
+        self.assertIn("['4', '6', '8']", summary)
+        self.assertIn("provider `seedance`", summary)
 
     def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:
         parameters = normalize_invoke_agent_parameters(

@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+from src.agents.experts.video_generation.capabilities import (
+    VIDEO_GENERATION_KLING_MODE_VALUES,
+    VIDEO_GENERATION_PERSON_GENERATION_VALUES,
+    VIDEO_GENERATION_PROVIDERS,
+    build_video_generation_contract_notes,
+    get_video_generation_default_parameters,
+    validate_video_generation_parameters,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +37,8 @@ class ExpertSpec:
     allowed_values: dict[str, tuple[str, ...]] = field(default_factory=dict)
     mirrored_output_keys: tuple[str, ...] = ()
     notes: str = ""
+    custom_validator: Callable[[dict[str, Any]], None] | None = None
+    notes_builder: Callable[[], str] | None = None
 
 
 _DEFAULT_SPEC = ExpertSpec(name="default")
@@ -185,13 +197,7 @@ _EXPERT_SPECS = {
     "VideoGenerationAgent": ExpertSpec(
         name="VideoGenerationAgent",
         default_prompt_key="prompt",
-        default_parameters={
-            "provider": "seedance",
-            "mode": "prompt",
-            "aspect_ratio": "16:9",
-            "resolution": "720p",
-            "duration_seconds": 8,
-        },
+        default_parameters=get_video_generation_default_parameters(),
         required_parameters=("prompt or input_path/input_paths",),
         required_parameter_groups=(
             RequiredParameterGroup(
@@ -200,50 +206,12 @@ _EXPERT_SPECS = {
             ),
         ),
         allowed_values={
-            "provider": ("seedance", "veo", "kling"),
-            "mode": (
-                "prompt",
-                "first_frame",
-                "first_frame_and_last_frame",
-                "multi_reference",
-                "reference_asset",
-                "reference_style",
-                "video_extension",
-            ),
-            "aspect_ratio": ("16:9", "9:16", "1:1"),
-            "resolution": ("720p", "1080p", "4k"),
-            "duration_seconds": (
-                "3",
-                "4",
-                "5",
-                "6",
-                "7",
-                "8",
-                "9",
-                "10",
-                "11",
-                "12",
-                "13",
-                "14",
-                "15",
-            ),
-            "person_generation": ("allow_all", "allow_adult"),
-            "kling_mode": ("std", "pro"),
+            "provider": VIDEO_GENERATION_PROVIDERS,
+            "person_generation": VIDEO_GENERATION_PERSON_GENERATION_VALUES,
+            "kling_mode": VIDEO_GENERATION_KLING_MODE_VALUES,
         },
-        notes=(
-            "Use prompt-only, image-guided, or video-extension generation with optional provider, "
-            "mode, aspect_ratio, resolution, duration_seconds, negative_prompt, person_generation, "
-            "seed, enhance_prompt, model_name, and kling_mode. "
-            "For provider `veo`, mode `video_extension` uses one workspace video from input_path/input_paths. "
-            "Veo 3.1 generates synchronized native audio from prompt cues; do not pass a separate audio file. "
-            "For provider `kling`, use mode `prompt`, `first_frame`, `first_frame_and_last_frame`, "
-            "or `multi_reference`; Kling currently does not support `reference_asset`, `reference_style`, "
-            "or `video_extension` in this integration. For `multi_reference`, the current official API "
-            "schema supports `model_name=kling-v1-6`. The built-in Kling basic routes now default to "
-            "`kling-v3`. When Kling input images do not meet the official size constraints, inspect them "
-            "with `image_info` and decide whether to preprocess with local image tools first; the expert "
-            "does not auto-resize or auto-crop inputs."
-        ),
+        custom_validator=validate_video_generation_parameters,
+        notes_builder=build_video_generation_contract_notes,
     ),
     "VideoUnderstandingExpert": ExpertSpec(
         name="VideoUnderstandingExpert",
@@ -483,6 +451,9 @@ def validate_expert_parameters(agent_name: str, parameters: dict[str, Any]) -> d
                 f"Allowed values: {list(allowed)}."
             )
 
+    if spec.custom_validator is not None:
+        spec.custom_validator(parameters)
+
     return parameters
 
 
@@ -527,7 +498,8 @@ def build_expert_contract_summary() -> str:
             if spec.default_parameters
             else "none"
         )
+        notes = spec.notes_builder() if spec.notes_builder is not None else spec.notes
         lines.append(
-            f"- {spec.name}: required={required}; fallback prompt key={spec.default_prompt_key}; plain_prompt={'yes' if spec.supports_plain_prompt else 'no'}; defaults={defaults}. {spec.notes}"
+            f"- {spec.name}: required={required}; fallback prompt key={spec.default_prompt_key}; plain_prompt={'yes' if spec.supports_plain_prompt else 'no'}; defaults={defaults}. {notes}"
         )
     return "\n".join(lines)

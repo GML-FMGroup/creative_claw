@@ -24,28 +24,21 @@ from google.genai import types
 from google.genai.types import Content, Part
 from PIL import Image, UnidentifiedImageError
 
+from src.agents.experts.video_generation.capabilities import (
+    VIDEO_GENERATION_KLING_MODE_VALUES,
+    VIDEO_GENERATION_PERSON_GENERATION_VALUES,
+    get_default_video_duration,
+    get_default_video_resolution,
+    normalize_provider_video_aspect_ratio,
+    normalize_provider_video_duration,
+    normalize_provider_video_mode,
+    normalize_provider_video_resolution,
+)
 from conf.api import API_CONFIG
 from conf.llm import build_llm
 from src.logger import logger
 from src.runtime.workspace import resolve_workspace_path
 
-_SUPPORTED_MODES = {
-    "prompt",
-    "first_frame",
-    "first_frame_and_last_frame",
-    "multi_reference",
-    "reference_asset",
-    "reference_style",
-    "video_extension",
-}
-_SUPPORTED_ASPECT_RATIOS = {"16:9", "9:16"}
-_SUPPORTED_RESOLUTIONS = {"720p", "1080p", "4k"}
-_SUPPORTED_VEO_DURATIONS = {4, 6, 8}
-_SUPPORTED_PERSON_GENERATION = {"allow_all", "allow_adult"}
-_SUPPORTED_KLING_MODES = {"std", "pro"}
-_SUPPORTED_KLING_ASPECT_RATIOS = {"16:9", "9:16", "1:1"}
-_SUPPORTED_KLING_DURATIONS = set(range(3, 16))
-_SUPPORTED_KLING_MULTI_REFERENCE_DURATIONS = {5, 10}
 _SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
 _VEO_MODEL_NAME = "veo-3.1-generate-preview"
 _KLING_MODEL_NAME = "kling-v3"
@@ -84,59 +77,42 @@ class VideoGenerationResult:
 
 def normalize_video_mode(raw_value: str) -> str:
     """Return one supported video generation mode."""
-    value = str(raw_value or "").strip().lower()
-    return value if value in _SUPPORTED_MODES else "prompt"
+    return normalize_provider_video_mode("veo", raw_value)
 
 
 def normalize_video_aspect_ratio(raw_value: str) -> str:
     """Return one supported aspect ratio for video generation."""
-    value = str(raw_value or "").strip()
-    return value if value in _SUPPORTED_ASPECT_RATIOS else "16:9"
+    return normalize_provider_video_aspect_ratio("veo", raw_value)
 
 
 def normalize_video_resolution(raw_value: str) -> str:
     """Return one supported output resolution for VEO generation."""
-    value = str(raw_value or "").strip().lower()
-    return value if value in _SUPPORTED_RESOLUTIONS else "720p"
+    return normalize_provider_video_resolution("veo", raw_value)
 
 
 def normalize_video_duration(raw_value: Any) -> int:
     """Return one supported Veo duration in seconds."""
-    if raw_value is None or str(raw_value).strip() == "":
-        return 8
-    try:
-        value = int(str(raw_value).strip())
-    except (TypeError, ValueError):
-        return 8
-    return value if value in _SUPPORTED_VEO_DURATIONS else 8
+    return int(normalize_provider_video_duration("veo", raw_value) or get_default_video_duration("veo") or 8)
 
 
 def normalize_kling_mode(raw_value: Any) -> str:
     """Return one supported Kling quality mode."""
     value = str(raw_value or "").strip().lower()
-    return value if value in _SUPPORTED_KLING_MODES else "std"
+    return value if value in VIDEO_GENERATION_KLING_MODE_VALUES else "std"
 
 
 def normalize_kling_aspect_ratio(raw_value: Any) -> str:
     """Return one supported aspect ratio for Kling video generation."""
-    value = str(raw_value or "").strip()
-    return value if value in _SUPPORTED_KLING_ASPECT_RATIOS else "16:9"
+    return normalize_provider_video_aspect_ratio("kling", raw_value)
 
 
 def normalize_kling_duration(raw_value: Any, *, mode: str = "prompt") -> int:
     """Return one supported Kling duration in seconds."""
-    if raw_value is None or str(raw_value).strip() == "":
-        return 5
-    try:
-        value = int(str(raw_value).strip())
-    except (TypeError, ValueError):
-        return 5
-    supported_values = (
-        _SUPPORTED_KLING_MULTI_REFERENCE_DURATIONS
-        if normalize_video_mode(mode) == "multi_reference"
-        else _SUPPORTED_KLING_DURATIONS
+    return int(
+        normalize_provider_video_duration("kling", raw_value, mode=mode)
+        or get_default_video_duration("kling")
+        or 5
     )
-    return value if value in supported_values else 5
 
 
 def normalize_optional_boolean(raw_value: Any, *, parameter_name: str) -> bool | None:
@@ -175,10 +151,10 @@ def normalize_person_generation(raw_value: Any) -> str | None:
     value = str(raw_value).strip().lower()
     if not value:
         return None
-    if value not in _SUPPORTED_PERSON_GENERATION:
+    if value not in VIDEO_GENERATION_PERSON_GENERATION_VALUES:
         raise ValueError(
             "person_generation must be one of: "
-            f"{sorted(_SUPPORTED_PERSON_GENERATION)}."
+            f"{sorted(VIDEO_GENERATION_PERSON_GENERATION_VALUES)}."
         )
     return value
 
@@ -693,9 +669,9 @@ async def seedance_video_generation_tool(
             "model_name": _SEEDANCE_MODEL_NAME,
         }
 
-    current_mode = normalize_video_mode(mode)
+    current_mode = str(mode or "").strip().lower() or "prompt"
     current_paths = input_paths or []
-    current_ratio = normalize_video_aspect_ratio(aspect_ratio)
+    current_ratio = normalize_provider_video_aspect_ratio("seedance", aspect_ratio)
     try:
         _validate_seedance_constraints(mode=current_mode)
         _validate_mode_input_paths(current_mode, current_paths)
@@ -818,11 +794,22 @@ async def veo_video_generation_tool(
             "model_name": _VEO_MODEL_NAME,
         }
 
-    current_mode = normalize_video_mode(mode)
+    current_mode = str(mode or "").strip().lower() or "prompt"
     current_paths = input_paths or []
-    current_ratio = normalize_video_aspect_ratio(aspect_ratio)
-    current_resolution = normalize_video_resolution(resolution)
-    current_duration = normalize_video_duration(duration_seconds)
+    current_ratio = normalize_provider_video_aspect_ratio("veo", aspect_ratio)
+    current_resolution = normalize_provider_video_resolution(
+        "veo",
+        resolution or get_default_video_resolution("veo"),
+    )
+    current_duration = int(
+        normalize_provider_video_duration(
+            "veo",
+            duration_seconds,
+            mode=current_mode,
+        )
+        or get_default_video_duration("veo")
+        or 8
+    )
     current_negative_prompt = str(negative_prompt or "").strip()
 
     try:
@@ -953,10 +940,18 @@ async def kling_video_generation_tool(
             "model_name": model_name or _KLING_MODEL_NAME,
         }
 
-    current_mode = normalize_video_mode(mode)
+    current_mode = str(mode or "").strip().lower() or "prompt"
     current_paths = input_paths or []
-    current_ratio = normalize_kling_aspect_ratio(aspect_ratio)
-    current_duration = normalize_kling_duration(duration_seconds, mode=current_mode)
+    current_ratio = normalize_provider_video_aspect_ratio("kling", aspect_ratio)
+    current_duration = int(
+        normalize_provider_video_duration(
+            "kling",
+            duration_seconds,
+            mode=current_mode,
+        )
+        or get_default_video_duration("kling")
+        or 5
+    )
     current_negative_prompt = str(negative_prompt or "").strip()
     current_kling_mode = normalize_kling_mode(kling_mode)
     current_model_name = (

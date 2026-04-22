@@ -11,6 +11,15 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai.types import Content, Part
 
+from src.agents.experts.video_generation.capabilities import (
+    get_default_video_duration,
+    get_default_video_resolution,
+    normalize_provider_video_aspect_ratio,
+    normalize_provider_video_duration,
+    normalize_provider_video_mode,
+    normalize_provider_video_resolution,
+    normalize_video_provider,
+)
 from src.agents.experts.video_generation import tool as video_tools
 from src.logger import logger
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
@@ -46,25 +55,40 @@ class VideoGenerationAgent(BaseAgent):
             input_paths = [input_paths]
         input_paths = [str(path).strip() for path in input_paths if str(path).strip()]
 
-        provider = str(current_parameters.get("provider", "seedance")).strip().lower() or "seedance"
-        mode = video_tools.normalize_video_mode(str(current_parameters.get("mode", "prompt")))
+        provider = normalize_video_provider(current_parameters.get("provider"))
+        mode = normalize_provider_video_mode(provider, current_parameters.get("mode", "prompt"))
         if provider == "kling":
-            aspect_ratio = video_tools.normalize_kling_aspect_ratio(
-                current_parameters.get("aspect_ratio", "16:9")
+            aspect_ratio = normalize_provider_video_aspect_ratio(
+                provider,
+                current_parameters.get("aspect_ratio", "16:9"),
             )
             resolution = ""
-            duration_seconds = video_tools.normalize_kling_duration(
-                current_parameters.get("duration_seconds", 5)
+            duration_seconds = int(
+                normalize_provider_video_duration(
+                    provider,
+                    current_parameters.get("duration_seconds", get_default_video_duration(provider) or 5),
+                    mode=mode,
+                )
+                or get_default_video_duration(provider)
+                or 5
             )
         else:
-            aspect_ratio = video_tools.normalize_video_aspect_ratio(
-                current_parameters.get("aspect_ratio", "16:9")
+            aspect_ratio = normalize_provider_video_aspect_ratio(
+                provider,
+                current_parameters.get("aspect_ratio", "16:9"),
             )
-            resolution = video_tools.normalize_video_resolution(
-                current_parameters.get("resolution", "720p")
+            resolution = normalize_provider_video_resolution(
+                provider,
+                current_parameters.get("resolution", get_default_video_resolution(provider)),
             )
-            duration_seconds = video_tools.normalize_video_duration(
-                current_parameters.get("duration_seconds", 8)
+            duration_seconds = int(
+                normalize_provider_video_duration(
+                    provider,
+                    current_parameters.get("duration_seconds", get_default_video_duration(provider) or 8),
+                    mode=mode,
+                )
+                or get_default_video_duration(provider)
+                or 8
             )
         negative_prompt = str(current_parameters.get("negative_prompt", "") or "").strip()
         kling_model_name = str(current_parameters.get("model_name", "") or "").strip()
