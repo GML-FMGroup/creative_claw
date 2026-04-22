@@ -158,6 +158,9 @@ async def orchestrator_before_model_callback(
     step = state.get("step", 0)
     expert_step = state.get("expert_step", 0)
     workflow_status = state.get("workflow_status", "running")
+    delivery_channel = str(state.get("channel", "")).strip()
+    delivery_chat_id = str(state.get("chat_id", "")).strip()
+    delivery_sender_id = str(state.get("sender_id", "")).strip()
     uploaded = list(state.get("uploaded") or state.get("input_files") or state.get("input_artifacts") or [])
     uploaded_history = list(state.get("uploaded_history") or [])
     generated = list(state.get("generated") or [])
@@ -170,6 +173,14 @@ async def orchestrator_before_model_callback(
         f"# Expert calls: {expert_step}",
         f"# User task:\n{state.get('user_prompt', '')}",
     ]
+
+    if delivery_channel:
+        delivery_parts = [f"channel={delivery_channel}"]
+        if delivery_chat_id:
+            delivery_parts.append(f"chat_id={delivery_chat_id}")
+        if delivery_sender_id:
+            delivery_parts.append(f"sender_id={delivery_sender_id}")
+        summary_lines.append(f"# Delivery context: {'; '.join(delivery_parts)}")
 
     if uploaded:
         summary_lines.append("# Uploaded files in current turn:")
@@ -447,6 +458,8 @@ Rules:
 - Keep the language of any user-facing summary or reply aligned with the user's language.
 - If the user primarily writes in Chinese, reply in Chinese. If the user primarily writes in English, reply in English.
 - If the user mixes languages, follow the primary language of the user's latest message.
+- Use the current delivery channel context when it helps adapt formatting or tone for the reply.
+- Do not expose raw routing identifiers such as `chat_id` or `sender_id` unless the user explicitly asks for them.
 
 Creative workflow routing hints:
 - If the user has a topic, campaign brief, or rough idea but does not yet have scenes, hook, or storyboard structure, prefer reading `creative-brief-to-storyboard` before jumping into generation.

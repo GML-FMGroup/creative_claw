@@ -432,6 +432,9 @@ class CreativeClawRuntime:
         state_delta["app_name"] = SYS_CONFIG.app_name
         state_delta["uid"] = user_id
         state_delta["sid"] = session_id
+        state_delta["channel"] = inbound.channel
+        state_delta["chat_id"] = inbound.chat_id
+        state_delta["sender_id"] = inbound.sender_id or user_id
         state_delta["user_prompt"] = inbound.text
         state_delta["step"] = current_session.state.get("step", 0)
         state_delta["expert_step"] = current_session.state.get("expert_step", 0)

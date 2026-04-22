@@ -79,6 +79,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertNotIn("set_final_files(paths=[...])", instruction)
         self.assertIn("aligned with the user's language", instruction)
         self.assertIn("If the user mixes languages", instruction)
+        self.assertIn("delivery channel context", instruction)
+        self.assertIn("Do not expose raw routing identifiers", instruction)
         self.assertIn("Expert parameter contracts", instruction)
         self.assertIn("SearchAgent: required=query, mode", instruction)
         self.assertIn("plain_prompt=yes", instruction)
@@ -346,6 +348,9 @@ class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
                 "workflow_status": "running",
                 "step": 2,
                 "user_prompt": "Flip this image upside down for me.",
+                "channel": "cli",
+                "chat_id": "terminal",
+                "sender_id": "cli-user",
                 "input_files": [],
                 "summary_history": ["Call `ImageGenerationAgent` to generate an image."],
                 "message_history": [
@@ -375,6 +380,7 @@ class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("step1_generation_output0.png", prompt_text)
         self.assertIn("Most recent available output files", prompt_text)
+        self.assertIn("Delivery context: channel=cli; chat_id=terminal; sender_id=cli-user", prompt_text)
         self.assertIn("Final response contract", prompt_text)
         self.assertIn("reply_text", prompt_text)
         self.assertIn("final_file_paths", prompt_text)
