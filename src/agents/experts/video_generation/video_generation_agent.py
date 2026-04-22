@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 from typing_extensions import override
 
 from google.adk.agents import BaseAgent
@@ -18,11 +18,40 @@ from src.agents.experts.video_generation.capabilities import (
     normalize_provider_video_duration,
     normalize_provider_video_mode,
     normalize_provider_video_resolution,
+    normalize_video_prompt_rewrite,
     normalize_video_provider,
 )
 from src.agents.experts.video_generation import tool as video_tools
 from src.logger import logger
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
+
+
+async def _prepare_prompts(
+    ctx: InvocationContext,
+    prompt_list: list[str],
+    *,
+    prompt_rewrite: str,
+) -> list[str]:
+    """Return prompts after applying the agent-side rewrite policy."""
+    if prompt_rewrite == "off":
+        return prompt_list
+
+    enhanced_prompt_results = await asyncio.gather(
+        *[
+            video_tools.prompt_enhancement_tool(ctx, prompt)
+            if prompt
+            else asyncio.sleep(0, result={"status": "success", "message": ""})
+            for prompt in prompt_list
+        ]
+    )
+    normalized_prompts: list[str] = []
+    for original_prompt, result in zip(prompt_list, enhanced_prompt_results):
+        if result["status"] == "success":
+            normalized_prompts.append(str(result["message"]).strip())
+        else:
+            logger.warning("VideoGenerationAgent: prompt enhancement failed, using original prompt")
+            normalized_prompts.append(original_prompt)
+    return normalized_prompts
 
 
 class VideoGenerationAgent(BaseAgent):
@@ -109,10 +138,7 @@ class VideoGenerationAgent(BaseAgent):
             return
 
         try:
-            enhance_prompt = video_tools.normalize_optional_boolean(
-                current_parameters.get("enhance_prompt"),
-                parameter_name="enhance_prompt",
-            )
+            prompt_rewrite = normalize_video_prompt_rewrite(current_parameters.get("prompt_rewrite"))
             person_generation = video_tools.normalize_person_generation(
                 current_parameters.get("person_generation")
             )
@@ -125,25 +151,11 @@ class VideoGenerationAgent(BaseAgent):
             yield self.format_event(error_text, {"current_output": current_output})
             return
 
-        skip_local_prompt_enhancement = provider == "veo" and enhance_prompt is False
-        if skip_local_prompt_enhancement:
-            normalized_prompts = prompt_list
-        else:
-            enhanced_prompt_results = await asyncio.gather(
-                *[
-                    video_tools.prompt_enhancement_tool(ctx, prompt)
-                    if prompt
-                    else asyncio.sleep(0, result={"status": "success", "message": ""})
-                    for prompt in prompt_list
-                ]
-            )
-            normalized_prompts = []
-            for original_prompt, result in zip(prompt_list, enhanced_prompt_results):
-                if result["status"] == "success":
-                    normalized_prompts.append(str(result["message"]).strip())
-                else:
-                    logger.warning("%s: prompt enhancement failed, using original prompt", self.name)
-                    normalized_prompts.append(original_prompt)
+        normalized_prompts = await _prepare_prompts(
+            ctx,
+            prompt_list,
+            prompt_rewrite=prompt_rewrite,
+        )
 
         if provider == "veo":
             generation_tasks = [
@@ -157,7 +169,6 @@ class VideoGenerationAgent(BaseAgent):
                     negative_prompt=negative_prompt,
                     person_generation=person_generation,
                     seed=seed,
-                    enhance_prompt=enhance_prompt,
                 )
                 for prompt in normalized_prompts
             ]

@@ -110,18 +110,17 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             negative_prompt="",
             person_generation=None,
             seed=None,
-            enhance_prompt=None,
         )
         seedance_mock.assert_not_called()
 
-    async def test_video_generation_skips_local_prompt_enhancement_when_veo_enhance_prompt_is_false(self) -> None:
+    async def test_video_generation_skips_local_prompt_enhancement_when_prompt_rewrite_is_off(self) -> None:
         agent = VideoGenerationAgent(name="VideoGenerationAgent")
         ctx = _build_ctx(
             {
                 "current_parameters": {
                     "prompt": "draw a cat video",
                     "provider": "veo",
-                    "enhance_prompt": False,
+                    "prompt_rewrite": "off",
                 },
                 "step": 0,
             }
@@ -162,8 +161,26 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             negative_prompt="",
             person_generation=None,
             seed=None,
-            enhance_prompt=False,
         )
+
+    async def test_video_generation_rejects_invalid_prompt_rewrite_value(self) -> None:
+        agent = VideoGenerationAgent(name="VideoGenerationAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "prompt": "draw a cat video",
+                    "prompt_rewrite": "sometimes",
+                },
+                "step": 0,
+            }
+        )
+
+        events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "error")
+        self.assertIn("prompt_rewrite must be one of", current_output["message"])
 
     async def test_video_generation_uses_kling_when_requested(self) -> None:
         agent = VideoGenerationAgent(name="VideoGenerationAgent")
@@ -409,7 +426,6 @@ class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
                 negative_prompt="glitches",
                 person_generation="allow_adult",
                 seed=123,
-                enhance_prompt=False,
             )
 
         self.assertEqual(result["status"], "success")
@@ -419,7 +435,7 @@ class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["config"].negative_prompt, "glitches")
         self.assertEqual(kwargs["config"].person_generation, "allow_adult")
         self.assertEqual(kwargs["config"].seed, 123)
-        self.assertFalse(kwargs["config"].enhance_prompt)
+        self.assertNotIn("enhance_prompt", kwargs["config"].model_dump(exclude_none=True))
 
     async def test_veo_tool_supports_reference_style_images(self) -> None:
         generate_videos_mock = AsyncMock(

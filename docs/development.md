@@ -418,7 +418,8 @@ Important `veo` notes:
 
 - audio is generated natively from prompt cues such as dialogue, ambience, and sound effects
 - do not pass a separate audio file to `VideoGenerationAgent`
-- optional `veo` controls include `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, and `enhance_prompt`
+- optional agent-side control `prompt_rewrite` accepts `auto` or `off` and controls local prompt rewriting before provider dispatch
+- optional `veo` controls include `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, and `seed`
 - `video_extension` accepts one workspace video path through `input_path` or `input_paths`
 
 Important `kling` notes:

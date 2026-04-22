@@ -8,6 +8,7 @@ VIDEO_GENERATION_PROVIDERS = ("seedance", "veo", "kling")
 VIDEO_GENERATION_DEFAULT_PROVIDER = "seedance"
 VIDEO_GENERATION_DEFAULT_MODE = "prompt"
 VIDEO_GENERATION_DEFAULT_ASPECT_RATIO = "16:9"
+VIDEO_GENERATION_PROMPT_REWRITE_VALUES = ("auto", "off")
 VIDEO_GENERATION_PERSON_GENERATION_VALUES = ("allow_all", "allow_adult")
 VIDEO_GENERATION_KLING_MODE_VALUES = ("std", "pro")
 
@@ -93,6 +94,7 @@ def normalize_video_provider(raw_value: Any) -> str:
 def get_video_generation_default_parameters() -> dict[str, Any]:
     """Return provider-agnostic defaults for the video generation expert contract."""
     return {
+        "prompt_rewrite": "auto",
         "provider": VIDEO_GENERATION_DEFAULT_PROVIDER,
         "mode": VIDEO_GENERATION_DEFAULT_MODE,
         "aspect_ratio": VIDEO_GENERATION_DEFAULT_ASPECT_RATIO,
@@ -182,6 +184,21 @@ def normalize_provider_video_duration(
     return value if value in supported_durations else default_duration
 
 
+def normalize_video_prompt_rewrite(raw_value: Any) -> str:
+    """Return one supported agent-side prompt rewrite mode."""
+    if raw_value is None:
+        return "auto"
+    value = str(raw_value).strip().lower()
+    if not value:
+        return "auto"
+    if value not in VIDEO_GENERATION_PROMPT_REWRITE_VALUES:
+        raise ValueError(
+            "prompt_rewrite must be one of: "
+            f"{sorted(VIDEO_GENERATION_PROMPT_REWRITE_VALUES)}."
+        )
+    return value
+
+
 def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
     """Validate one video generation payload using provider-specific capabilities."""
     provider = normalize_video_provider(parameters.get("provider"))
@@ -192,6 +209,9 @@ def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
             f"VideoGenerationAgent provider `{provider}` does not support `mode={mode}`. "
             f"Allowed values: {list(get_supported_video_modes(provider))}."
         )
+
+    if "prompt_rewrite" in parameters:
+        normalize_video_prompt_rewrite(parameters.get("prompt_rewrite"))
 
     if "aspect_ratio" in parameters and parameters.get("aspect_ratio") is not None:
         aspect_ratio = str(parameters.get("aspect_ratio") or "").strip()
@@ -271,7 +291,8 @@ def build_video_generation_contract_notes() -> str:
     return (
         "Use prompt-only, image-guided, or video-extension generation with provider-aware parameters. "
         + " ".join(provider_blocks)
-        + " Parameter `resolution` applies only to `veo`; `person_generation` applies only to `veo`; "
+        + " Agent-only parameter `prompt_rewrite` accepts `auto` or `off` and controls local prompt rewriting. "
+        + "Parameter `resolution` applies only to `veo`; `person_generation` applies only to `veo`; "
         + "`kling_mode` and `model_name` apply only to `kling`."
     )
 

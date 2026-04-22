@@ -115,22 +115,6 @@ def normalize_kling_duration(raw_value: Any, *, mode: str = "prompt") -> int:
     )
 
 
-def normalize_optional_boolean(raw_value: Any, *, parameter_name: str) -> bool | None:
-    """Parse one optional boolean-like value."""
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, bool):
-        return raw_value
-    normalized = str(raw_value).strip().lower()
-    if not normalized:
-        return None
-    if normalized in {"true", "1", "yes", "on"}:
-        return True
-    if normalized in {"false", "0", "no", "off"}:
-        return False
-    raise ValueError(f"{parameter_name} must be a boolean value.")
-
-
 def normalize_video_seed(raw_value: Any) -> int | None:
     """Parse one optional Veo seed value."""
     if raw_value is None or str(raw_value).strip() == "":
@@ -233,6 +217,31 @@ def _validate_veo_constraints(
             raise ValueError(
                 f"mode={mode} only supports person_generation=allow_adult for Veo."
             )
+
+
+def _build_veo_config_kwargs(
+    *,
+    aspect_ratio: str,
+    resolution: str,
+    duration_seconds: int,
+    negative_prompt: str,
+    person_generation: str | None,
+    seed: int | None,
+) -> dict[str, Any]:
+    """Build the provider-native config payload for one Veo request."""
+    config_kwargs: dict[str, Any] = {
+        "number_of_videos": 1,
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution,
+        "duration_seconds": duration_seconds,
+    }
+    if negative_prompt:
+        config_kwargs["negative_prompt"] = negative_prompt
+    if person_generation:
+        config_kwargs["person_generation"] = person_generation
+    if seed is not None:
+        config_kwargs["seed"] = seed
+    return config_kwargs
 
 
 def _validate_seedance_constraints(*, mode: str) -> None:
@@ -778,7 +787,6 @@ async def veo_video_generation_tool(
     negative_prompt: str = "",
     person_generation: str | None = None,
     seed: int | None = None,
-    enhance_prompt: bool | None = None,
 ) -> dict[str, Any]:
     """Generate one video via Google's VEO API."""
     logger.info("calling veo for video generation ...")
@@ -813,10 +821,6 @@ async def veo_video_generation_tool(
     current_negative_prompt = str(negative_prompt or "").strip()
 
     try:
-        current_enhance_prompt = normalize_optional_boolean(
-            enhance_prompt,
-            parameter_name="enhance_prompt",
-        )
         current_person_generation = normalize_person_generation(person_generation)
         current_seed = normalize_video_seed(seed)
         _validate_mode_input_paths(current_mode, current_paths)
@@ -830,20 +834,14 @@ async def veo_video_generation_tool(
         client = genai.Client(api_key=google_api_key)
 
         source = types.GenerateVideosSource(prompt=prompt or None)
-        config_kwargs: dict[str, Any] = {
-            "number_of_videos": 1,
-            "aspect_ratio": current_ratio,
-            "resolution": current_resolution,
-            "duration_seconds": current_duration,
-        }
-        if current_negative_prompt:
-            config_kwargs["negative_prompt"] = current_negative_prompt
-        if current_person_generation:
-            config_kwargs["person_generation"] = current_person_generation
-        if current_seed is not None:
-            config_kwargs["seed"] = current_seed
-        if current_enhance_prompt is not None:
-            config_kwargs["enhance_prompt"] = current_enhance_prompt
+        config_kwargs = _build_veo_config_kwargs(
+            aspect_ratio=current_ratio,
+            resolution=current_resolution,
+            duration_seconds=current_duration,
+            negative_prompt=current_negative_prompt,
+            person_generation=current_person_generation,
+            seed=current_seed,
+        )
 
         if current_mode == "first_frame":
             source.image = _read_workspace_image_as_genai_image(current_paths[0])
