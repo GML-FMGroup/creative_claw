@@ -225,7 +225,7 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.tool_result["status"], "success")
-        self.assertEqual(parent_state["step"], 1)
+        self.assertEqual(parent_state["step"], 0)
         self.assertEqual(parent_state["current_output"]["message"], "expert finished")
         self.assertEqual(parent_state["last_expert_result"]["agent_name"], "KnowledgeAgent")
         self.assertEqual(parent_state["text_history"][-1], "expert answer")

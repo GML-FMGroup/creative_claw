@@ -73,9 +73,12 @@ def _safe_segment(value: str) -> str:
     return cleaned or "default"
 
 
-def _build_download_dir(*, session_id: str, step: int, job_id: str) -> Path:
+def _build_download_dir(*, session_id: str, turn_index: int, step: int, job_id: str) -> Path:
     """Build the target download directory for one hy3d job."""
-    output_dir = generated_session_dir(session_id) / f"step{step}_3d_generation_{_safe_segment(job_id)}"
+    output_dir = (
+        generated_session_dir(session_id, turn_index=turn_index)
+        / f"turn{turn_index}_step{step}_3d_generation_{_safe_segment(job_id)}"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -280,6 +283,7 @@ async def hy3d_generate_tool(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
     session_id: str,
+    turn_index: int,
     step: int,
 ) -> dict[str, Any]:
     """Run one full hy3d generation job through Tencent Cloud SDK."""
@@ -346,7 +350,12 @@ async def hy3d_generate_tool(
         }
 
     result_files = list(getattr(query_response, "ResultFile3Ds", []) or [])
-    download_dir = _build_download_dir(session_id=session_id, step=step, job_id=job_id)
+    download_dir = _build_download_dir(
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+        job_id=job_id,
+    )
 
     try:
         downloaded_files = await asyncio.to_thread(

@@ -231,7 +231,7 @@ def _summarize_list_session_files_result(result_text: str) -> str:
                 f"Preview: {stringify_value(preview, max_chars=180)}"
             )
 
-    for key in ("input_files", "new_files", "latest_output_files"):
+    for key in ("uploaded", "generated", "input_files", "new_files", "latest_output_files"):
         if key in payload and len(payload) == 1:
             files = payload.get(key)
             if isinstance(files, list):
@@ -245,11 +245,27 @@ def _summarize_list_session_files_result(result_text: str) -> str:
                     f"Preview: {stringify_value(preview, max_chars=180)}"
                 )
 
+    for key in ("uploaded_history", "generated_history"):
+        if key in payload and len(payload) == 1:
+            history = payload.get(key)
+            if isinstance(history, list):
+                preview = "; ".join(
+                    f"turn={entry.get('turn')}, files={len(entry.get('files') or [])}"
+                    for entry in history[:3]
+                    if isinstance(entry, dict)
+                )
+                return (
+                    f"{key} contains {len(history)} turn group(s). "
+                    f"Preview: {stringify_value(preview, max_chars=180)}"
+                )
+
     if "files_history" in payload and len(payload) == 1:
         history = payload.get("files_history")
         if isinstance(history, list):
             return f"Session file history contains {len(history)} step group(s)."
 
+    uploaded_count = len(payload.get("uploaded") or []) if isinstance(payload.get("uploaded"), list) else 0
+    generated_count = len(payload.get("generated") or []) if isinstance(payload.get("generated"), list) else 0
     input_count = len(payload.get("input_files") or []) if isinstance(payload.get("input_files"), list) else 0
     new_count = len(payload.get("new_files") or []) if isinstance(payload.get("new_files"), list) else 0
     latest_count = (
@@ -269,7 +285,8 @@ def _summarize_list_session_files_result(result_text: str) -> str:
         final_selection = "unknown"
     return (
         "Session file snapshot loaded. "
-        f"input={input_count}; new={new_count}; latest_output={latest_count}; "
+        f"uploaded={uploaded_count}; generated={generated_count}; input={input_count}; "
+        f"new={new_count}; latest_output={latest_count}; "
         f"history_steps={history_count}; final_selection={final_selection}."
     )
 

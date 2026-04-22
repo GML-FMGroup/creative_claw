@@ -208,10 +208,13 @@ async def image_segmentation_tool(
         result_payload = task_result.get("result") or {}
         objects = result_payload.get("objects") or []
         mask_png = await asyncio.to_thread(_merge_masks, image.size, objects)
+        current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_step = int(ctx.session.state.get("step", 0) or 0)
         output_path = save_binary_output(
             mask_png,
             session_id=ctx.session.id,
-            step=ctx.session.state.get("step", 0) + 1,
+            turn_index=current_turn,
+            step=current_step,
             output_type="segmentation_mask",
             index=0,
             extension=".png",

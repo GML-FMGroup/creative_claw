@@ -69,6 +69,20 @@ _PROGRESS_STAGE_TITLES = {
 }
 
 
+def _append_turn_file_history(
+    history: list[dict[str, object]],
+    *,
+    turn: int,
+    files: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Append one turn-scoped file batch to history when files exist."""
+    if not files:
+        return history
+    updated_history = list(history)
+    updated_history.append({"turn": turn, "files": list(files)})
+    return updated_history
+
+
 def _format_exception_summary(exc: Exception) -> str:
     """Return a concise exception summary that always includes the exception type."""
     message = str(exc).strip()
@@ -400,12 +414,33 @@ class CreativeClawRuntime:
             raise ValueError(f"Session {session_id} not found for user {user_id}")
 
         state_delta = {key: None for key in current_session.state.keys()}
+        previous_turn = int(current_session.state.get("turn_index", 0) or 0)
+        current_turn = previous_turn + 1
+        previous_uploaded = list(current_session.state.get("uploaded") or current_session.state.get("input_files") or [])
+        previous_generated = list(current_session.state.get("generated") or [])
+        uploaded_history = _append_turn_file_history(
+            list(current_session.state.get("uploaded_history") or []),
+            turn=previous_turn,
+            files=previous_uploaded,
+        )
+        generated_history = _append_turn_file_history(
+            list(current_session.state.get("generated_history") or []),
+            turn=previous_turn,
+            files=previous_generated,
+        )
+
         state_delta["app_name"] = SYS_CONFIG.app_name
         state_delta["uid"] = user_id
         state_delta["sid"] = session_id
         state_delta["user_prompt"] = inbound.text
         state_delta["step"] = current_session.state.get("step", 0)
+        state_delta["expert_step"] = current_session.state.get("expert_step", 0)
+        state_delta["turn_index"] = current_turn
         state_delta["input_files"] = []
+        state_delta["uploaded"] = []
+        state_delta["uploaded_history"] = uploaded_history
+        state_delta["generated"] = []
+        state_delta["generated_history"] = generated_history
         state_delta["workflow_status"] = "running"
         state_delta["final_summary"] = ""
         state_delta["final_response"] = ""
@@ -423,18 +458,21 @@ class CreativeClawRuntime:
                 attachment.path,
                 channel=inbound.channel,
                 session_id=session_id,
+                turn_index=current_turn,
+                attachment_index=index,
                 preferred_name=attachment.name,
             )
             file_name = attachment.name or saved_path.name
             description = attachment.description or f"user input attachment {index}"
-            state_delta["input_files"].append(
-                build_workspace_file_record(
-                    saved_path,
-                    description=description,
-                    source="channel",
-                    name=file_name,
-                )
+            record = build_workspace_file_record(
+                saved_path,
+                description=description,
+                source="channel",
+                name=file_name,
+                turn=current_turn,
             )
+            state_delta["input_files"].append(record)
+            state_delta["uploaded"].append(record)
             state_delta["user_prompt"] += (
                 f"\nInput file {index}: name={file_name}, "
                 f"path={workspace_relative_path(saved_path)}"
@@ -442,14 +480,14 @@ class CreativeClawRuntime:
 
         existing_files_history = current_session.state.get("files_history", [])
         state_delta["files_history"] = (
-            existing_files_history + [state_delta["input_files"]]
-            if state_delta["input_files"]
+            existing_files_history + [state_delta["uploaded"]]
+            if state_delta["uploaded"]
             else existing_files_history
         )
         state_delta["summary_history"] = current_session.state.get("summary_history", [])
         state_delta["text_history"] = current_session.state.get("text_history", [])
         state_delta["message_history"] = current_session.state.get("message_history", [])
-        state_delta["new_files"] = state_delta["input_files"]
+        state_delta["new_files"] = state_delta["uploaded"]
         state_delta["orchestration_events"] = current_session.state.get("orchestration_events", [])
 
         event = Event(
@@ -468,6 +506,7 @@ class CreativeClawRuntime:
             actions=EventActions(state_delta=state_delta),
         )
         await self.session_service.append_event(current_session, event)
+
 
     async def _build_final_event(
         self,

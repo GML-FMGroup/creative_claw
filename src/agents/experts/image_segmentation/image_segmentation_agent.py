@@ -57,6 +57,9 @@ class ImageSegmentationAgent(BaseAgent):
             threshold=threshold,
         )
 
+        current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_step = int(ctx.session.state.get("step", 0) or 0)
+        current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
         status = str(result.get("status", "")).strip().lower()
         message = str(result.get("message", "")).strip()
         output_files = []
@@ -67,6 +70,9 @@ class ImageSegmentationAgent(BaseAgent):
                     resolve_workspace_path(mask_path),
                     description=f"binary segmentation mask generated from '{input_path}' with prompt '{prompt}'",
                     source="expert",
+                    turn=current_turn,
+                    step=current_step,
+                    expert_step=current_expert_step,
                 )
             )
 

@@ -33,6 +33,7 @@ from src.runtime.workspace import (
     build_workspace_file_record,
     load_local_file_part,
     looks_like_image,
+    relocate_generated_output,
     resolve_workspace_path,
     workspace_relative_path,
 )
@@ -69,6 +70,78 @@ _PLUGIN_MANAGED_TOOL_NAMES = {
     "web_fetch",
 }
 
+_AUTO_OUTPUT_TOOL_NAMES = {
+    "image_crop",
+    "image_rotate",
+    "image_flip",
+    "image_resize",
+    "image_convert",
+    "video_extract_frame",
+    "video_trim",
+    "video_concat",
+    "video_convert",
+    "audio_trim",
+    "audio_concat",
+    "audio_convert",
+}
+
+_DISPLAY_TOOL_TITLES = {
+    "list_skills": "List Skills",
+    "read_skill": "Read Skill",
+    "list_session_files": "List Session Files",
+}
+
+
+def _format_file_summary(file_info: dict[str, Any], *, index: int) -> str:
+    """Render one compact workspace file summary."""
+    file_name = str(file_info.get("name", "")).strip() or f"file_{index}"
+    file_path = str(file_info.get("path", "")).strip()
+    file_description = str(file_info.get("description", "")).strip()
+    metadata_parts = [f"name={file_name}", f"path={file_path}"]
+    if file_description:
+        metadata_parts.append(f"description={file_description}")
+    turn = file_info.get("turn")
+    step = file_info.get("step")
+    expert_step = file_info.get("expert_step")
+    if turn is not None:
+        metadata_parts.append(f"turn={turn}")
+    if step is not None:
+        metadata_parts.append(f"step={step}")
+    if expert_step is not None:
+        metadata_parts.append(f"expert_step={expert_step}")
+    return f"file {index}: {'; '.join(metadata_parts)}"
+
+
+def _format_turn_file_history(label: str, history: list[dict[str, Any]]) -> list[str]:
+    """Render one turn-grouped file history section."""
+    if not history:
+        return []
+    rendered = [label]
+    for entry in history:
+        turn = int(entry.get("turn", 0) or 0)
+        files = list(entry.get("files") or [])
+        if not files:
+            rendered.append(f"- Turn {turn}: no files")
+            continue
+        rendered.append(
+            f"- Turn {turn}: {' | '.join(_format_file_summary(file_info, index=index) for index, file_info in enumerate(files, start=1))}"
+        )
+    return rendered
+
+
+def _latest_generated_files(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the latest generated file batch from current-turn or historical state."""
+    generated = list(state.get("generated") or [])
+    if generated:
+        return generated
+    generated_history = list(state.get("generated_history") or [])
+    for entry in reversed(generated_history):
+        files = list(entry.get("files") or [])
+        if files:
+            return files
+    files_history = list(state.get("files_history") or state.get("artifacts_history") or [])
+    return _select_latest_non_channel_files(files_history)
+
 
 async def orchestrator_before_model_callback(
     callback_context: CallbackContext,
@@ -76,25 +149,40 @@ async def orchestrator_before_model_callback(
 ) -> None:
     """Inject compact runtime state and recent workspace files into the model request."""
     state = callback_context.state
+    turn_index = state.get("turn_index", 0)
     step = state.get("step", 0)
+    expert_step = state.get("expert_step", 0)
     workflow_status = state.get("workflow_status", "running")
+    uploaded = list(state.get("uploaded") or state.get("input_files") or state.get("input_artifacts") or [])
+    uploaded_history = list(state.get("uploaded_history") or [])
+    generated = list(state.get("generated") or [])
+    generated_history = list(state.get("generated_history") or [])
 
     summary_lines = [
         f"# Workflow status: {workflow_status}",
-        f"# Executed steps: {step}",
+        f"# Current turn: {turn_index}",
+        f"# Executed actions: {step}",
+        f"# Expert calls: {expert_step}",
         f"# User task:\n{state.get('user_prompt', '')}",
     ]
 
-    input_files = state.get("input_files") or state.get("input_artifacts", [])
-    if input_files:
-        summary_lines.append("# Original input files in workspace:")
+    if uploaded:
+        summary_lines.append("# Uploaded files in current turn:")
         summary_lines.extend(
-            (
-                f"- {file_info['name']}: path={file_info.get('path', '')}; "
-                f"description={file_info.get('description', '')}"
-            )
-            for file_info in input_files
+            f"- {_format_file_summary(file_info, index=index)}"
+            for index, file_info in enumerate(uploaded, start=1)
         )
+
+    summary_lines.extend(_format_turn_file_history("# Uploaded file history by turn:", uploaded_history))
+
+    if generated:
+        summary_lines.append("# Generated files in current turn:")
+        summary_lines.extend(
+            f"- {_format_file_summary(file_info, index=index)}"
+            for index, file_info in enumerate(generated, start=1)
+        )
+
+    summary_lines.extend(_format_turn_file_history("# Generated file history by turn:", generated_history))
 
     summary_history = state.get("summary_history", [])
     message_history = state.get("message_history", [])
@@ -116,61 +204,45 @@ async def orchestrator_before_model_callback(
         else:
             summary_lines.append("# Final reply attachments have been explicitly cleared for this response.")
 
-    files_history = state.get("files_history") or state.get("artifacts_history", [])
-    if files_history:
-        summary_lines.append("# Workspace file history:")
-        for step_index, file_group in enumerate(files_history, start=1):
-            if not file_group:
-                summary_lines.append(f"- Step {step_index}: no output artifact")
-                continue
-            file_summaries = []
-            for file_index, file_info in enumerate(file_group, start=1):
-                file_name = str(file_info.get("name", "")).strip() or f"file_{file_index}"
-                file_path = str(file_info.get("path", "")).strip()
-                file_description = str(file_info.get("description", "")).strip()
-                if file_description:
-                    file_summaries.append(
-                        f"file {file_index}: name={file_name}; path={file_path}; description={file_description}"
-                    )
-                else:
-                    file_summaries.append(f"file {file_index}: name={file_name}; path={file_path}")
-            summary_lines.append(f"- Step {step_index}: {' | '.join(file_summaries)}")
-
-        latest_file_group = next(
-            (file_group for file_group in reversed(files_history) if file_group),
-            [],
+    latest_file_group = _latest_generated_files(state)
+    if latest_file_group:
+        latest_paths = ", ".join(
+            str(file_info.get("path", "")).strip()
+            for file_info in latest_file_group
+            if str(file_info.get("path", "")).strip()
         )
-        if latest_file_group:
-            latest_paths = ", ".join(
-                str(file_info.get("path", "")).strip()
-                for file_info in latest_file_group
-                if str(file_info.get("path", "")).strip()
-            )
-            if latest_paths:
-                summary_lines.append(f"# Most recent available output files: {latest_paths}")
+        if latest_paths:
+            summary_lines.append(f"# Most recent available output files: {latest_paths}")
 
     llm_request.contents.append(
         Content(role="user", parts=[Part(text="\n".join(summary_lines))])
     )
 
-    new_files = state.get("new_files") or state.get("new_artifacts", [])
-    if not new_files:
+    reference_groups = [
+        ("Uploaded workspace files from current turn:", uploaded),
+        ("Generated workspace files from current turn:", generated),
+    ]
+    if not any(file_group for _, file_group in reference_groups):
         return
 
-    file_parts = [Part(text="Recent workspace files for reference:\n")]
-    for index, file_info in enumerate(new_files, start=1):
-        file_parts.append(
-            Part(
-                text=(
-                    f"File {index}: {file_info['name']}. "
-                    f"Path: {file_info.get('path', '')}. "
-                    f"Description: {file_info.get('description', '')}\n"
+    file_parts: list[Part] = []
+    for label, file_group in reference_groups:
+        if not file_group:
+            continue
+        file_parts.append(Part(text=f"{label}\n"))
+        for index, file_info in enumerate(file_group, start=1):
+            file_parts.append(
+                Part(
+                    text=(
+                        f"File {index}: {file_info['name']}. "
+                        f"Path: {file_info.get('path', '')}. "
+                        f"Description: {file_info.get('description', '')}\n"
+                    )
                 )
             )
-        )
-        file_path = str(file_info.get("path", "")).strip()
-        if file_path and looks_like_image(file_path):
-            file_parts.append(load_local_file_part(file_path))
+            file_path = str(file_info.get("path", "")).strip()
+            if file_path and looks_like_image(file_path):
+                file_parts.append(load_local_file_part(file_path))
 
     llm_request.contents.append(Content(role="user", parts=file_parts))
 
@@ -413,7 +485,7 @@ Expert parameter contracts:
         """Record one tool-call start event."""
         self._append_step_event(
             state,
-            title=tool_name,
+            title=_DISPLAY_TOOL_TITLES.get(tool_name, tool_name),
             detail=f"Status: started\nArgs: {self._format_tool_args(args)}",
             stage=stage,
         )
@@ -437,7 +509,7 @@ Expert parameter contracts:
         status, summary = self._summarize_tool_result(tool_name, result)
         self._append_step_event(
             state,
-            title=tool_name,
+            title=_DISPLAY_TOOL_TITLES.get(tool_name, tool_name),
             detail=(
                 f"Status: {'success' if status == 'success' else 'error'}\n"
                 f"Args: {self._format_tool_args(args)}\n"
@@ -457,14 +529,58 @@ Expert parameter contracts:
         """Persist tool-produced workspace files into session state."""
         if not paths:
             return
+        current_turn = int(state.get("turn_index", 0) or 0)
+        current_step = int(state.get("step", 0) or 0)
+        current_expert_step = int(state.get("expert_step", 0) or 0)
         file_records = [
-            build_workspace_file_record(path, description=description, source=source)
+            build_workspace_file_record(
+                path,
+                description=description,
+                source=source,
+                turn=current_turn,
+                step=current_step,
+                expert_step=current_expert_step if source == "expert" else None,
+            )
             for path in paths
         ]
+        generated = list(state.get("generated") or [])
+        generated.extend(file_records)
+        state["generated"] = generated
         history = list(state.get("files_history", []))
         history.append(file_records)
         state["new_files"] = file_records
         state["files_history"] = history
+
+    @staticmethod
+    def _advance_tool_counters(state: dict[str, Any], *, tool_name: str) -> None:
+        """Advance session counters for one top-level tool or expert call."""
+        state["step"] = int(state.get("step", 0) or 0) + 1
+        if tool_name == "invoke_agent":
+            state["expert_step"] = int(state.get("expert_step", 0) or 0) + 1
+
+    @staticmethod
+    def _normalize_generated_tool_result(
+        state: dict[str, Any],
+        *,
+        tool_name: str,
+        result: Any,
+    ) -> Any:
+        """Move one auto-generated builtin tool output into the standardized generated directory."""
+        if tool_name not in _AUTO_OUTPUT_TOOL_NAMES or not isinstance(result, str) or result.startswith("Error"):
+            return result
+        try:
+            relocated_path = relocate_generated_output(
+                result,
+                session_id=str(state.get("sid", "")).strip(),
+                turn_index=int(state.get("turn_index", 0) or 0),
+                step=int(state.get("step", 0) or 0),
+                output_type=tool_name,
+                index=0,
+            )
+        except Exception as exc:
+            logger.warning("Failed to relocate builtin tool output for {}: {}", tool_name, exc)
+            return result
+        return workspace_relative_path(relocated_path)
 
     def _maybe_record_tool_files(
         self,
@@ -519,10 +635,16 @@ Expert parameter contracts:
         """Execute one tool and record its start and finish events when context exists."""
         if tool_context is None:
             return runner()
+        self._advance_tool_counters(tool_context.state, tool_name=tool_name)
         should_record_manually = (not step_event_streaming_active()) or tool_name not in _PLUGIN_MANAGED_TOOL_NAMES
         if should_record_manually:
             self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
         result = runner()
+        result = self._normalize_generated_tool_result(
+            tool_context.state,
+            tool_name=tool_name,
+            result=result,
+        )
         self._maybe_record_tool_files(tool_context.state, tool_name=tool_name, args=args, result=result)
         if should_record_manually:
             self._record_tool_finished(
@@ -546,6 +668,7 @@ Expert parameter contracts:
         """Execute one async tool and record its lifecycle events when context exists."""
         if tool_context is None:
             return await runner()
+        self._advance_tool_counters(tool_context.state, tool_name=tool_name)
         should_record_manually = (not step_event_streaming_active()) or tool_name not in _PLUGIN_MANAGED_TOOL_NAMES
         if should_record_manually:
             self._record_tool_started(tool_context.state, tool_name=tool_name, args=args, stage=stage)
@@ -567,35 +690,34 @@ Expert parameter contracts:
 
     def list_skills(self, tool_context: ToolContext | None = None) -> str:
         """List available skills in JSON format."""
-        if tool_context is not None:
-            self._append_step_event(
-                tool_context.state,
-                title="List Skills",
-                detail="Checking the currently available skills.",
-                stage="planning",
-                session_id=self._resolve_tool_context_session_id(tool_context),
-            )
-        payload = [
-            {
-                "name": info.name,
-                "description": info.description,
-                "source": info.source,
-            }
-            for info in self.skill_registry.list_skills()
-        ]
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="list_skills",
+            stage="planning",
+            args={},
+            runner=lambda: json.dumps(
+                [
+                    {
+                        "name": info.name,
+                        "description": info.description,
+                        "source": info.source,
+                    }
+                    for info in self.skill_registry.list_skills()
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
 
     def read_skill(self, name: str, tool_context: ToolContext | None = None) -> str:
         """Read the full markdown content of one skill."""
-        if tool_context is not None:
-            self._append_step_event(
-                tool_context.state,
-                title="Read Skill",
-                detail=f"Reading the documentation for skill `{name}`.",
-                stage="planning",
-                session_id=self._resolve_tool_context_session_id(tool_context),
-            )
-        return self.skill_registry.read_skill(name)
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name="read_skill",
+            stage="planning",
+            args={"name": name},
+            runner=lambda: self.skill_registry.read_skill(name),
+        )
 
     def list_dir(self, path: str = ".", tool_context: ToolContext | None = None) -> str:
         """List one directory and record the step."""
@@ -1098,16 +1220,28 @@ Expert parameter contracts:
 
         normalized_section = str(section or "all").strip().lower() or "all"
         state = tool_context.state
+        uploaded = list(state.get("uploaded") or state.get("input_files") or [])
+        uploaded_history = list(state.get("uploaded_history") or [])
+        generated = list(state.get("generated") or [])
+        generated_history = list(state.get("generated_history") or [])
         files_history = list(state.get("files_history") or [])
-        latest_output_files = _select_latest_non_channel_files(files_history)
+        latest_output_files = _latest_generated_files(state)
         payload_by_section = {
-            "input": {"input_files": list(state.get("input_files") or [])},
+            "uploaded": {"uploaded": uploaded},
+            "uploaded_history": {"uploaded_history": uploaded_history},
+            "generated": {"generated": generated},
+            "generated_history": {"generated_history": generated_history},
+            "input": {"input_files": uploaded},
             "new": {"new_files": list(state.get("new_files") or [])},
             "latest_output": {"latest_output_files": latest_output_files},
             "history": {"files_history": files_history},
             "final": {"final_file_paths": state.get("final_file_paths")},
             "all": {
-                "input_files": list(state.get("input_files") or []),
+                "uploaded": uploaded,
+                "uploaded_history": uploaded_history,
+                "generated": generated,
+                "generated_history": generated_history,
+                "input_files": uploaded,
                 "new_files": list(state.get("new_files") or []),
                 "latest_output_files": latest_output_files,
                 "files_history": files_history,

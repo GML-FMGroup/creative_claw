@@ -33,8 +33,14 @@ _NON_FORWARDABLE_STATE_KEYS = {
     "uid",
     "sid",
     "user_prompt",
+    "turn_index",
     "step",
+    "expert_step",
     "input_files",
+    "uploaded",
+    "uploaded_history",
+    "generated",
+    "generated_history",
     "current_parameters",
     "current_output",
     "files_history",
@@ -97,7 +103,12 @@ def _parse_prompt_as_parameters(agent_name: str, prompt: str) -> dict[str, Any]:
 
 def _resolve_named_files(state: dict[str, Any], names: list[str]) -> list[str]:
     """Resolve legacy file names against recorded workspace file history."""
-    available_files = list(state.get("input_files", []))
+    available_files = list(state.get("uploaded", []) or state.get("input_files", []))
+    available_files.extend(list(state.get("generated", []) or []))
+    for history_entry in state.get("uploaded_history", []):
+        available_files.extend(list(history_entry.get("files") or []))
+    for history_entry in state.get("generated_history", []):
+        available_files.extend(list(history_entry.get("files") or []))
     for file_group in state.get("files_history", []):
         available_files.extend(file_group)
 
@@ -169,9 +180,15 @@ def normalize_invoke_agent_parameters(
     return validate_expert_parameters(agent_name, normalized)
 
 
-def _normalize_output_files(output_files: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _normalize_output_files(
+    output_files: list[dict[str, Any]],
+    *,
+    turn: int | None,
+    step: int | None,
+    expert_step: int | None,
+) -> list[dict[str, Any]]:
     """Normalize expert output file records before saving them into parent state."""
-    normalized_files: list[dict[str, str]] = []
+    normalized_files: list[dict[str, Any]] = []
     for file_info in output_files:
         path = str(file_info.get("path", "")).strip()
         if not path:
@@ -182,6 +199,13 @@ def _normalize_output_files(output_files: list[dict[str, Any]]) -> list[dict[str
                 description=str(file_info.get("description", "")).strip(),
                 source=str(file_info.get("source", "expert")).strip() or "expert",
                 name=str(file_info.get("name", "")).strip() or None,
+                turn=int(file_info.get("turn", turn)) if file_info.get("turn", turn) is not None else None,
+                step=int(file_info.get("step", step)) if file_info.get("step", step) is not None else None,
+                expert_step=(
+                    int(file_info.get("expert_step", expert_step))
+                    if file_info.get("expert_step", expert_step) is not None
+                    else None
+                ),
             )
         )
     return normalized_files
@@ -292,8 +316,15 @@ def _build_state_delta(
         current_output,
         forwarded_state_delta=forwarded_state_delta,
     )
+    current_turn = int(parent_state.get("turn_index", 0) or 0)
     current_step = int(parent_state.get("step", 0) or 0)
-    normalized_files = _normalize_output_files(current_output.get("output_files", []))
+    current_expert_step = int(parent_state.get("expert_step", 0) or 0)
+    normalized_files = _normalize_output_files(
+        current_output.get("output_files", []),
+        turn=current_turn,
+        step=current_step,
+        expert_step=current_expert_step,
+    )
     message = str(current_output.get("message", "")).strip()
     if not message:
         message = f"{agent_name} finished without a message."
@@ -303,6 +334,7 @@ def _build_state_delta(
     text_history = list(parent_state.get("text_history") or [])
     message_history = list(parent_state.get("message_history") or [])
     files_history = list(parent_state.get("files_history") or [])
+    generated = list(parent_state.get("generated") or [])
     expert_history = list(parent_state.get("expert_history") or [])
 
     tool_result = _build_tool_result(
@@ -316,7 +348,6 @@ def _build_state_delta(
     state_delta = dict(inherited_delta)
     state_delta.update(
         {
-            "step": current_step + 1,
             "current_parameters": normalized_parameters,
             "current_output": current_output,
             "last_output_message": message,
@@ -331,9 +362,11 @@ def _build_state_delta(
     state_delta["text_history"] = text_history + [output_text if output_text else None]
 
     if normalized_files:
+        state_delta["generated"] = generated + normalized_files
         state_delta["new_files"] = normalized_files
         state_delta["files_history"] = files_history + [normalized_files]
     else:
+        state_delta["generated"] = generated
         state_delta["new_files"] = []
         state_delta["files_history"] = files_history + [[]]
 

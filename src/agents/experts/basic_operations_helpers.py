@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.runtime.workspace import build_workspace_file_record
+from src.runtime.workspace import build_workspace_file_record, relocate_generated_output, workspace_relative_path
 
 
 def build_error_output(expert_name: str, message: str) -> dict[str, Any]:
@@ -45,9 +45,22 @@ def build_file_output(
     *,
     description: str,
     input_paths: list[str],
+    session_id: str,
+    turn_index: int,
+    step: int,
+    expert_step: int,
 ) -> dict[str, Any]:
     """Build one normalized success payload for a file-producing operation."""
-    artifact_name = Path(output_path).name
+    relocated_path = relocate_generated_output(
+        output_path,
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+        output_type=f"{expert_name.lower()}_{operation}",
+        index=0,
+    )
+    normalized_output_path = workspace_relative_path(relocated_path)
+    artifact_name = Path(normalized_output_path).name
     return {
         "status": "success",
         "message": f"{expert_name} completed `{operation}`. Output file: {artifact_name}.",
@@ -55,14 +68,17 @@ def build_file_output(
         "results": {
             "operation": operation,
             "input_paths": input_paths,
-            "output_path": output_path,
+            "output_path": normalized_output_path,
         },
         "output_files": [
             build_workspace_file_record(
-                output_path,
+                relocated_path,
                 description=description,
                 source="expert",
                 name=artifact_name,
+                turn=turn_index,
+                step=step,
+                expert_step=expert_step,
             )
         ],
     }

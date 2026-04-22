@@ -27,12 +27,20 @@ def _build_ctx(state: dict) -> SimpleNamespace:
 class ThreeDGenerationAgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_3d_generation_uses_hy3d_by_default(self) -> None:
         agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
-        ctx = _build_ctx({"current_parameters": {"prompt": "a toy corgi"}, "step": 0})
+        ctx = _build_ctx(
+            {
+                "current_parameters": {"prompt": "a toy corgi"},
+                "turn_index": 1,
+                "step": 1,
+                "expert_step": 1,
+            }
+        )
         fake_output_path = (
             workspace_root()
             / "generated"
             / "session_1"
-            / "step1_3d_generation_job_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_job_1"
             / "hy3d_result_1_mesh.fbx"
         )
 
@@ -72,13 +80,14 @@ class ThreeDGenerationAgentTests(unittest.IsolatedAsyncioTestCase):
             timeout_seconds=900,
             interval_seconds=8,
             session_id="session_1",
+            turn_index=1,
             step=1,
         )
         current_output = events[0].actions.state_delta["current_output"]
         self.assertEqual(current_output["job_id"], "job-1")
         self.assertEqual(
             current_output["output_files"][0]["path"],
-            "generated/session_1/step1_3d_generation_job_1/hy3d_result_1_mesh.fbx",
+            "generated/session_1/turn_1/turn1_step1_3d_generation_job_1/hy3d_result_1_mesh.fbx",
         )
 
     async def test_3d_generation_requires_sketch_for_prompt_plus_image(self) -> None:
@@ -198,7 +207,8 @@ class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
             workspace_root()
             / "generated"
             / "session_1"
-            / "step1_3d_generation_job_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_job_1"
             / "hy3d_result_1_mesh.fbx"
         )
         fake_query_response = SimpleNamespace(
@@ -249,6 +259,7 @@ class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
                 prompt="a toy corgi",
                 input_path=None,
                 session_id="session_1",
+                turn_index=1,
                 step=1,
             )
 

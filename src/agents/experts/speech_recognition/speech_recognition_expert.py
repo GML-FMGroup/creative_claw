@@ -129,6 +129,9 @@ class SpeechRecognitionExpert(BaseAgent):
             return_exceptions=True,
         )
 
+        current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_step = int(ctx.session.state.get("step", 0) or 0)
+        current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
         structured_results: list[dict[str, Any]] = []
         output_files: list[dict[str, str]] = []
         success_messages: list[str] = []
@@ -189,6 +192,9 @@ class SpeechRecognitionExpert(BaseAgent):
                         ),
                         source="expert",
                         name=Path(subtitle_path).name,
+                        turn=current_turn,
+                        step=current_step,
+                        expert_step=current_expert_step,
                     )
                     current_result["subtitle_path"] = output_record["path"]
                     current_result["subtitle_format"] = normalize_subtitle_format(subtitle_format)
@@ -268,7 +274,8 @@ class SpeechRecognitionExpert(BaseAgent):
             inferred_name = infer_subtitle_output_path(input_path, subtitle_format)
             destination = build_generated_output_path(
                 session_id=ctx.session.id,
-                step=ctx.session.state.get("step", 0) + 1,
+                turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
+                step=int(ctx.session.state.get("step", 0) or 0),
                 output_type=f"speech_recognition_{Path(inferred_name).stem}",
                 index=index,
                 extension=f".{normalize_subtitle_format(subtitle_format)}",

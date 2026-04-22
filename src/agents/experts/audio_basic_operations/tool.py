@@ -98,6 +98,10 @@ def run_audio_basic_operation(parameters: dict[str, Any]) -> dict[str, Any]:
             str(result),
             description=f"AudioBasicOperations produced this file via `{operation}`.",
             input_paths=input_paths,
+            session_id=str(parameters.get("__session_id", "")).strip(),
+            turn_index=int(parameters.get("__turn_index", 0) or 0),
+            step=int(parameters.get("__step", 0) or 0),
+            expert_step=int(parameters.get("__expert_step", 0) or 0),
         )
     except Exception as exc:
         return build_error_output(expert_name, f"{expert_name} failed: {exc}")

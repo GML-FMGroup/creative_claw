@@ -38,7 +38,11 @@ class ImageBasicOperationsAgent(BaseAgent):
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """Run one normalized deterministic image operation request."""
-        current_parameters = ctx.session.state.get("current_parameters", {})
+        current_parameters = dict(ctx.session.state.get("current_parameters", {}))
+        current_parameters["__session_id"] = ctx.session.id
+        current_parameters["__turn_index"] = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_parameters["__step"] = int(ctx.session.state.get("step", 0) or 0)
+        current_parameters["__expert_step"] = int(ctx.session.state.get("expert_step", 0) or 0)
         current_output = run_image_basic_operation(current_parameters)
         yield self.format_event(
             current_output.get("output_text") or current_output.get("message", ""),

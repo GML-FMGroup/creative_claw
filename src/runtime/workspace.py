@@ -46,19 +46,23 @@ def generated_root() -> Path:
     return path
 
 
-def generated_session_dir(session_id: str) -> Path:
-    """Return the per-session generated file directory."""
+def generated_session_dir(session_id: str, turn_index: int | None = None) -> Path:
+    """Return the generated file directory for one session or turn."""
     safe_session = _safe_segment(session_id or "default")
     path = generated_root() / safe_session
+    if turn_index is not None:
+        path = path / _turn_segment(turn_index)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def channel_inbox_dir(channel: str, session_id: str) -> Path:
-    """Return the per-session inbox directory for one channel."""
+def channel_inbox_dir(channel: str, session_id: str, turn_index: int | None = None) -> Path:
+    """Return the inbox directory for one channel session or turn."""
     safe_channel = _safe_segment(channel or "unknown")
     safe_session = _safe_segment(session_id or "default")
     path = inbox_root() / safe_channel / safe_session
+    if turn_index is not None:
+        path = path / _turn_segment(turn_index)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -83,16 +87,26 @@ def build_workspace_file_record(
     description: str = "",
     source: str = "",
     name: str | None = None,
-) -> dict[str, str]:
+    turn: int | None = None,
+    step: int | None = None,
+    expert_step: int | None = None,
+) -> dict[str, Any]:
     """Build one normalized file record stored in session state."""
     resolved = resolve_workspace_path(path)
     relative = str(resolved.relative_to(workspace_root()))
-    return {
+    record: dict[str, Any] = {
         "name": name or resolved.name,
         "path": relative,
         "description": description.strip(),
         "source": source.strip(),
     }
+    if turn is not None:
+        record["turn"] = int(turn)
+    if step is not None:
+        record["step"] = int(step)
+    if expert_step is not None:
+        record["expert_step"] = int(expert_step)
+    return record
 
 
 def stage_attachment_into_workspace(
@@ -100,13 +114,16 @@ def stage_attachment_into_workspace(
     *,
     channel: str,
     session_id: str,
+    turn_index: int | None = None,
+    attachment_index: int | None = None,
     preferred_name: str = "",
 ) -> Path:
     """Copy one inbound attachment into the workspace inbox and return the saved path."""
     source = Path(source_path).expanduser().resolve()
-    destination_dir = channel_inbox_dir(channel, session_id)
+    destination_dir = channel_inbox_dir(channel, session_id, turn_index=turn_index)
     target_name = Path(preferred_name).name if preferred_name else source.name
-    destination = destination_dir / f"{uuid.uuid4().hex[:8]}_{target_name}"
+    prefix = f"{attachment_index}_" if attachment_index is not None else f"{uuid.uuid4().hex[:8]}_"
+    destination = destination_dir / f"{prefix}{target_name}"
     shutil.copy2(source, destination)
     return destination.resolve()
 
@@ -114,6 +131,7 @@ def stage_attachment_into_workspace(
 def build_generated_output_path(
     *,
     session_id: str,
+    turn_index: int | None,
     step: int,
     output_type: str,
     index: int,
@@ -121,14 +139,43 @@ def build_generated_output_path(
 ) -> Path:
     """Build one deterministic output path for generated expert files."""
     suffix = extension if extension.startswith(".") else f".{extension}"
-    file_name = f"step{step}_{output_type}_output{index}{suffix}"
-    return generated_session_dir(session_id) / file_name
+    normalized_turn = _coerce_index(turn_index, default=0)
+    normalized_step = _coerce_index(step, default=0)
+    file_name = f"turn{normalized_turn}_step{normalized_step}_{output_type}_output{index}{suffix}"
+    return generated_session_dir(session_id, turn_index=normalized_turn) / file_name
+
+
+def relocate_generated_output(
+    path: str | Path,
+    *,
+    session_id: str,
+    turn_index: int | None,
+    step: int,
+    output_type: str,
+    index: int,
+) -> Path:
+    """Move one auto-generated workspace file into the standardized generated directory."""
+    source = resolve_workspace_path(path)
+    destination = build_generated_output_path(
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+        output_type=output_type,
+        index=index,
+        extension=source.suffix or ".bin",
+    )
+    if source == destination:
+        return source.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    return destination.resolve()
 
 
 def save_binary_output(
     data: bytes,
     *,
     session_id: str,
+    turn_index: int | None,
     step: int,
     output_type: str,
     index: int,
@@ -137,6 +184,7 @@ def save_binary_output(
     """Persist one generated binary file into the session workspace."""
     destination = build_generated_output_path(
         session_id=session_id,
+        turn_index=turn_index,
         step=step,
         output_type=output_type,
         index=index,
@@ -181,3 +229,17 @@ def _safe_segment(value: str) -> str:
     """Sanitize one filesystem path segment."""
     cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
     return cleaned or "default"
+
+
+def _turn_segment(turn_index: int) -> str:
+    """Convert one turn index into a directory segment."""
+    return f"turn_{_coerce_index(turn_index, default=0)}"
+
+
+def _coerce_index(value: Any, *, default: int) -> int:
+    """Convert one index-like value into a non-negative integer."""
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return default
+    return normalized if normalized >= 0 else default

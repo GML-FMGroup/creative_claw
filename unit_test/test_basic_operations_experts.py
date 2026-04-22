@@ -11,6 +11,7 @@ from src.agents.experts.image_basic_operations.image_basic_operations_agent impo
 from src.agents.experts.video_basic_operations.video_basic_operations_agent import (
     VideoBasicOperationsAgent,
 )
+from src.runtime.workspace import workspace_root
 
 
 def _build_ctx(state: dict) -> SimpleNamespace:
@@ -65,13 +66,25 @@ class BasicOperationsExpertTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "src.agents.experts.video_basic_operations.tool.BuiltinToolbox"
-        ) as toolbox_cls:
+        ) as toolbox_cls, patch(
+            "src.agents.experts.basic_operations_helpers.relocate_generated_output"
+        ) as relocate_mock:
             toolbox_cls.return_value.video_concat.return_value = "generated/a_concat.mp4"
+            relocate_mock.return_value = (
+                workspace_root()
+                / "generated"
+                / "session_1"
+                / "turn_0"
+                / "turn0_step0_videobasicoperations_concat_output0.mp4"
+            )
             events = [event async for event in agent._run_async_impl(ctx)]
 
         current_output = events[0].actions.state_delta["current_output"]
         self.assertEqual(current_output["status"], "success")
-        self.assertEqual(current_output["output_files"][0]["path"], "generated/a_concat.mp4")
+        self.assertEqual(
+            current_output["output_files"][0]["path"],
+            "generated/session_1/turn_0/turn0_step0_videobasicoperations_concat_output0.mp4",
+        )
         self.assertEqual(
             events[0].actions.state_delta["video_basic_operation_results"]["operation"],
             "concat",

@@ -77,10 +77,14 @@ class SpeechSynthesisExpert(BaseAgent):
             yield self.format_event(result["message"], {"current_output": current_output})
             return
 
+        current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_step = int(ctx.session.state.get("step", 0) or 0)
+        current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
         output_path = save_binary_output(
             result["message"],
             session_id=ctx.session.id,
-            step=ctx.session.state.get("step", 0) + 1,
+            turn_index=current_turn,
+            step=current_step,
             output_type="speech_synthesis",
             index=0,
             extension=f".{audio_format}",
@@ -93,6 +97,9 @@ class SpeechSynthesisExpert(BaseAgent):
             ),
             source="expert",
             name=output_path.name,
+            turn=current_turn,
+            step=current_step,
+            expert_step=current_expert_step,
         )
         synthesis_result = {
             "output_path": output_record["path"],

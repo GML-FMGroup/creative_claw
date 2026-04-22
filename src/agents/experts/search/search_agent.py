@@ -123,12 +123,16 @@ class SearchAgent(BaseAgent):
             return current_output
         else:
             # save image:
+            current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+            current_step = int(ctx.session.state.get("step", 0) or 0)
+            current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
             output_files = []
             for i, img_binary in enumerate(rsp['message']):
                 output_path = save_binary_output(
                     img_binary,
                     session_id=ctx.session.id,
-                    step=ctx.session.state.get('step') + 1,
+                    turn_index=current_turn,
+                    step=current_step,
                     output_type="search",
                     index=i,
                     extension=".png",
@@ -141,6 +145,9 @@ class SearchAgent(BaseAgent):
                         description=f"The search result of {self.name} based on query: {ctx.session.state['current_parameters']['query']}",
                         source="expert",
                         name=artifact_name,
+                        turn=current_turn,
+                        step=current_step,
+                        expert_step=current_expert_step,
                     )
                 )
 
@@ -170,7 +177,6 @@ class SearchAgent(BaseAgent):
                 "message": text
             }
             return current_output
-
 
 
 

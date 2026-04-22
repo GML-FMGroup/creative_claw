@@ -70,10 +70,12 @@ class ImageEditingAgent(BaseAgent):
             rsp = await editing_tools.seedream_image_edit_tool(ToolContext(ctx), prompt_list)
         else:
             rsp = await editing_tools.nano_banana_image_edit_tool(ToolContext(ctx), prompt_list)
-        step = ctx.session.state['step']
+        current_turn = int(ctx.session.state.get("turn_index", 0) or 0)
+        current_step = int(ctx.session.state.get("step", 0) or 0)
+        current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
 
         if rsp["status"] == "error":
-            error_text = f"round{step+1}: {self.name} execution failed: {rsp['message']}"
+            error_text = f"turn {current_turn}, step {current_step}: {self.name} execution failed: {rsp['message']}"
             current_output = {"status": "error", "message": error_text}
 
             logger.error(error_text)
@@ -82,7 +84,7 @@ class ImageEditingAgent(BaseAgent):
         
         else:
             # save artifact
-            text = f"Round {step+1}: {self.name} finished editing {len(prompt_list)} image(s)."
+            text = f"Turn {current_turn}, step {current_step}: {self.name} finished editing {len(prompt_list)} image(s)."
             output_artifacts = []
 
             for i,(prompt, message) in enumerate(zip(prompt_list, rsp['message'])):
@@ -93,7 +95,8 @@ class ImageEditingAgent(BaseAgent):
                 output_path = save_binary_output(
                     message,
                     session_id=ctx.session.id,
-                    step=ctx.session.state.get('step') + 1,
+                    turn_index=current_turn,
+                    step=current_step,
                     output_type="editing",
                     index=i,
                     extension=".png",
@@ -112,11 +115,17 @@ class ImageEditingAgent(BaseAgent):
                         description=description,
                         source="expert",
                         name=artifact_name,
+                        turn=current_turn,
+                        step=current_step,
+                        expert_step=current_expert_step,
                     )
                 )
 
             if not output_artifacts:
-                error_text = f"round{step+1}: {self.name} execution failed: all edited images were empty."
+                error_text = (
+                    f"turn {current_turn}, step {current_step}: "
+                    f"{self.name} execution failed: all edited images were empty."
+                )
                 current_output = {"status": "error", "message": error_text}
                 logger.error(error_text)
                 yield self.format_event(error_text, {"current_output": current_output})
