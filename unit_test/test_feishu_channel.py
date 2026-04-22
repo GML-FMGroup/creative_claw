@@ -290,6 +290,32 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbound_messages[0].text, "hello from feishu")
         self.assertEqual(channel.reactions, [("om_1", "THUMBSUP")])
 
+    async def test_on_message_ignores_duplicate_message_id(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_dup_1",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"hello from feishu"}',
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+        await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(channel.reactions, [("om_dup_1", "THUMBSUP")])
+
     async def test_on_message_respects_allow_list(self) -> None:
         inbound_messages: list[InboundMessage] = []
         channel = _TestFeishuChannel(inbound_messages=inbound_messages)

@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 
 from src.channels.manager import ChannelManager
 from src.channels.local import LocalChannel
@@ -19,6 +20,19 @@ class _RouteAwareRuntime:
     async def run_message(self, _message: InboundMessage):
         self.route = get_route()
         yield WorkflowEvent(event_type="final", text="done")
+
+
+class _SerializedRuntime:
+    def __init__(self) -> None:
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def run_message(self, _message: InboundMessage):
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        await asyncio.sleep(0.01)
+        yield WorkflowEvent(event_type="final", text="done")
+        self.active_calls -= 1
 
 
 class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -95,6 +109,33 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(runtime.route, ("cli", "c9"))
         self.assertEqual(lines, ["done"])
+
+    async def test_manager_serializes_messages_for_same_session_key(self) -> None:
+        runtime = _SerializedRuntime()
+        lines: list[str] = []
+        manager = ChannelManager(runtime=runtime)  # type: ignore[arg-type]
+        manager.register(LocalChannel(writer=lines.append))
+
+        first_message = InboundMessage(
+            channel="cli",
+            sender_id="u1",
+            chat_id="c1",
+            text="hello 1",
+        )
+        second_message = InboundMessage(
+            channel="cli",
+            sender_id="u1",
+            chat_id="c1",
+            text="hello 2",
+        )
+
+        await asyncio.gather(
+            manager.handle_inbound(first_message),
+            manager.handle_inbound(second_message),
+        )
+
+        self.assertEqual(runtime.max_active_calls, 1)
+        self.assertEqual(lines, ["done", "done"])
 
 
 if __name__ == "__main__":

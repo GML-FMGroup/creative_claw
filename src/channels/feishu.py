@@ -8,6 +8,7 @@ import mimetypes
 import threading
 import time
 import traceback
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,9 @@ _STAGE_TITLES = {
     "attachment_received": "Attachment Received",
     "in_progress": "In Progress",
 }
+
+_MESSAGE_DEDUP_TTL_SECONDS = 600.0
+_MESSAGE_DEDUP_MAX_ENTRIES = 4096
 
 
 def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -178,6 +182,7 @@ class FeishuChannel(BaseChannel):
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._ws_loop: asyncio.AbstractEventLoop | None = None
+        self._seen_message_ids: OrderedDict[str, float] = OrderedDict()
         self._progress_cards: dict[tuple[str, str], str] = {}
 
     async def start(self) -> None:
@@ -601,6 +606,9 @@ class FeishuChannel(BaseChannel):
                 return
 
             message_id = str(getattr(message, "message_id", "") or "")
+            if message_id and self._mark_message_seen(message_id):
+                logger.info("Feishu inbound duplicate ignored: message_id={}", message_id)
+                return
             if message_id:
                 await self._add_reaction(message_id, "THUMBSUP")
             chat_id = str(getattr(message, "chat_id", "") or "")
@@ -652,6 +660,33 @@ class FeishuChannel(BaseChannel):
             )
         except Exception:
             logger.exception("Failed handling Feishu inbound message")
+
+    def _mark_message_seen(self, message_id: str) -> bool:
+        """Remember one inbound Feishu message id and report whether it was already seen."""
+        normalized = str(message_id or "").strip()
+        if not normalized:
+            return False
+
+        now = time.monotonic()
+        self._prune_seen_message_ids(now)
+        if normalized in self._seen_message_ids:
+            self._seen_message_ids.move_to_end(normalized)
+            self._seen_message_ids[normalized] = now
+            return True
+
+        self._seen_message_ids[normalized] = now
+        while len(self._seen_message_ids) > _MESSAGE_DEDUP_MAX_ENTRIES:
+            self._seen_message_ids.popitem(last=False)
+        return False
+
+    def _prune_seen_message_ids(self, now: float | None = None) -> None:
+        """Drop expired cached message ids to keep dedup state bounded."""
+        cutoff = (time.monotonic() if now is None else now) - _MESSAGE_DEDUP_TTL_SECONDS
+        while self._seen_message_ids:
+            oldest_message_id = next(iter(self._seen_message_ids))
+            if self._seen_message_ids[oldest_message_id] >= cutoff:
+                break
+            self._seen_message_ids.popitem(last=False)
 
     async def _extract_inbound_content(
         self,
