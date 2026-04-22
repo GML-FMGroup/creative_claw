@@ -218,19 +218,6 @@ def _summarize_list_session_files_result(result_text: str) -> str:
     if not isinstance(payload, dict):
         return stringify_value(result_text, max_chars=220)
 
-    if "final_file_paths" in payload and len(payload) == 1:
-        final_paths = payload.get("final_file_paths")
-        if final_paths is None:
-            return "Final file selection is currently unset."
-        if isinstance(final_paths, list):
-            if not final_paths:
-                return "Final file selection is explicitly cleared."
-            preview = "; ".join(str(path).strip() for path in final_paths[:3] if str(path).strip())
-            return (
-                f"Final file selection contains {len(final_paths)} path(s). "
-                f"Preview: {stringify_value(preview, max_chars=180)}"
-            )
-
     for key in ("uploaded", "generated", "input_files", "new_files", "latest_output_files"):
         if key in payload and len(payload) == 1:
             files = payload.get(key)
@@ -274,20 +261,11 @@ def _summarize_list_session_files_result(result_text: str) -> str:
         else 0
     )
     history_count = len(payload.get("files_history") or []) if isinstance(payload.get("files_history"), list) else 0
-    final_paths = payload.get("final_file_paths")
-    if final_paths is None:
-        final_selection = "unset"
-    elif isinstance(final_paths, list) and not final_paths:
-        final_selection = "cleared"
-    elif isinstance(final_paths, list):
-        final_selection = f"{len(final_paths)} selected"
-    else:
-        final_selection = "unknown"
     return (
         "Session file snapshot loaded. "
         f"uploaded={uploaded_count}; generated={generated_count}; input={input_count}; "
         f"new={new_count}; latest_output={latest_count}; "
-        f"history_steps={history_count}; final_selection={final_selection}."
+        f"history_steps={history_count}."
     )
 
 

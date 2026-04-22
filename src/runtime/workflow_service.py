@@ -444,8 +444,7 @@ class CreativeClawRuntime:
         state_delta["workflow_status"] = "running"
         state_delta["final_summary"] = ""
         state_delta["final_response"] = ""
-        state_delta["final_file_paths"] = None
-        state_delta["direct_outbound_sent"] = False
+        state_delta["final_file_paths"] = []
         state_delta["last_output_message"] = ""
         state_delta["last_orchestrator_response"] = ""
         state_delta["current_parameters"] = {}
@@ -525,17 +524,6 @@ class CreativeClawRuntime:
                 event_type="error",
                 text="Workflow ended without a valid session.",
                 metadata={"session_id": session_id},
-            )
-
-        if bool(final_session.state.get("direct_outbound_sent")):
-            return WorkflowEvent(
-                event_type="final",
-                text="",
-                metadata={
-                    "session_id": session_id,
-                    "display_style": "final",
-                    "visible": False,
-                },
             )
 
         explicit_final_file_paths = final_session.state.get("final_file_paths")

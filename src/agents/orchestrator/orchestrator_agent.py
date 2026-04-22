@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Optional
 
 from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.agents.run_config import RunConfig
 from google.adk.apps import App
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
@@ -19,6 +21,10 @@ from google.genai.types import Content, Part
 from conf.agent import experts_list
 from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
+from src.agents.orchestrator.final_response import (
+    ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY,
+    OrchestratorFinalResponse,
+)
 from src.logger import logger
 from src.runtime.step_events import (
     CreativeClawStepEventPlugin,
@@ -27,7 +33,6 @@ from src.runtime.step_events import (
 )
 from src.runtime.expert_dispatcher import dispatch_expert_call
 from src.runtime.expert_registry import build_expert_contract_summary
-from src.runtime.outbound_delivery import publish_outbound_message
 from src.runtime.tool_display import format_tool_args, stringify_value, summarize_tool_result
 from src.runtime.workspace import (
     build_workspace_file_record,
@@ -191,19 +196,6 @@ async def orchestrator_before_model_callback(
         for index, (summary, message) in enumerate(zip(summary_history, message_history), start=1):
             summary_lines.append(f"- Step {index}: target={summary}; result={message}")
 
-    final_file_paths = state.get("final_file_paths")
-    if isinstance(final_file_paths, list):
-        normalized_final_paths = [
-            str(path).strip()
-            for path in final_file_paths
-            if isinstance(path, str) and str(path).strip()
-        ]
-        if normalized_final_paths:
-            summary_lines.append("# Explicitly selected final reply files:")
-            summary_lines.extend(f"- {path}" for path in normalized_final_paths)
-        else:
-            summary_lines.append("# Final reply attachments have been explicitly cleared for this response.")
-
     latest_file_group = _latest_generated_files(state)
     if latest_file_group:
         latest_paths = ", ".join(
@@ -213,6 +205,16 @@ async def orchestrator_before_model_callback(
         )
         if latest_paths:
             summary_lines.append(f"# Most recent available output files: {latest_paths}")
+
+    summary_lines.extend(
+        [
+            "# Final response contract:",
+            "- When the task is complete, return the final structured response with `reply_text` and `final_file_paths`.",
+            "- `reply_text` must contain the complete user-facing reply in the user's language.",
+            "- `final_file_paths` must contain exact workspace-relative paths from the current session, or be `[]` when no attachments are needed.",
+            "- Use `list_session_files(section=\"latest_output\")` when you need the exact attachment paths to return.",
+        ]
+    )
 
     llm_request.contents.append(
         Content(role="user", parts=[Part(text="\n".join(summary_lines))])
@@ -255,6 +257,59 @@ def _select_latest_non_channel_files(files_history: list[list[dict[str, Any]]]) 
     return []
 
 
+def _collect_known_workspace_paths(state: dict[str, Any]) -> set[str]:
+    """Collect every normalized workspace path already tracked in the current session."""
+    known_paths: set[str] = set()
+
+    def _record(file_group: list[dict[str, Any]]) -> None:
+        for file_info in file_group:
+            path = str(file_info.get("path", "")).strip()
+            if path:
+                known_paths.add(path)
+
+    _record(list(state.get("uploaded") or state.get("input_files") or []))
+    _record(list(state.get("generated") or []))
+    _record(list(state.get("new_files") or []))
+    for entry in list(state.get("uploaded_history") or []):
+        if isinstance(entry, dict):
+            _record(list(entry.get("files") or []))
+    for entry in list(state.get("generated_history") or []):
+        if isinstance(entry, dict):
+            _record(list(entry.get("files") or []))
+    for file_group in list(state.get("files_history") or []):
+        if isinstance(file_group, list):
+            _record(list(file_group))
+    return known_paths
+
+
+def _normalize_final_response_paths(paths: list[str], *, state: dict[str, Any]) -> list[str]:
+    """Validate final attachment paths against the current session file history."""
+    known_paths = _collect_known_workspace_paths(state)
+    normalized_paths: list[str] = []
+    seen_paths: set[str] = set()
+    for raw_path in paths:
+        if not isinstance(raw_path, str):
+            raise ValueError("Each final attachment path must be a string.")
+        cleaned_path = raw_path.strip()
+        if not cleaned_path:
+            continue
+        if Path(cleaned_path).is_absolute():
+            raise ValueError("Final attachment paths must be workspace-relative, not absolute.")
+        relative_path = workspace_relative_path(cleaned_path)
+        if relative_path not in known_paths:
+            raise ValueError(
+                f"Final attachment path '{relative_path}' is not part of the current session file history."
+            )
+        resolved = resolve_workspace_path(relative_path)
+        if not resolved.exists() or not resolved.is_file():
+            raise ValueError(f"Final attachment path '{relative_path}' does not resolve to an existing file.")
+        if relative_path in seen_paths:
+            continue
+        seen_paths.add(relative_path)
+        normalized_paths.append(relative_path)
+    return normalized_paths
+
+
 class Orchestrator:
     """Plan one workflow step at a time with skills and builtin tools."""
 
@@ -285,6 +340,8 @@ class Orchestrator:
             model=build_llm(llm_model or SYS_CONFIG.llm_model),
             instruction=self._build_instruction(),
             before_model_callback=orchestrator_before_model_callback,
+            output_schema=OrchestratorFinalResponse,
+            output_key=ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY,
             tools=[
                 self.list_skills,
                 self.read_skill,
@@ -313,11 +370,7 @@ class Orchestrator:
                 self.process_session,
                 self.web_search,
                 self.web_fetch,
-                self.message,
-                self.message_file,
-                self.message_image,
                 self.list_session_files,
-                self.set_final_files,
                 self.invoke_agent,
             ],
         )
@@ -362,11 +415,7 @@ Rules:
 - Never invent skill content. Read the actual `SKILL.md` before using it deeply.
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
-- Use `message(content=...)` when you want to explicitly send a text reply to the user in the current conversation.
-- Use `message_file(paths=..., caption=...)` when you want to explicitly deliver one or more workspace files to the user in the current conversation.
-- Use `message_image(paths=..., caption=...)` when you want to explicitly deliver one or more workspace images to the user in the current conversation.
-- Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state before calling an explicit send tool.
-- `set_final_files(paths=[...])` is legacy final-reply attachment selection. Prefer the explicit `message_file(...)` / `message_image(...)` send actions for user-visible delivery.
+- Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
 - Inspect local files with `list_dir`, `glob`, `grep`, and `read_file` before changing them when the path or contents are uncertain.
 - Use local image, video, and audio tools for lightweight deterministic preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
@@ -388,9 +437,8 @@ Rules:
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
 - Prefer files already listed in the current session file history. Do not inspect or reuse files from unrelated session directories unless the user explicitly asks for cross-session access.
-- If the user asks you to send one or more workspace files back in the current conversation, call `message_file(...)` or `message_image(...)` with the exact workspace-relative paths.
-- Treat explicit `message(...)`, `message_file(...)`, and `message_image(...)` calls as the real user-visible delivery action for the current turn.
-- Do not rely on the runtime to automatically attach the latest generated files to the final reply.
+- Use `list_session_files(section="latest_output")` or the current session file history whenever you need the exact workspace-relative paths for the final response attachments.
+- Do not invent attachment paths. Only return exact workspace-relative paths already known in the current session state.
 - Only choose an expert agent when the task needs specialized image, search, or other expert capability that built-in tools and direct reasoning cannot handle well.
 - When calling `invoke_agent`, pass a complete expert brief.
 - For experts that need several parameters, encode the `prompt` argument as a JSON object string that contains the exact expert parameters.
@@ -412,8 +460,9 @@ Creative workflow routing hints:
 - If no skill is needed because the user gave a clear final generation request, execute directly with the smallest suitable expert call.
 
 Response Requirements:
-- Reply to the user in natural language after you finish the needed tool and expert calls.
-- If you use an explicit send tool for the current conversation, put the user-facing wording inside that send action instead of relying on an extra final reply.
+- Put the complete user-facing natural-language reply into `reply_text` in the structured final response.
+- Put any final attachments into `final_file_paths` as exact workspace-relative paths, or return `[]` when no attachments are needed.
+- The final structured response is the only final delivery for the current user turn.
 - Do not output internal workflow JSON.
 - Do not expose internal bookkeeping such as `current_output`, `workflow_status`, or private planning notes.
 - If the task is unfinished because a tool or expert failed, explain the blocker directly and say what remains.
@@ -1198,11 +1247,7 @@ Expert parameter contracts:
             runner=lambda: self.toolbox.web_fetch(url, max_chars),
         )
 
-    def list_session_files(
-        self,
-        section: str = "all",
-        tool_context: ToolContext | None = None,
-    ) -> str:
+    def list_session_files(self, section: str = "all", tool_context: ToolContext | None = None) -> str:
         """List normalized workspace file records already known in the current session."""
         return self._run_tool_with_events(
             tool_context=tool_context,
@@ -1235,7 +1280,6 @@ Expert parameter contracts:
             "new": {"new_files": list(state.get("new_files") or [])},
             "latest_output": {"latest_output_files": latest_output_files},
             "history": {"files_history": files_history},
-            "final": {"final_file_paths": state.get("final_file_paths")},
             "all": {
                 "uploaded": uploaded,
                 "uploaded_history": uploaded_history,
@@ -1245,197 +1289,12 @@ Expert parameter contracts:
                 "new_files": list(state.get("new_files") or []),
                 "latest_output_files": latest_output_files,
                 "files_history": files_history,
-                "final_file_paths": state.get("final_file_paths"),
             },
         }
         if normalized_section not in payload_by_section:
             allowed = ", ".join(payload_by_section.keys())
             return f"Error: Unsupported section `{section}`. Allowed: {allowed}"
         return json.dumps(payload_by_section[normalized_section], ensure_ascii=False, indent=2)
-
-    def message(self, content: str, tool_context: ToolContext | None = None) -> str:
-        """Explicitly send one text reply to the current conversation."""
-        return self._run_tool_with_events(
-            tool_context=tool_context,
-            tool_name="message",
-            stage="finalizing",
-            args={"content": content},
-            runner=lambda: self._send_message(content=content, artifact_paths=[], tool_context=tool_context),
-        )
-
-    def message_file(
-        self,
-        paths: Any,
-        caption: str = "",
-        tool_context: ToolContext | None = None,
-    ) -> str:
-        """Explicitly send one or more workspace files to the current conversation."""
-        return self._run_tool_with_events(
-            tool_context=tool_context,
-            tool_name="message_file",
-            stage="finalizing",
-            args={"paths": paths, "caption": caption},
-            runner=lambda: self._message_file(paths, caption=caption, tool_context=tool_context),
-        )
-
-    def message_image(
-        self,
-        paths: Any,
-        caption: str = "",
-        tool_context: ToolContext | None = None,
-    ) -> str:
-        """Explicitly send one or more workspace images to the current conversation."""
-        return self._run_tool_with_events(
-            tool_context=tool_context,
-            tool_name="message_image",
-            stage="finalizing",
-            args={"paths": paths, "caption": caption},
-            runner=lambda: self._message_image(paths, caption=caption, tool_context=tool_context),
-        )
-
-    @staticmethod
-    def _normalize_send_paths(paths: Any, *, image_only: bool = False) -> tuple[list[str], str | None]:
-        """Resolve one string or list of workspace paths for explicit sending."""
-        raw_paths: list[str] = []
-        if isinstance(paths, str):
-            normalized = paths.strip()
-            if normalized:
-                raw_paths.append(normalized)
-        elif isinstance(paths, list):
-            for item in paths:
-                if not isinstance(item, str):
-                    return [], "Error: Each send path must be a string."
-                normalized = item.strip()
-                if normalized:
-                    raw_paths.append(normalized)
-        else:
-            return [], "Error: `paths` must be a string or a list of strings."
-
-        resolved_paths: list[str] = []
-        seen_paths: set[str] = set()
-        for raw_path in raw_paths:
-            try:
-                resolved = resolve_workspace_path(raw_path)
-            except Exception as exc:
-                return [], f"Error: Invalid workspace path `{raw_path}`: {exc}"
-            if not resolved.exists():
-                return [], f"Error: File not found: {raw_path}"
-            if not resolved.is_file():
-                return [], f"Error: Not a file: {raw_path}"
-            if image_only and not looks_like_image(resolved):
-                return [], f"Error: Not an image file: {raw_path}"
-            resolved_text = str(resolved)
-            if resolved_text in seen_paths:
-                continue
-            seen_paths.add(resolved_text)
-            resolved_paths.append(resolved_text)
-        return resolved_paths, None
-
-    @staticmethod
-    def _mark_direct_outbound_sent(tool_context: ToolContext) -> None:
-        """Mark that this turn already delivered a user-visible explicit outbound message."""
-        tool_context.state["direct_outbound_sent"] = True
-        tool_context.state["final_file_paths"] = []
-
-    def _send_message(
-        self,
-        *,
-        content: str,
-        artifact_paths: list[str],
-        tool_context: ToolContext | None,
-    ) -> str:
-        """Publish one explicit outbound message to the current route."""
-        if tool_context is None:
-            return "Error: tool context is required to send a message."
-
-        text = str(content or "").strip()
-        if not text and not artifact_paths:
-            return "Error: Either `content` or at least one file path is required."
-
-        published = publish_outbound_message(text=text, artifact_paths=artifact_paths)
-        if not published:
-            return "Error: Outbound message publisher is not configured for the current route."
-
-        self._mark_direct_outbound_sent(tool_context)
-
-        if artifact_paths:
-            if text:
-                return f"Sent a message with {len(artifact_paths)} attachment(s) to the current conversation."
-            return f"Sent {len(artifact_paths)} attachment(s) to the current conversation."
-        return "Sent a message to the current conversation."
-
-    def _message_file(self, paths: Any, *, caption: str, tool_context: ToolContext | None) -> str:
-        """Resolve file paths and send them to the current conversation."""
-        resolved_paths, error_text = self._normalize_send_paths(paths)
-        if error_text:
-            return error_text
-        return self._send_message(content=caption, artifact_paths=resolved_paths, tool_context=tool_context)
-
-    def _message_image(self, paths: Any, *, caption: str, tool_context: ToolContext | None) -> str:
-        """Resolve image paths and send them to the current conversation."""
-        resolved_paths, error_text = self._normalize_send_paths(paths, image_only=True)
-        if error_text:
-            return error_text
-        return self._send_message(content=caption, artifact_paths=resolved_paths, tool_context=tool_context)
-
-    def set_final_files(
-        self,
-        paths: list[str],
-        tool_context: ToolContext | None = None,
-    ) -> str:
-        """Select which workspace files should be attached to the final reply."""
-        return self._run_tool_with_events(
-            tool_context=tool_context,
-            tool_name="set_final_files",
-            stage="finalizing",
-            args={"paths": paths},
-            runner=lambda: self._set_final_files(paths, tool_context=tool_context),
-        )
-
-    @staticmethod
-    def _set_final_files(paths: Any, *, tool_context: ToolContext | None) -> str:
-        """Validate and persist the explicit final file selection in session state."""
-        if tool_context is None:
-            return "Error: tool context is required to select final files."
-
-        raw_paths: list[str] = []
-        if isinstance(paths, str):
-            normalized = paths.strip()
-            if normalized:
-                raw_paths.append(normalized)
-        elif isinstance(paths, list):
-            for item in paths:
-                if isinstance(item, str):
-                    normalized = item.strip()
-                    if normalized:
-                        raw_paths.append(normalized)
-                else:
-                    return "Error: Each final file path must be a string."
-        else:
-            return "Error: `paths` must be a string or a list of strings."
-
-        selected_paths: list[str] = []
-        seen_paths: set[str] = set()
-        for raw_path in raw_paths:
-            try:
-                resolved = resolve_workspace_path(raw_path)
-            except Exception as exc:
-                return f"Error: Invalid workspace path `{raw_path}`: {exc}"
-            if not resolved.exists():
-                return f"Error: File not found: {raw_path}"
-            if not resolved.is_file():
-                return f"Error: Not a file: {raw_path}"
-            relative_path = workspace_relative_path(resolved)
-            if relative_path in seen_paths:
-                continue
-            seen_paths.add(relative_path)
-            selected_paths.append(relative_path)
-
-        tool_context.state["final_file_paths"] = selected_paths
-        if not selected_paths:
-            return "Cleared the final file selection. No files will be attached unless a later step selects them."
-        joined_paths = ", ".join(selected_paths)
-        return f"Selected {len(selected_paths)} final file(s): {joined_paths}"
 
     async def invoke_agent(
         self,
@@ -1472,6 +1331,7 @@ Expert parameter contracts:
             user_id=user_id,
             session_id=session_id,
             new_message=new_message,
+            run_config=RunConfig(max_llm_calls=SYS_CONFIG.max_iterations_orchestrator),
         ):
             logger.debug(
                 "uid: {}, sid: {}, Event: {}",
@@ -1486,7 +1346,7 @@ Expert parameter contracts:
         return final_response_text
 
     async def run_until_done(self) -> dict[str, Any]:
-        """Run one orchestrator invocation and persist the final direct reply."""
+        """Run one orchestrator invocation and persist the structured final response."""
         current_session = await self.session_service.get_session(
             app_name=self.app_name,
             user_id=self.uid,
@@ -1496,7 +1356,7 @@ Expert parameter contracts:
         current_session.state["last_orchestrator_response"] = ""
         previous_event_count = len(current_session.state.get("orchestration_events", []))
 
-        final_response = await self.run_agent_and_log_events(
+        raw_final_response = await self.run_agent_and_log_events(
             user_id=self.uid,
             session_id=self.sid,
             new_message=self.build_runner_message(
@@ -1513,14 +1373,27 @@ Expert parameter contracts:
             raise ValueError(f"Session {self.sid} not found for user {self.uid}")
 
         state = current_session.state
-        normalized_response = str(final_response or "").strip()
+        structured_response_payload = state.get(ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY)
+        if structured_response_payload is None:
+            raise ValueError(
+                "Missing structured final response in session state. "
+                f"Last observed final text: {raw_final_response!r}"
+            )
+
+        try:
+            structured_response = OrchestratorFinalResponse.model_validate(structured_response_payload)
+        except Exception as exc:
+            raise ValueError(
+                "Invalid structured final response payload stored in session state."
+            ) from exc
+
+        normalized_response = structured_response.reply_text.strip()
         if not normalized_response:
-            normalized_response = str(state.get("last_output_message", "")).strip()
-        if not normalized_response:
-            current_output = state.get("current_output") or {}
-            normalized_response = str(current_output.get("message", "")).strip()
-        if not normalized_response:
-            normalized_response = "The current task is complete."
+            raise ValueError("Structured final response must include a non-empty `reply_text`.")
+        normalized_final_paths = _normalize_final_response_paths(
+            structured_response.final_file_paths,
+            state=state,
+        )
 
         self._append_step_event(
             state,
@@ -1533,6 +1406,7 @@ Expert parameter contracts:
             "workflow_status": "finished",
             "final_summary": normalized_response,
             "final_response": normalized_response,
+            "final_file_paths": normalized_final_paths,
             "last_output_message": normalized_response,
             "last_orchestrator_response": normalized_response,
             "orchestration_events": list(state.get("orchestration_events", [])),
@@ -1547,6 +1421,7 @@ Expert parameter contracts:
             "workflow_status": "finished",
             "final_summary": normalized_response,
             "final_response": normalized_response,
+            "final_file_paths": normalized_final_paths,
             "last_output_message": normalized_response,
             "new_orchestration_events": orchestration_events[previous_event_count:],
         }

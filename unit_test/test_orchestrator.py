@@ -1,5 +1,4 @@
 import json
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,16 +12,21 @@ from google.genai.types import Content
 
 from conf.system import SYS_CONFIG
 from src.agents.experts.image_grounding.image_grounding_agent import ImageGroundingAgent
-from src.agents.orchestrator.orchestrator_agent import Orchestrator, orchestrator_before_model_callback
+from src.agents.orchestrator.final_response import (
+    ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY,
+    OrchestratorFinalResponse,
+)
+from src.agents.orchestrator.orchestrator_agent import (
+    Orchestrator,
+    _normalize_final_response_paths,
+    orchestrator_before_model_callback,
+)
 from src.runtime.adk_compat import annotate_agent_origin
-from src.runtime.outbound_delivery import configure_outbound_message_publisher
-from src.runtime.tool_context import route_context
-from src.runtime.workspace import workspace_relative_path, workspace_root
-from src.channels.events import OutboundMessage
+from src.runtime.workspace import build_workspace_file_record, workspace_relative_path, workspace_root
 
 
 class OrchestratorTests(unittest.TestCase):
-    def test_instruction_mentions_skill_workflow_and_invoke_agent_path(self) -> None:
+    def test_instruction_mentions_structured_final_response_contract(self) -> None:
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
             artifact_service=InMemoryArtifactService(),
@@ -66,11 +70,13 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("input_path", instruction)
         self.assertIn("`input_name` is legacy", instruction)
         self.assertIn("list_session_files(section=...)", instruction)
-        self.assertIn("message(content=...)", instruction)
-        self.assertIn("message_file(paths=..., caption=...)", instruction)
-        self.assertIn("message_image(paths=..., caption=...)", instruction)
-        self.assertIn("set_final_files(paths=[...])", instruction)
-        self.assertIn("Do not rely on the runtime to automatically attach the latest generated files", instruction)
+        self.assertIn("reply_text", instruction)
+        self.assertIn("final_file_paths", instruction)
+        self.assertIn("The final structured response is the only final delivery", instruction)
+        self.assertNotIn("message(content=...)", instruction)
+        self.assertNotIn("message_file(paths=..., caption=...)", instruction)
+        self.assertNotIn("message_image(paths=..., caption=...)", instruction)
+        self.assertNotIn("set_final_files(paths=[...])", instruction)
         self.assertIn("aligned with the user's language", instruction)
         self.assertIn("If the user mixes languages", instruction)
         self.assertIn("Expert parameter contracts", instruction)
@@ -89,6 +95,19 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("creative-workflow-router", instruction)
         self.assertIn("creative-qc", instruction)
         self.assertIn("do not skip straight to `ImageGenerationAgent` or `VideoGenerationAgent`", instruction)
+
+    def test_agent_uses_structured_output_schema(self) -> None:
+        orchestrator = Orchestrator(
+            session_service=InMemorySessionService(),
+            artifact_service=InMemoryArtifactService(),
+            expert_agents={},
+        )
+
+        self.assertIs(orchestrator.agent.output_schema, OrchestratorFinalResponse)
+        self.assertEqual(
+            orchestrator.agent.output_key,
+            ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY,
+        )
 
     def test_list_skills_records_orchestration_step(self) -> None:
         orchestrator = Orchestrator(
@@ -122,44 +141,6 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("Result:", events[1]["detail"])
         self.assertIn("path=README.md", events[1]["detail"])
 
-    def test_set_final_files_updates_state_with_workspace_relative_paths(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_agents={},
-        )
-        tool_context = SimpleNamespace(state={})
-
-        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
-            file_path = Path(tmpdir) / "person_bbox_marked.png"
-            file_path.write_bytes(b"fake-image")
-            relative_path = workspace_relative_path(file_path)
-
-            result = orchestrator.set_final_files([relative_path], tool_context=tool_context)
-            self.assertIn("Selected 1 final file", result)
-            self.assertEqual(tool_context.state["final_file_paths"], [relative_path])
-
-            cleared = orchestrator.set_final_files([], tool_context=tool_context)
-            self.assertIn("Cleared the final file selection", cleared)
-            self.assertEqual(tool_context.state["final_file_paths"], [])
-
-    def test_set_final_files_rejects_paths_outside_workspace(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_agents={},
-        )
-        tool_context = SimpleNamespace(state={})
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            outside_path = Path(tmpdir) / "external.png"
-            outside_path.write_bytes(b"external")
-
-            result = orchestrator.set_final_files([str(outside_path)], tool_context=tool_context)
-
-        self.assertTrue(result.startswith("Error: Invalid workspace path"))
-        self.assertNotIn("final_file_paths", tool_context.state)
-
     def test_list_session_files_returns_latest_output_records(self) -> None:
         orchestrator = Orchestrator(
             session_service=InMemorySessionService(),
@@ -174,7 +155,6 @@ class OrchestratorTests(unittest.TestCase):
                     [{"name": "upload.png", "path": "inbox/cli/upload.png", "source": "channel"}],
                     [{"name": "result.png", "path": "generated/session/result.png", "source": "image_grounding"}],
                 ],
-                "final_file_paths": None,
             }
         )
 
@@ -183,6 +163,50 @@ class OrchestratorTests(unittest.TestCase):
 
         self.assertEqual(len(payload["latest_output_files"]), 1)
         self.assertEqual(payload["latest_output_files"][0]["path"], "generated/session/result.png")
+
+    def test_normalize_final_response_paths_accepts_tracked_relative_file(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            file_path = Path(tmpdir) / "result.png"
+            file_path.write_bytes(b"fake-image")
+            file_record = build_workspace_file_record(
+                file_path,
+                description="generated image",
+                source="image_generation",
+            )
+
+            normalized = _normalize_final_response_paths(
+                [workspace_relative_path(file_path), workspace_relative_path(file_path)],
+                state={"generated": [file_record]},
+            )
+
+        self.assertEqual(normalized, [workspace_relative_path(file_path)])
+
+    def test_normalize_final_response_paths_rejects_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            file_path = Path(tmpdir) / "result.png"
+            file_path.write_bytes(b"fake-image")
+            file_record = build_workspace_file_record(
+                file_path,
+                description="generated image",
+                source="image_generation",
+            )
+
+            with self.assertRaisesRegex(ValueError, "workspace-relative"):
+                _normalize_final_response_paths(
+                    [str(file_path.resolve())],
+                    state={"generated": [file_record]},
+                )
+
+    def test_normalize_final_response_paths_rejects_untracked_path(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            file_path = Path(tmpdir) / "result.png"
+            file_path.write_bytes(b"fake-image")
+
+            with self.assertRaisesRegex(ValueError, "current session file history"):
+                _normalize_final_response_paths(
+                    [workspace_relative_path(file_path)],
+                    state={"generated": []},
+                )
 
     def test_summarize_read_file_result_prefers_preview(self) -> None:
         status, summary = Orchestrator._summarize_tool_result(
@@ -250,7 +274,7 @@ class OrchestratorTests(unittest.TestCase):
 
     def test_summarize_web_fetch_uses_json_fields(self) -> None:
         payload = (
-            '{'
+            "{"
             '"url":"https://example.com",'
             '"finalUrl":"https://example.com",'
             '"status":200,'
@@ -258,7 +282,7 @@ class OrchestratorTests(unittest.TestCase):
             '"truncated":false,'
             '"length":42,'
             '"text":"alpha\\nbeta\\ngamma\\ndelta"'
-            '}'
+            "}"
         )
         status, summary = Orchestrator._summarize_tool_result("web_fetch", payload)
 
@@ -298,56 +322,24 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(status, "error")
         self.assertIn("search failed", summary)
 
-    def test_summarize_list_session_files_result_uses_final_selection_summary(self) -> None:
+    def test_summarize_list_session_files_result_uses_latest_output_summary(self) -> None:
         payload = json.dumps(
-            {"final_file_paths": ["generated/session/a.png", "generated/session/b.png"]},
+            {
+                "latest_output_files": [
+                    {"path": "generated/session/a.png"},
+                    {"path": "generated/session/b.png"},
+                ]
+            },
             ensure_ascii=False,
         )
         status, summary = Orchestrator._summarize_tool_result("list_session_files", payload)
 
         self.assertEqual(status, "success")
-        self.assertIn("Final file selection contains 2 path(s)", summary)
+        self.assertIn("latest_output_files contains 2 record(s)", summary)
         self.assertIn("generated/session/a.png", summary)
 
+
 class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
-    async def test_message_file_publishes_explicit_outbound_and_marks_turn_state(self) -> None:
-        orchestrator = Orchestrator(
-            session_service=InMemorySessionService(),
-            artifact_service=InMemoryArtifactService(),
-            expert_agents={},
-        )
-        tool_context = SimpleNamespace(state={})
-        sent_messages: list[OutboundMessage] = []
-
-        async def _capture(message: OutboundMessage) -> None:
-            sent_messages.append(message)
-
-        configure_outbound_message_publisher(_capture)
-        try:
-            with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
-                file_path = Path(tmpdir) / "result.mp4"
-                file_path.write_bytes(b"fake-video")
-                relative_path = workspace_relative_path(file_path)
-
-                with route_context("cli", "chat-1"):
-                    result = orchestrator.message_file(
-                        [relative_path],
-                        caption="Here is the generated video.",
-                        tool_context=tool_context,
-                    )
-                await asyncio.sleep(0)
-        finally:
-            configure_outbound_message_publisher(None)
-
-        self.assertIn("Sent a message with 1 attachment", result)
-        self.assertTrue(tool_context.state["direct_outbound_sent"])
-        self.assertEqual(tool_context.state["final_file_paths"], [])
-        self.assertEqual(len(sent_messages), 1)
-        self.assertEqual(sent_messages[0].channel, "cli")
-        self.assertEqual(sent_messages[0].chat_id, "chat-1")
-        self.assertEqual(sent_messages[0].text, "Here is the generated video.")
-        self.assertEqual(sent_messages[0].artifact_paths, [str(file_path.resolve())])
-
     async def test_before_model_callback_includes_workspace_file_history_without_new_upload(self) -> None:
         callback_context = SimpleNamespace(
             state={
@@ -383,53 +375,93 @@ class OrchestratorCallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("step1_generation_output0.png", prompt_text)
         self.assertIn("Most recent available output files", prompt_text)
+        self.assertIn("Final response contract", prompt_text)
+        self.assertIn("reply_text", prompt_text)
+        self.assertIn("final_file_paths", prompt_text)
+        self.assertIn("list_session_files(section=\"latest_output\")", prompt_text)
 
-    async def test_before_model_callback_includes_explicit_final_file_selection(self) -> None:
-        callback_context = SimpleNamespace(
-            state={
-                "workflow_status": "running",
-                "step": 3,
-                "user_prompt": "Send the marked image back to me.",
-                "input_files": [],
-                "summary_history": [],
-                "message_history": [],
-                "files_history": [],
-                "new_files": [],
-                "final_file_paths": ["generated/session_1/person_bbox_marked.png"],
-            }
+    async def test_run_until_done_uses_structured_final_response(self) -> None:
+        session_service = InMemorySessionService()
+        artifact_service = InMemoryArtifactService()
+        orchestrator = Orchestrator(
+            session_service=session_service,
+            artifact_service=artifact_service,
+            expert_agents={},
         )
-        llm_request = SimpleNamespace(contents=[])
+        orchestrator.uid = "user-1"
+        orchestrator.sid = "session-1"
 
-        await orchestrator_before_model_callback(callback_context, llm_request)
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            file_path = Path(tmpdir) / "result.png"
+            file_path.write_bytes(b"fake-image")
+            file_record = build_workspace_file_record(
+                file_path,
+                description="generated image",
+                source="image_generation",
+            )
+            relative_path = workspace_relative_path(file_path)
 
-        prompt_text = "\n".join(
-            part.text for part in llm_request.contents[0].parts if getattr(part, "text", None)
+            await session_service.create_session(
+                app_name=SYS_CONFIG.app_name,
+                user_id=orchestrator.uid,
+                session_id=orchestrator.sid,
+                state={
+                    "orchestration_events": [],
+                    "generated": [file_record],
+                    "generated_history": [],
+                    "uploaded": [],
+                    "uploaded_history": [],
+                    "files_history": [[file_record]],
+                    ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY: {
+                        "reply_text": "Here is the final image.",
+                        "final_file_paths": [relative_path],
+                    },
+                },
+            )
+
+            with patch.object(
+                orchestrator,
+                "run_agent_and_log_events",
+                new=AsyncMock(return_value="raw final text"),
+            ):
+                result = await orchestrator.run_until_done()
+
+        self.assertEqual(result["final_response"], "Here is the final image.")
+        self.assertEqual(result["final_file_paths"], [relative_path])
+
+        session = await session_service.get_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=orchestrator.uid,
+            session_id=orchestrator.sid,
         )
-        self.assertIn("Explicitly selected final reply files", prompt_text)
-        self.assertIn("generated/session_1/person_bbox_marked.png", prompt_text)
+        self.assertEqual(session.state["final_response"], "Here is the final image.")
+        self.assertEqual(session.state["final_file_paths"], [relative_path])
 
-    async def test_before_model_callback_marks_explicitly_cleared_final_files(self) -> None:
-        callback_context = SimpleNamespace(
-            state={
-                "workflow_status": "running",
-                "step": 1,
-                "user_prompt": "Reply with text only.",
-                "input_files": [],
-                "summary_history": [],
-                "message_history": [],
-                "files_history": [],
-                "new_files": [],
-                "final_file_paths": [],
-            }
+    async def test_run_until_done_requires_structured_final_response(self) -> None:
+        session_service = InMemorySessionService()
+        artifact_service = InMemoryArtifactService()
+        orchestrator = Orchestrator(
+            session_service=session_service,
+            artifact_service=artifact_service,
+            expert_agents={},
         )
-        llm_request = SimpleNamespace(contents=[])
+        orchestrator.uid = "user-1"
+        orchestrator.sid = "session-1"
 
-        await orchestrator_before_model_callback(callback_context, llm_request)
-
-        prompt_text = "\n".join(
-            part.text for part in llm_request.contents[0].parts if getattr(part, "text", None)
+        await session_service.create_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=orchestrator.uid,
+            session_id=orchestrator.sid,
+            state={"orchestration_events": []},
         )
-        self.assertIn("attachments have been explicitly cleared", prompt_text)
+
+        with patch.object(
+            orchestrator,
+            "run_agent_and_log_events",
+            new=AsyncMock(return_value="fallback final text"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Missing structured final response"):
+                await orchestrator.run_until_done()
 
 
 class OrchestratorInvokeAgentIntegrationTests(unittest.IsolatedAsyncioTestCase):
