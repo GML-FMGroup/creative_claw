@@ -136,7 +136,7 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
                         status="success",
                         message=b"png-data",
                         provider="gpt_image",
-                        model_name="gpt-image-1.5",
+                        model_name="gpt-image-2",
                     )
                 ),
             ) as gpt_image_mock,
@@ -313,12 +313,16 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gpt_image_generation_returns_binary_payload(self) -> None:
         image_payload = base64.b64encode(b"gpt-image-png").decode("utf-8")
+        generate_kwargs: dict[str, object] = {}
 
         class _FakeClient:
             def __init__(self, **_kwargs) -> None:
                 self.images = SimpleNamespace(
-                    generate=lambda **_kwargs: SimpleNamespace(
+                    generate=lambda **kwargs: (
+                        generate_kwargs.update(kwargs)
+                        or SimpleNamespace(
                         data=[SimpleNamespace(b64_json=image_payload)],
+                        )
                     )
                 )
 
@@ -327,8 +331,9 @@ class ImageExpertProviderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "success")
         self.assertEqual(result.provider, "gpt_image")
-        self.assertEqual(result.model_name, "gpt-image-1.5")
+        self.assertEqual(result.model_name, "gpt-image-2")
         self.assertEqual(result.message, b"gpt-image-png")
+        self.assertEqual(generate_kwargs["model"], "gpt-image-2")
 
 
 if __name__ == "__main__":

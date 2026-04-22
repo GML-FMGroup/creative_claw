@@ -51,7 +51,7 @@ _EXPERT_SPECS = {
         },
         notes=(
             "Use prompt; optional provider, aspect_ratio, resolution. "
-            "GPT Image is available through provider `gpt_image` and supports optional size and quality."
+            "GPT Image 2 is available through provider `gpt_image` and supports optional size and quality."
         ),
     ),
     "ImageEditingAgent": ExpertSpec(

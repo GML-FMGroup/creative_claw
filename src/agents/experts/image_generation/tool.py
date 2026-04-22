@@ -17,6 +17,8 @@ from conf.llm import build_llm
 from conf.system import SYS_CONFIG
 from src.logger import logger
 
+_OPENAI_GPT_IMAGE_MODEL = "gpt-image-2"
+
 
 @dataclass
 class ImageGenerationResult:
@@ -238,20 +240,20 @@ async def gpt_image_generation(
     size: str = "1024x1024",
     quality: str = "high",
 ) -> ImageGenerationResult:
-    """Generate one image with OpenAI GPT Image."""
+    """Generate one image with OpenAI GPT Image 2."""
     if not openai_api_key:
         return ImageGenerationResult(
             status="error",
             message="OPENAI_API_KEY is not set.",
             provider="gpt_image",
-            model_name="gpt-image-1.5",
+            model_name=_OPENAI_GPT_IMAGE_MODEL,
         )
 
     def _generate() -> ImageGenerationResult:
         try:
             client = OpenAI(api_key=openai_api_key)
             result = client.images.generate(
-                model="gpt-image-1.5",
+                model=_OPENAI_GPT_IMAGE_MODEL,
                 prompt=prompt,
                 size=size,
                 quality=quality,
@@ -263,13 +265,13 @@ async def gpt_image_generation(
                     status="error",
                     message="gpt-image returned empty images",
                     provider="gpt_image",
-                    model_name="gpt-image-1.5",
+                    model_name=_OPENAI_GPT_IMAGE_MODEL,
                 )
             return ImageGenerationResult(
                 status="success",
                 message=base64.b64decode(image_base64),
                 provider="gpt_image",
-                model_name="gpt-image-1.5",
+                model_name=_OPENAI_GPT_IMAGE_MODEL,
             )
         except Exception as exc:
             logger.opt(exception=exc).error(
@@ -281,7 +283,7 @@ async def gpt_image_generation(
                 status="error",
                 message=f"gpt-image exception: {exc}",
                 provider="gpt_image",
-                model_name="gpt-image-1.5",
+                model_name=_OPENAI_GPT_IMAGE_MODEL,
             )
 
     return await asyncio.to_thread(_generate)

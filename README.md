@@ -49,18 +49,18 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ### 🖼️ Image Generation
 
-- Nano Banana Pro
-- Seedream
-- GPT-image
+- Nano Banana Pro (Gemini 3.1 Flash Image Preview)
+- Seedream 5.0
+- GPT Image 2
 
 ### 🎬 Video Generation
 
-- Seedance
-- Veo
-- Kling
+- Seedance 1.0 Pro
+- Veo 3.1
+- Kling 3 (`multi_reference` currently uses Kling 1.6)
 
 ### 📦 3D Generation
- - HY 3D
+ - HY 3D 3.0
 
 ### 🔊 Speech Synthesis
 
