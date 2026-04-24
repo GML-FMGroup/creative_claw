@@ -146,8 +146,13 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         summary = build_expert_contract_summary()
 
         self.assertIn("provider `veo`", summary)
+        self.assertIn("veo-3.1-generate-preview", summary)
+        self.assertIn("native synchronized audio", summary)
+        self.assertIn("does not return subtitle/SRT files", summary)
         self.assertIn("['4', '6', '8']", summary)
         self.assertIn("provider `seedance`", summary)
+        self.assertIn("visual-only", summary)
+        self.assertIn("kling-v1-6", summary)
 
     def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:
         parameters = normalize_invoke_agent_parameters(

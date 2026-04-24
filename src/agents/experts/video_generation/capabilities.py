@@ -11,6 +11,40 @@ VIDEO_GENERATION_DEFAULT_ASPECT_RATIO = "16:9"
 VIDEO_GENERATION_PROMPT_REWRITE_VALUES = ("auto", "off")
 VIDEO_GENERATION_PERSON_GENERATION_VALUES = ("allow_all", "allow_adult")
 VIDEO_GENERATION_KLING_MODE_VALUES = ("std", "pro")
+VIDEO_GENERATION_SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
+VIDEO_GENERATION_VEO_MODEL_NAME = "veo-3.1-generate-preview"
+VIDEO_GENERATION_KLING_MODEL_NAME = "kling-v3"
+VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME = "kling-v1-6"
+
+_VIDEO_PROVIDER_MODEL_CAPABILITIES = {
+    "seedance": {
+        "model_name": VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
+        "native_audio_output": "not_supported",
+        "subtitle_file_output": "not_supported",
+        "summary": (
+            "Treat current Creative Claw Seedance output as visual-only; do not promise "
+            "synchronized audio or subtitle files."
+        ),
+    },
+    "veo": {
+        "model_name": VIDEO_GENERATION_VEO_MODEL_NAME,
+        "native_audio_output": "supported",
+        "subtitle_file_output": "not_supported",
+        "summary": (
+            "Supports native synchronized audio from prompt cues such as dialogue, "
+            "ambience, music, and sound effects; it does not return subtitle/SRT files."
+        ),
+    },
+    "kling": {
+        "model_name": VIDEO_GENERATION_KLING_MODEL_NAME,
+        "native_audio_output": "not_exposed",
+        "subtitle_file_output": "not_supported",
+        "summary": (
+            "Current Creative Claw Kling integration does not expose native audio "
+            "controls, so treat it as visual-only and do not promise subtitles."
+        ),
+    },
+}
 
 _VIDEO_PROVIDER_CAPABILITIES = {
     "seedance": {
@@ -98,6 +132,28 @@ def get_video_generation_default_parameters() -> dict[str, Any]:
         "provider": VIDEO_GENERATION_DEFAULT_PROVIDER,
         "mode": VIDEO_GENERATION_DEFAULT_MODE,
         "aspect_ratio": VIDEO_GENERATION_DEFAULT_ASPECT_RATIO,
+    }
+
+
+def get_video_generation_model_name(
+    provider: str,
+    *,
+    mode: str = VIDEO_GENERATION_DEFAULT_MODE,
+) -> str:
+    """Return the effective model name for one provider and generation mode."""
+    current_provider = normalize_video_provider(provider)
+    current_mode = str(mode or VIDEO_GENERATION_DEFAULT_MODE).strip().lower()
+    if current_provider == "kling" and current_mode == "multi_reference":
+        return VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME
+    return str(_VIDEO_PROVIDER_MODEL_CAPABILITIES[current_provider]["model_name"])
+
+
+def get_video_generation_model_capabilities(provider: str) -> dict[str, str]:
+    """Return model-level audio and subtitle capability metadata for one provider."""
+    current_provider = normalize_video_provider(provider)
+    return {
+        key: str(value)
+        for key, value in _VIDEO_PROVIDER_MODEL_CAPABILITIES[current_provider].items()
     }
 
 
@@ -265,27 +321,37 @@ def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
 
 def build_video_generation_contract_notes() -> str:
     """Render one provider-aware contract summary for the orchestrator prompt."""
+    seedance_model_capabilities = get_video_generation_model_capabilities("seedance")
+    veo_model_capabilities = get_video_generation_model_capabilities("veo")
+    kling_model_capabilities = get_video_generation_model_capabilities("kling")
     provider_blocks = [
         (
-            "provider `seedance`: "
+            "provider `seedance` "
+            f"(model `{get_video_generation_model_name('seedance')}`): "
             f"modes {list(get_supported_video_modes('seedance'))}, "
             f"aspect_ratio {list(get_supported_video_aspect_ratios('seedance'))}; "
+            f"{seedance_model_capabilities['summary']}; "
             "do not pass resolution or duration_seconds."
         ),
         (
-            "provider `veo`: "
+            "provider `veo` "
+            f"(model `{get_video_generation_model_name('veo')}`): "
             f"modes {list(get_supported_video_modes('veo'))}, "
             f"aspect_ratio {list(get_supported_video_aspect_ratios('veo'))}, "
             f"resolution {list(get_supported_video_resolutions('veo'))}, "
-            f"duration_seconds {[str(value) for value in get_supported_video_durations('veo')]}."
+            f"duration_seconds {[str(value) for value in get_supported_video_durations('veo')]}; "
+            f"{veo_model_capabilities['summary']} Do not pass separate audio files."
         ),
         (
-            "provider `kling`: "
+            "provider `kling` "
+            f"(basic model `{get_video_generation_model_name('kling')}`): "
             f"modes {list(get_supported_video_modes('kling'))}, "
             f"aspect_ratio {list(get_supported_video_aspect_ratios('kling'))}, "
             f"duration_seconds {[str(value) for value in get_supported_video_durations('kling')]}; "
+            f"{kling_model_capabilities['summary']}; "
             f"for mode `multi_reference`, allowed duration_seconds are "
-            f"{[str(value) for value in get_supported_video_durations('kling', mode='multi_reference')]}."
+            f"{[str(value) for value in get_supported_video_durations('kling', mode='multi_reference')]} "
+            f"and the effective model is `{get_video_generation_model_name('kling', mode='multi_reference')}`."
         ),
     ]
     return (
@@ -294,6 +360,36 @@ def build_video_generation_contract_notes() -> str:
         + " Agent-only parameter `prompt_rewrite` accepts `auto` or `off` and controls local prompt rewriting. "
         + "Parameter `resolution` applies only to `veo`; `person_generation` applies only to `veo`; "
         + "`kling_mode` and `model_name` apply only to `kling`."
+    )
+
+
+def build_video_generation_routing_notes() -> str:
+    """Render concise video-generation routing guidance for the main orchestrator."""
+    return "\n".join(
+        [
+            (
+                "- For video with native audio, dialogue, ambience, music, or sound effects, "
+                "prefer `VideoGenerationAgent` provider `veo`; audio should be described in the "
+                "prompt rather than passed as a separate file."
+            ),
+            (
+                "- For subtitle files, captions, SRT/VTT, or transcripts, do not rely on video "
+                "generation models to produce structured subtitles; generate or obtain the video "
+                "first, then use `SpeechRecognitionExpert` or `SpeechTranscriptionExpert`."
+            ),
+            (
+                "- Treat `VideoGenerationAgent` provider `seedance` as visual-only in the current "
+                f"integration (`{get_video_generation_model_name('seedance')}`); do not promise "
+                "synchronized audio or subtitle files."
+            ),
+            (
+                "- Treat current `VideoGenerationAgent` provider `kling` integration as visual-only "
+                "for audio/subtitle routing because native audio controls are not exposed; use "
+                f"`model_name={get_video_generation_model_name('kling')}` for basic Kling routes and "
+                f"`model_name={get_video_generation_model_name('kling', mode='multi_reference')}` "
+                "for `multi_reference`."
+            ),
+        ]
     )
 
 

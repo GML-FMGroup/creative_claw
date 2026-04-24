@@ -26,7 +26,11 @@ from PIL import Image, UnidentifiedImageError
 
 from src.agents.experts.video_generation.capabilities import (
     VIDEO_GENERATION_KLING_MODE_VALUES,
+    VIDEO_GENERATION_KLING_MODEL_NAME,
+    VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME,
     VIDEO_GENERATION_PERSON_GENERATION_VALUES,
+    VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
+    VIDEO_GENERATION_VEO_MODEL_NAME,
     get_default_video_duration,
     get_default_video_resolution,
     normalize_provider_video_aspect_ratio,
@@ -39,10 +43,10 @@ from conf.llm import build_llm
 from src.logger import logger
 from src.runtime.workspace import resolve_workspace_path
 
-_SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
-_VEO_MODEL_NAME = "veo-3.1-generate-preview"
-_KLING_MODEL_NAME = "kling-v3"
-_KLING_MULTI_REFERENCE_MODEL_NAME = "kling-v1-6"
+_SEEDANCE_MODEL_NAME = VIDEO_GENERATION_SEEDANCE_MODEL_NAME
+_VEO_MODEL_NAME = VIDEO_GENERATION_VEO_MODEL_NAME
+_KLING_MODEL_NAME = VIDEO_GENERATION_KLING_MODEL_NAME
+_KLING_MULTI_REFERENCE_MODEL_NAME = VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME
 _DEFAULT_KLING_API_BASE = "https://api-beijing.klingai.com"
 _KLING_API_BASE_CANDIDATES = (
     "https://api-beijing.klingai.com",

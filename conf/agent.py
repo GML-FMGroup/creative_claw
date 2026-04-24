@@ -3,6 +3,7 @@ import json
 
 from pydantic import BaseModel
 from conf.path import CONF_ROOT
+from src.runtime.expert_cards import discover_expert_cards
 
 
 class RootAgentConfig(BaseModel):
@@ -73,8 +74,21 @@ def load_agent_configs(
     expert_agents = [
         ExpertAgentConfig(**agent) for agent in data.get("expert_agents", [])
     ]
+    _apply_expert_cards(expert_agents)
 
     return root_agents, expert_agents
+
+
+def _apply_expert_cards(expert_agents: list[ExpertAgentConfig]) -> None:
+    """Replace expert descriptions with `EXPERT.md` card descriptions when available."""
+    cards = discover_expert_cards()
+    for expert_agent in expert_agents:
+        card = cards.get(expert_agent.name)
+        if card is None:
+            continue
+        description = card.build_description()
+        if description:
+            expert_agent.description = description
 
 
 experts_list: list[ExpertAgentConfig] = load_agent_configs(

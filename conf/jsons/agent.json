@@ -83,7 +83,7 @@
             "name": "SpeechTranscriptionExpert",
             "enable": true,
             "description": "Convert one or more workspace audio or video files into transcript text only. Use this expert when the task is transcription, not audio editing, synthesis, or music generation.",
-            "parameters": "`{'input_path': 'workspace/path.wav'}` or `{'input_path': 'workspace/path.mp4', 'timestamps': true, 'language': 'en'}` or `{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'timestamps': false}`"
+            "parameters": "`{'input_path': 'workspace/path.wav', 'task': 'asr'(optional), 'timestamps': true(optional), 'language': 'en'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_format': 'srt|vtt'(optional), 'output_path': 'workspace/subtitles.srt'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_text': 'existing subtitle or transcript text', 'subtitle_format': 'srt|vtt'(optional)}` or `{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'task': 'asr'(optional), 'timestamps': false(optional)}`"
         },
         {
             "name": "SpeechSynthesisExpert",

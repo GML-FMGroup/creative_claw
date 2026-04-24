@@ -21,6 +21,7 @@ from google.genai.types import Content, Part
 from conf.agent import experts_list
 from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
+from src.agents.experts.video_generation.capabilities import build_video_generation_routing_notes
 from src.agents.orchestrator.final_response import (
     ORCHESTRATOR_FINAL_RESPONSE_OUTPUT_KEY,
     OrchestratorFinalResponse,
@@ -404,6 +405,7 @@ class Orchestrator:
         )
         skills_summary = self.skill_registry.build_summary()
         expert_contracts = build_expert_contract_summary()
+        video_generation_routing_notes = build_video_generation_routing_notes()
 
         return f"""
 You are Creative Claw's primary user-facing orchestrator.
@@ -442,8 +444,9 @@ Rules:
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
 - When using `VideoGenerationAgent`, you may pass optional `prompt_rewrite`, `provider`, `mode`, `aspect_ratio`, `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, `model_name`, and `kling_mode`.
-- For provider `veo`, mode `video_extension` accepts one workspace video via `input_path` or `input_paths`, and audio should be described in the prompt rather than passed as a separate file.
-- For provider `kling`, use only `prompt`, `first_frame`, `first_frame_and_last_frame`, or `multi_reference`. Basic Kling routes now default to `model_name=kling-v3`; `multi_reference` expects 2-4 workspace images through `input_paths` and currently uses `model_name=kling-v1-6` in the official API schema. If Kling input images do not meet the documented limits, inspect them with `image_info` and decide whether to preprocess them with `image_resize` or other local image tools first. The Kling expert does not auto-resize or auto-crop inputs. Do not route Kling calls to `reference_asset`, `reference_style`, or `video_extension`.
+{video_generation_routing_notes}
+- For provider `veo`, mode `video_extension` accepts one workspace video via `input_path` or `input_paths`.
+- For provider `kling`, use only `prompt`, `first_frame`, `first_frame_and_last_frame`, or `multi_reference`. `multi_reference` expects 2-4 workspace images through `input_paths`. If Kling input images do not meet the documented limits, inspect them with `image_info` and decide whether to preprocess them with `image_resize` or other local image tools first. The Kling expert does not auto-resize or auto-crop inputs. Do not route Kling calls to `reference_asset`, `reference_style`, or `video_extension`.
 - For cutout, local edit, inpaint-style masking, or region-targeted image workflows, prefer calling `ImageSegmentationAgent` first, then read `current_output.results[0].mask_path` from the expert result and reuse that workspace path in the next step.
 - Default image provider is `nano_banana` unless the user or task clearly requires `seedream`.
 - When the user refers to a previously generated image or file without re-uploading it, inspect the workspace file history and use the most recent relevant workspace path.
