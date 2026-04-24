@@ -673,6 +673,10 @@ class FeishuChannel(BaseChannel):
         if not self._client or CreateFileRequest is None or CreateFileRequestBody is None:
             raise RuntimeError("Feishu file API is unavailable.")
         file_key = self._upload_file_sync(file_path)
+        return self._send_uploaded_file_key_sync(chat_id, file_key, "file")
+
+    def _send_uploaded_file_key_sync(self, chat_id: str, file_key: str, action_name: str) -> str:
+        """Send one already-uploaded Feishu file key as a file message."""
         request = (
             CreateMessageRequest.builder()
             .receive_id_type(self._resolve_receive_id_type(chat_id))
@@ -686,10 +690,10 @@ class FeishuChannel(BaseChannel):
             .build()
         )
         response = self._client.im.v1.message.create(request)
-        return self._extract_message_id(response, "file")
+        return self._extract_message_id(response, action_name)
 
     def _send_video_sync(self, chat_id: str, video_path: str) -> str:
-        """Upload one video and send it to Feishu as an inline video message."""
+        """Upload one video and send it as media, falling back to file on parameter rejection."""
         if not self._client or CreateFileRequest is None or CreateFileRequestBody is None:
             raise RuntimeError("Feishu video API is unavailable.")
         file_key = self._upload_file_sync(video_path)
@@ -699,14 +703,25 @@ class FeishuChannel(BaseChannel):
             .request_body(
                 CreateMessageRequestBody.builder()
                 .receive_id(chat_id)
-                .msg_type("video")
+                .msg_type("media")
                 .content(json.dumps({"file_key": file_key}, ensure_ascii=False))
                 .build()
             )
             .build()
         )
         response = self._client.im.v1.message.create(request)
-        return self._extract_message_id(response, "video")
+        try:
+            return self._extract_message_id(response, "video media")
+        except RuntimeError as exc:
+            if "code=230001" not in str(exc):
+                raise
+            logger.warning(
+                "Feishu media message send failed; falling back to file attachment: path={} file_key={} error={}",
+                video_path,
+                file_key,
+                exc,
+            )
+            return self._send_uploaded_file_key_sync(chat_id, file_key, "video file fallback")
 
     def _upload_image_sync(self, image_path: str) -> str:
         """Upload one image to Feishu and return image key."""

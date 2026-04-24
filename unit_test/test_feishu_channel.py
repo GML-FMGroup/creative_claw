@@ -32,9 +32,38 @@ def _make_download_response(payload: bytes, *, file_name: str) -> SimpleNamespac
     return response
 
 
+def _make_message_response(
+    message_id: str,
+    *,
+    success: bool = True,
+    code: int = 0,
+    msg: str = "",
+) -> SimpleNamespace:
+    response = SimpleNamespace(
+        code=code,
+        msg=msg,
+        data=SimpleNamespace(message_id=message_id),
+    )
+    response.success = lambda: success
+    return response
+
+
 def _record_and_return(calls: list, request: object, response: object) -> object:
     calls.append(request)
     return response
+
+
+def _make_real_feishu_channel() -> FeishuChannel:
+    async def _handler(_message: InboundMessage) -> None:
+        return None
+
+    return FeishuChannel(
+        app_id="app-id",
+        app_secret="app-secret",
+        allow_from=["ou_allowed"],
+        group_policy="open",
+        inbound_handler=_handler,
+    )
 
 
 class _TestFeishuChannel(FeishuChannel):
@@ -761,7 +790,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(channel.replies[0][2]), {"text": "Here is the final answer."})
         self.assertEqual(channel.sent_texts, [])
 
-    async def test_send_routes_video_artifact_as_video_message(self) -> None:
+    async def test_send_routes_video_artifact_to_video_send_handler(self) -> None:
         inbound_messages: list[InboundMessage] = []
         channel = _TestFeishuChannel(inbound_messages=inbound_messages)
 
@@ -780,6 +809,67 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(channel.sent_texts, [("oc_group_1", "done")])
             self.assertEqual(channel.sent_videos, [("oc_group_1", str(video_path))])
+
+    def test_send_video_sync_uses_feishu_media_message_type(self) -> None:
+        channel = _make_real_feishu_channel()
+        create_calls: list[object] = []
+        message_api = SimpleNamespace(
+            create=lambda request: _record_and_return(
+                create_calls,
+                request,
+                _make_message_response("om_media_1"),
+            )
+        )
+        channel._client = SimpleNamespace(
+            im=SimpleNamespace(v1=SimpleNamespace(message=message_api))
+        )
+
+        with patch.object(channel, "_upload_file_sync", return_value="file_v3_video"):
+            message_id = channel._send_video_sync("oc_group_1", "clip.mp4")
+
+        self.assertEqual(message_id, "om_media_1")
+        self.assertEqual(len(create_calls), 1)
+        request = create_calls[0]
+        self.assertEqual(request.receive_id_type, "chat_id")
+        self.assertEqual(request.request_body.receive_id, "oc_group_1")
+        self.assertEqual(request.request_body.msg_type, "media")
+        self.assertEqual(json.loads(request.request_body.content), {"file_key": "file_v3_video"})
+
+    def test_send_video_sync_falls_back_to_file_when_media_message_is_rejected(self) -> None:
+        channel = _make_real_feishu_channel()
+        create_calls: list[object] = []
+        responses = iter(
+            [
+                _make_message_response(
+                    "",
+                    success=False,
+                    code=230001,
+                    msg="Your request contains an invalid request parameter.",
+                ),
+                _make_message_response("om_file_1"),
+            ]
+        )
+
+        def _create(request: object) -> object:
+            create_calls.append(request)
+            return next(responses)
+
+        channel._client = SimpleNamespace(
+            im=SimpleNamespace(v1=SimpleNamespace(message=SimpleNamespace(create=_create)))
+        )
+
+        with (
+            patch.object(channel, "_upload_file_sync", return_value="file_v3_video"),
+            patch("src.channels.feishu.logger") as mock_logger,
+        ):
+            message_id = channel._send_video_sync("oc_group_1", "clip.mp4")
+
+        self.assertEqual(message_id, "om_file_1")
+        self.assertEqual(len(create_calls), 2)
+        self.assertEqual(create_calls[0].request_body.msg_type, "media")
+        self.assertEqual(create_calls[1].request_body.msg_type, "file")
+        self.assertEqual(json.loads(create_calls[1].request_body.content), {"file_key": "file_v3_video"})
+        self.assertEqual(mock_logger.warning.call_count, 1)
 
     async def test_on_message_downloads_image_attachment(self) -> None:
         inbound_messages: list[InboundMessage] = []
