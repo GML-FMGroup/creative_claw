@@ -29,7 +29,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         tool = SimpleNamespace(name="read_file")
         tool_context = SimpleNamespace(
             invocation_id="inv-1",
-            session=SimpleNamespace(id="session-1"),
+            session=SimpleNamespace(id="session-1", state={"turn_index": 4}),
         )
 
         with route_context("cli", "chat-1"):
@@ -49,6 +49,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.messages), 2)
         self.assertEqual(self.messages[0].metadata["stage_title"], "read_file")
+        self.assertEqual(self.messages[0].metadata["turn_index"], 4)
         self.assertIn("Status: started", self.messages[0].text)
         self.assertIn("Args: path=README.md", self.messages[0].text)
         self.assertIn("1. read_file", self.messages[1].text)
@@ -89,6 +90,32 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.messages), 1)
         self.assertEqual(self.messages[0].metadata["stage_title"], "Call Expert Agent")
         self.assertIn("Calling `ImageGenerationAgent`", self.messages[0].text)
+
+    async def test_orchestration_event_history_is_scoped_by_turn_index(self) -> None:
+        with route_context("cli", "chat-3"):
+            reset_step_event_history(session_id="session-3", turn_index=1)
+            publish_orchestration_step_event(
+                session_id="session-3",
+                turn_index=1,
+                title="First Turn Expert",
+                detail="Running the first request.",
+                stage="expert_execution",
+            )
+            publish_orchestration_step_event(
+                session_id="session-3",
+                turn_index=2,
+                title="Second Turn Expert",
+                detail="Running the second request.",
+                stage="expert_execution",
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertEqual(self.messages[0].metadata["turn_index"], 1)
+        self.assertEqual(self.messages[1].metadata["turn_index"], 2)
+        self.assertIn("First Turn Expert", self.messages[0].text)
+        self.assertIn("Second Turn Expert", self.messages[1].text)
+        self.assertNotIn("First Turn Expert", self.messages[1].text)
 
     async def test_plugin_and_orchestration_events_share_same_history(self) -> None:
         plugin = CreativeClawStepEventPlugin()

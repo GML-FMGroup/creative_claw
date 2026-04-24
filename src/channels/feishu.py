@@ -34,10 +34,13 @@ try:
         CreateMessageReactionRequestBody,
         Emoji,
         GetFileRequest,
+        GetMessageRequest,
         GetMessageResourceRequest,
         PatchMessageRequest,
         PatchMessageRequestBody,
         P2ImMessageReceiveV1,
+        ReplyMessageRequest,
+        ReplyMessageRequestBody,
         UpdateMessageRequest,
         UpdateMessageRequestBody,
     )
@@ -57,10 +60,13 @@ except ImportError:  # pragma: no cover - environment dependent
     CreateMessageReactionRequestBody = None
     Emoji = None
     GetFileRequest = None
+    GetMessageRequest = None
     GetMessageResourceRequest = None
     PatchMessageRequest = None
     PatchMessageRequestBody = None
     P2ImMessageReceiveV1 = None
+    ReplyMessageRequest = None
+    ReplyMessageRequestBody = None
     UpdateMessageRequest = None
     UpdateMessageRequestBody = None
     FEISHU_AVAILABLE = False
@@ -71,10 +77,24 @@ _STAGE_TITLES = {
     "started": "Starting",
     "attachment_received": "Attachment Received",
     "in_progress": "In Progress",
+    "completed": "Completed",
 }
 
 _MESSAGE_DEDUP_TTL_SECONDS = 600.0
 _MESSAGE_DEDUP_MAX_ENTRIES = 4096
+_FINAL_REPLY_TEXT_MAX_LEN = 700
+_FINAL_REPLY_CARD_MIN_LEN = 180
+_FEISHU_FILE_TYPE_BY_SUFFIX = {
+    ".opus": "opus",
+    ".mp4": "mp4",
+    ".pdf": "pdf",
+    ".doc": "doc",
+    ".docx": "doc",
+    ".xls": "xls",
+    ".xlsx": "xls",
+    ".ppt": "ppt",
+    ".pptx": "ppt",
+}
 
 
 def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -83,7 +103,7 @@ def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dic
     display_style = str(info.get("display_style", "")).strip().lower()
     stage = str(info.get("stage", "")).strip().lower()
     if display_style == "final":
-        title = "Result"
+        title = str(info.get("stage_title", "")).strip() or "Completed"
         template = "green"
     else:
         title = str(info.get("stage_title", "")).strip() or _STAGE_TITLES.get(stage, "Current Progress")
@@ -91,6 +111,7 @@ def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dic
             "started": "blue",
             "attachment_received": "wathet",
             "in_progress": "indigo",
+            "completed": "green",
         }.get(stage, "blue")
 
     body = str(text or "").strip() or "No content available."
@@ -110,12 +131,51 @@ def _build_status_card(text: str, metadata: dict[str, Any] | None = None) -> dic
 
 
 def _should_use_interactive_card(text: str, metadata: dict[str, Any] | None = None) -> bool:
-    """Return whether one outbound text should be rendered as a Feishu card."""
+    """Return whether one outbound text should be rendered as a status card."""
     info = metadata or {}
     display_style = str(info.get("display_style", "")).strip().lower()
-    if display_style in {"progress", "final"}:
+    if display_style == "progress":
         return True
+    if display_style == "final":
+        return False
     return len(str(text or "").strip()) > 180
+
+
+def _build_final_reply_card(text: str) -> dict[str, Any]:
+    """Build a Feishu card for rich final replies without status-style framing."""
+    return {
+        "config": {"wide_screen_mode": True, "enable_forward": True},
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": str(text or "").strip() or "[empty message]",
+            }
+        ],
+    }
+
+
+def _final_reply_needs_card(text: str) -> bool:
+    """Return whether final reply text needs rich card rendering."""
+    stripped = str(text or "").strip()
+    if len(stripped) > _FINAL_REPLY_TEXT_MAX_LEN:
+        return True
+    return _has_complex_markdown(stripped) and len(stripped) > _FINAL_REPLY_CARD_MIN_LEN
+
+
+def _has_complex_markdown(text: str) -> bool:
+    """Return whether text contains markdown that Feishu plain text would expose awkwardly."""
+    markers = ("```", "|", "# ", "## ", "- ", "* ", "1. ", "**", "__", "~~", "](")
+    return any(marker in text for marker in markers)
+
+
+def _progress_state_key(chat_id: str, metadata: dict[str, Any] | None = None) -> tuple[str, str, str] | None:
+    """Build the Feishu progress-card state key for one session turn."""
+    info = metadata or {}
+    session_id = str(info.get("session_id", "") or "").strip()
+    if not session_id:
+        return None
+    turn_index = str(info.get("turn_index", "") or "").strip()
+    return (chat_id, session_id, turn_index)
 
 
 def _iter_post_lang_payloads(content_json: dict[str, Any]) -> list[dict[str, Any]]:
@@ -165,12 +225,18 @@ class FeishuChannel(BaseChannel):
         allow_from: list[str] | None = None,
         encrypt_key: str = "",
         verification_token: str = "",
+        group_policy: str = "mention",
+        reply_to_message: bool = False,
     ) -> None:
         super().__init__()
         self.app_id = app_id.strip()
         self.app_secret = app_secret.strip()
         self.encrypt_key = encrypt_key.strip()
         self.verification_token = verification_token.strip()
+        self.group_policy = group_policy.strip().lower() if group_policy else "mention"
+        if self.group_policy not in {"mention", "open"}:
+            self.group_policy = "mention"
+        self.reply_to_message = bool(reply_to_message)
         self.inbound_handler = inbound_handler
         self.allow_from = {
             str(item).strip()
@@ -183,7 +249,8 @@ class FeishuChannel(BaseChannel):
         self._ws_thread: threading.Thread | None = None
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._seen_message_ids: OrderedDict[str, float] = OrderedDict()
-        self._progress_cards: dict[tuple[str, str], str] = {}
+        self._progress_cards: dict[tuple[str, str, str], str] = {}
+        self._bot_open_id: str | None = None
 
     async def start(self) -> None:
         """Start Feishu long connection."""
@@ -261,6 +328,7 @@ class FeishuChannel(BaseChannel):
 
         self._ws_thread = threading.Thread(target=_run_ws_forever, daemon=True)
         self._ws_thread.start()
+        self._bot_open_id = await self._fetch_bot_open_id()
 
     async def stop(self) -> None:
         """Stop Feishu long connection."""
@@ -282,6 +350,45 @@ class FeishuChannel(BaseChannel):
             self._ws_thread.join(timeout=5)
         self._ws_thread = None
 
+    async def _fetch_bot_open_id(self) -> str | None:
+        """Fetch the bot open id for accurate group mention matching."""
+        if not self._client:
+            return None
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._fetch_bot_open_id_sync)
+
+    def _fetch_bot_open_id_sync(self) -> str | None:
+        """Fetch the bot open id through the Feishu bot info API when available."""
+        if not self._client or lark is None:
+            return None
+        base_request = getattr(lark, "BaseRequest", None)
+        http_method = getattr(lark, "HttpMethod", None)
+        access_token_type = getattr(lark, "AccessTokenType", None)
+        if base_request is None or http_method is None or access_token_type is None:
+            return None
+        try:
+            request = (
+                base_request.builder()
+                .http_method(http_method.GET)
+                .uri("/open-apis/bot/v3/info")
+                .token_types({access_token_type.APP})
+                .build()
+            )
+            response = self._client.request(request)
+            self._ensure_success(response, "bot info")
+            raw_content = getattr(getattr(response, "raw", None), "content", b"")
+            if isinstance(raw_content, bytes | bytearray):
+                payload = json.loads(bytes(raw_content).decode("utf-8"))
+            else:
+                payload = json.loads(str(raw_content or "{}"))
+            data = payload.get("data", payload) if isinstance(payload, dict) else {}
+            bot = data.get("bot", data) if isinstance(data, dict) else {}
+            open_id = str(bot.get("open_id", "")).strip() if isinstance(bot, dict) else ""
+            return open_id or None
+        except Exception as exc:
+            logger.warning("Failed fetching Feishu bot open_id: {}", exc)
+            return None
+
     async def send(self, message: OutboundMessage) -> None:
         """Send one outbound Feishu message and artifacts."""
         loop = asyncio.get_running_loop()
@@ -290,9 +397,14 @@ class FeishuChannel(BaseChannel):
     def _send_sync(self, message: OutboundMessage) -> None:
         """Blocking Feishu send path."""
         text = message.text.strip() if message.text else ""
+        display_style = str((message.metadata or {}).get("display_style", "")).strip().lower()
+        if display_style == "final":
+            self._complete_progress_card_sync(message.chat_id, message.metadata)
         if text or not message.artifact_paths:
             rendered_text = text or "[empty message]"
-            if _should_use_interactive_card(rendered_text, message.metadata):
+            if display_style == "final":
+                self._send_final_reply_sync(message.chat_id, rendered_text, message.metadata)
+            elif _should_use_interactive_card(rendered_text, message.metadata):
                 self._send_card_message_sync(message.chat_id, rendered_text, message.metadata)
             else:
                 self._send_text_sync(message.chat_id, rendered_text)
@@ -302,7 +414,12 @@ class FeishuChannel(BaseChannel):
             if not cleaned_path:
                 continue
             path_info = _describe_local_file(cleaned_path)
-            artifact_kind = "image" if _is_image_file(cleaned_path) else "file"
+            if _is_image_file(cleaned_path):
+                artifact_kind = "image"
+            elif _is_video_file(cleaned_path):
+                artifact_kind = "video"
+            else:
+                artifact_kind = "file"
             logger.debug(
                 "Feishu outbound artifact send starting: index={} total={} kind={} path={} exists={} size_bytes={} mime_type={}",
                 index,
@@ -316,6 +433,8 @@ class FeishuChannel(BaseChannel):
             try:
                 if artifact_kind == "image":
                     self._send_image_sync(message.chat_id, cleaned_path)
+                elif artifact_kind == "video":
+                    self._send_video_sync(message.chat_id, cleaned_path)
                 else:
                     self._send_file_sync(message.chat_id, cleaned_path)
             except Exception as exc:
@@ -338,6 +457,39 @@ class FeishuChannel(BaseChannel):
                 cleaned_path,
             )
 
+    def _complete_progress_card_sync(self, chat_id: str, metadata: dict[str, Any] | None = None) -> None:
+        """Best-effort update the active progress card to a short completed state."""
+        state_key = _progress_state_key(chat_id, metadata)
+        if state_key is None:
+            return
+        existing_message_id = self._progress_cards.pop(state_key, "")
+        if not existing_message_id:
+            return
+        card = _build_status_card(
+            "Done.",
+            {"display_style": "progress", "stage": "completed", "stage_title": "Completed"},
+        )
+        try:
+            self._patch_interactive_sync(existing_message_id, card)
+        except Exception as exc:
+            logger.warning("Failed completing Feishu progress card: {}", exc)
+
+    def _send_final_reply_sync(
+        self,
+        chat_id: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Send the final agent reply in a conversational style."""
+        rendered_text = text.strip() or "[empty message]"
+        if _final_reply_needs_card(rendered_text):
+            return self._send_interactive_with_optional_reply_sync(
+                chat_id,
+                _build_final_reply_card(rendered_text),
+                metadata,
+            )
+        return self._send_text_with_optional_reply_sync(chat_id, rendered_text, metadata)
+
     def _send_text_sync(self, chat_id: str, text: str) -> str:
         """Send one text message to Feishu."""
         if not self._client or CreateMessageRequest is None or CreateMessageRequestBody is None:
@@ -357,6 +509,22 @@ class FeishuChannel(BaseChannel):
         response = self._client.im.v1.message.create(request)
         return self._extract_message_id(response, "text")
 
+    def _send_text_with_optional_reply_sync(
+        self,
+        chat_id: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Send text, using Feishu reply API when configured and possible."""
+        content = json.dumps({"text": text}, ensure_ascii=False)
+        reply_message_id = self._resolve_reply_message_id(metadata)
+        if reply_message_id:
+            try:
+                return self._reply_message_sync(reply_message_id, "text", content)
+            except Exception as exc:
+                logger.warning("Feishu reply text failed; falling back to create: {}", exc)
+        return self._send_text_sync(chat_id, text)
+
     def _send_interactive_sync(self, chat_id: str, card: dict[str, Any]) -> str:
         """Send one interactive card message to Feishu."""
         if not self._client or CreateMessageRequest is None or CreateMessageRequestBody is None:
@@ -375,6 +543,53 @@ class FeishuChannel(BaseChannel):
         )
         response = self._client.im.v1.message.create(request)
         return self._extract_message_id(response, "interactive")
+
+    def _send_interactive_with_optional_reply_sync(
+        self,
+        chat_id: str,
+        card: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Send an interactive final reply card with optional Feishu reply context."""
+        content = json.dumps(card, ensure_ascii=False)
+        reply_message_id = self._resolve_reply_message_id(metadata)
+        if reply_message_id:
+            try:
+                return self._reply_message_sync(reply_message_id, "interactive", content)
+            except Exception as exc:
+                logger.warning("Feishu reply card failed; falling back to create: {}", exc)
+        return self._send_interactive_sync(chat_id, card)
+
+    def _reply_message_sync(self, parent_message_id: str, msg_type: str, content: str) -> str:
+        """Reply to one Feishu message and return the created message id."""
+        if not self._client or ReplyMessageRequest is None or ReplyMessageRequestBody is None:
+            raise RuntimeError("Feishu reply API is unavailable.")
+        request = (
+            ReplyMessageRequest.builder()
+            .message_id(parent_message_id)
+            .request_body(
+                ReplyMessageRequestBody.builder()
+                .msg_type(msg_type)
+                .content(content)
+                .build()
+            )
+            .build()
+        )
+        response = self._client.im.v1.message.reply(request)
+        return self._extract_message_id(response, f"{msg_type} reply")
+
+    def _resolve_reply_message_id(self, metadata: dict[str, Any] | None = None) -> str:
+        """Return the Feishu message id that should receive a contextual reply."""
+        info = metadata or {}
+        thread_id = str(info.get("thread_id", "") or "").strip()
+        if thread_id:
+            return (
+                str(info.get("root_id", "") or "").strip()
+                or str(info.get("message_id", "") or "").strip()
+            )
+        if not self.reply_to_message:
+            return ""
+        return str(info.get("message_id", "") or "").strip()
 
     def _patch_interactive_sync(self, message_id: str, card: dict[str, Any]) -> None:
         """Update one existing interactive message when the SDK supports it."""
@@ -415,8 +630,7 @@ class FeishuChannel(BaseChannel):
         info = metadata or {}
         card = _build_status_card(text, info)
         display_style = str(info.get("display_style", "")).strip().lower()
-        session_id = str(info.get("session_id", "")).strip()
-        state_key = (chat_id, session_id) if display_style == "progress" and session_id else None
+        state_key = _progress_state_key(chat_id, info) if display_style == "progress" else None
 
         if state_key is not None:
             existing_message_id = self._progress_cards.get(state_key, "")
@@ -428,8 +642,10 @@ class FeishuChannel(BaseChannel):
         if state_key is not None and message_id:
             self._progress_cards[state_key] = message_id
 
-        if display_style == "final" and session_id:
-            self._progress_cards.pop((chat_id, session_id), None)
+        if display_style == "final":
+            final_state_key = _progress_state_key(chat_id, info)
+            if final_state_key is not None:
+                self._progress_cards.pop(final_state_key, None)
         return message_id
 
     def _send_image_sync(self, chat_id: str, image_path: str) -> str:
@@ -472,6 +688,26 @@ class FeishuChannel(BaseChannel):
         response = self._client.im.v1.message.create(request)
         return self._extract_message_id(response, "file")
 
+    def _send_video_sync(self, chat_id: str, video_path: str) -> str:
+        """Upload one video and send it to Feishu as an inline video message."""
+        if not self._client or CreateFileRequest is None or CreateFileRequestBody is None:
+            raise RuntimeError("Feishu video API is unavailable.")
+        file_key = self._upload_file_sync(video_path)
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(self._resolve_receive_id_type(chat_id))
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("video")
+                .content(json.dumps({"file_key": file_key}, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        response = self._client.im.v1.message.create(request)
+        return self._extract_message_id(response, "video")
+
     def _upload_image_sync(self, image_path: str) -> str:
         """Upload one image to Feishu and return image key."""
         if not self._client or CreateImageRequest is None or CreateImageRequestBody is None:
@@ -510,11 +746,12 @@ class FeishuChannel(BaseChannel):
             target.name,
         )
         with target.open("rb") as file_obj:
+            file_type = _resolve_feishu_file_type(target)
             request = (
                 CreateFileRequest.builder()
                 .request_body(
                     CreateFileRequestBody.builder()
-                    .file_type("stream")
+                    .file_type(file_type)
                     .file_name(target.name)
                     .file(file_obj)
                     .build()
@@ -609,12 +846,15 @@ class FeishuChannel(BaseChannel):
             if message_id and self._mark_message_seen(message_id):
                 logger.info("Feishu inbound duplicate ignored: message_id={}", message_id)
                 return
-            if message_id:
-                await self._add_reaction(message_id, "THUMBSUP")
             chat_id = str(getattr(message, "chat_id", "") or "")
             chat_type = str(getattr(message, "chat_type", "") or "")
             msg_type = str(getattr(message, "message_type", "") or "")
             raw_content = str(getattr(message, "content", "") or "")
+            if chat_type == "group" and not self._is_group_message_for_bot(message):
+                logger.debug("Feishu inbound group message ignored because bot was not mentioned: message_id={}", message_id)
+                return
+            if message_id:
+                await self._add_reaction(message_id, "THUMBSUP")
             logger.debug(
                 "Feishu inbound message received: message_id={} chat_id={} chat_type={} msg_type={} content={}",
                 message_id,
@@ -628,6 +868,14 @@ class FeishuChannel(BaseChannel):
                 raw_content=raw_content,
                 message_id=message_id,
             )
+            text = self._normalize_mention_text(text, getattr(message, "mentions", None))
+            parent_id = str(getattr(message, "parent_id", "") or "")
+            root_id = str(getattr(message, "root_id", "") or "")
+            thread_id = str(getattr(message, "thread_id", "") or "")
+            if parent_id:
+                reply_context = await self._get_reply_context(parent_id)
+                if reply_context:
+                    text = f"{reply_context}\n{text}".strip()
             logger.debug(
                 "Feishu inbound normalized: message_id={} msg_type={} text_len={} attachment_count={}",
                 message_id,
@@ -655,11 +903,93 @@ class FeishuChannel(BaseChannel):
                         "message_id": message_id,
                         "chat_type": chat_type,
                         "msg_type": msg_type,
+                        "parent_id": parent_id,
+                        "root_id": root_id,
+                        "thread_id": thread_id,
                     },
                 )
             )
         except Exception:
             logger.exception("Failed handling Feishu inbound message")
+
+    def _is_group_message_for_bot(self, message: Any) -> bool:
+        """Return whether a group message should trigger the bot."""
+        if self.group_policy == "open":
+            return True
+        return self._is_bot_mentioned(message)
+
+    def _is_bot_mentioned(self, message: Any) -> bool:
+        """Return whether the current Feishu message mentions this bot."""
+        raw_content = str(getattr(message, "content", "") or "")
+        if "@_all" in raw_content:
+            return True
+        return any(self._is_bot_mention(mention) for mention in getattr(message, "mentions", None) or [])
+
+    def _is_bot_mention(self, mention: Any) -> bool:
+        """Return whether one Feishu mention object points at this bot."""
+        mention_id = getattr(mention, "id", None)
+        if mention_id is None:
+            return False
+        mention_open_id = str(getattr(mention_id, "open_id", "") or "").strip()
+        if self._bot_open_id:
+            return mention_open_id == self._bot_open_id
+        mention_user_id = str(getattr(mention_id, "user_id", "") or "").strip()
+        return bool(mention_open_id.startswith("ou_") and not mention_user_id)
+
+    def _normalize_mention_text(self, text: str, mentions: list[Any] | None) -> str:
+        """Replace Feishu mention placeholders and remove this bot's own mention."""
+        normalized = str(text or "")
+        if not normalized or not mentions:
+            return normalized.strip()
+        for mention in mentions:
+            key = str(getattr(mention, "key", "") or "").strip()
+            if not key:
+                continue
+            if self._is_bot_mention(mention):
+                normalized = normalized.replace(key, "")
+                continue
+            display_name = str(getattr(mention, "name", "") or "").strip() or "user"
+            normalized = normalized.replace(key, f"@{display_name}")
+        return " ".join(normalized.split()).strip()
+
+    async def _get_reply_context(self, parent_message_id: str) -> str:
+        """Return a short textual description of the message being replied to."""
+        if not parent_message_id or not self._client:
+            return ""
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, self._get_reply_context_sync, parent_message_id)
+        return result or ""
+
+    def _get_reply_context_sync(self, parent_message_id: str) -> str:
+        """Fetch a short reply context string from one Feishu parent message."""
+        if not self._client or GetMessageRequest is None:
+            return ""
+        try:
+            request = GetMessageRequest.builder().message_id(parent_message_id).build()
+            response = self._client.im.v1.message.get(request)
+            self._ensure_success(response, "message get")
+            items = getattr(getattr(response, "data", None), "items", None) or []
+            if not items:
+                return ""
+            parent_message = items[0]
+            msg_type = str(getattr(parent_message, "msg_type", "") or "")
+            body = getattr(parent_message, "body", None)
+            raw_content = str(getattr(body, "content", "") or "")
+            if msg_type == "text":
+                text = self._extract_text(raw_content)
+            elif msg_type == "post":
+                text = self._extract_post_text(raw_content)
+            else:
+                text = ""
+            text = " ".join(str(text or "").split()).strip()
+            if not text:
+                return ""
+            if len(text) > 200:
+                text = f"{text[:197].rstrip()}..."
+            return f"[Reply to: {text}]"
+        except Exception as exc:
+            logger.debug("Failed fetching Feishu reply context: parent_message_id={} error={}", parent_message_id, exc)
+            return ""
 
     def _mark_message_seen(self, message_id: str) -> bool:
         """Remember one inbound Feishu message id and report whether it was already seen."""
@@ -756,6 +1086,21 @@ class FeishuChannel(BaseChannel):
                     name=file_name or Path(local_path).name,
                     mime_type=_guess_mime_type(file_name or str(local_path)),
                     description="feishu file attachment",
+                )
+            ]
+        if msg_type in {"media", "video"}:
+            payload = self._parse_json_dict(raw_content)
+            file_key = str(payload.get("file_key", "") or payload.get("video_key", "")).strip()
+            file_name = str(payload.get("file_name", "") or payload.get("name", "")).strip()
+            if not file_key:
+                return "Received a video message without file_key.", []
+            local_path = await self._download_file(file_key, file_name or f"{file_key}.mp4", message_id)
+            return "Received video attachment.", [
+                MessageAttachment(
+                    path=str(local_path),
+                    name=file_name or Path(local_path).name,
+                    mime_type=_guess_mime_type(file_name or str(local_path)),
+                    description="feishu video attachment",
                 )
             ]
         if msg_type in {"audio", "voice"}:
@@ -990,10 +1335,21 @@ def _is_image_file(file_path: str) -> bool:
     return bool(mime_type and mime_type.startswith("image/"))
 
 
+def _is_video_file(file_path: str) -> bool:
+    """Return whether a file path looks like a video."""
+    mime_type, _ = mimetypes.guess_type(file_path)
+    return bool(mime_type and mime_type.startswith("video/"))
+
+
 def _guess_mime_type(file_name: str) -> str:
     """Guess mime type for one inbound file name."""
     mime_type, _ = mimetypes.guess_type(file_name)
     return mime_type or "application/octet-stream"
+
+
+def _resolve_feishu_file_type(path: Path) -> str:
+    """Return Feishu upload file_type from one local path."""
+    return _FEISHU_FILE_TYPE_BY_SUFFIX.get(path.suffix.lower(), "stream")
 
 
 def _describe_local_file(file_path: str) -> dict[str, Any]:

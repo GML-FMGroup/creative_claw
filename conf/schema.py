@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +75,8 @@ class FeishuChannelConfig(BaseModel):
     encrypt_key: str = ""
     verification_token: str = ""
     allow_from: list[str] = Field(default_factory=list)
+    group_policy: Literal["mention", "open"] = "mention"
+    reply_to_message: bool = False
 
 
 class WebChannelConfig(BaseModel):

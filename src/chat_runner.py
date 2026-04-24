@@ -67,12 +67,15 @@ def build_chat_channel(
 
     from src.channels.feishu import FeishuChannel
 
+    feishu_config = CHANNEL_CONFIG.feishu
     return FeishuChannel(
-        app_id=CHANNEL_CONFIG.feishu.app_id,
-        app_secret=CHANNEL_CONFIG.feishu.app_secret,
-        encrypt_key=CHANNEL_CONFIG.feishu.encrypt_key,
-        verification_token=CHANNEL_CONFIG.feishu.verification_token,
-        allow_from=CHANNEL_CONFIG.feishu.allow_from,
+        app_id=feishu_config.app_id,
+        app_secret=feishu_config.app_secret,
+        encrypt_key=feishu_config.encrypt_key,
+        verification_token=feishu_config.verification_token,
+        allow_from=feishu_config.allow_from,
+        group_policy=getattr(feishu_config, "group_policy", "mention"),
+        reply_to_message=getattr(feishu_config, "reply_to_message", False),
         inbound_handler=inbound_handler,
     )
 

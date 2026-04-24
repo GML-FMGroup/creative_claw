@@ -97,18 +97,18 @@ def _build_progress_event(
     session_id: str,
     stage: str,
     stage_title: str | None = None,
+    turn_index: int | None = None,
 ) -> WorkflowEvent:
     """Build one user-facing progress event."""
-    return WorkflowEvent(
-        event_type="status",
-        text=text,
-        metadata={
-            "session_id": session_id,
-            "display_style": "progress",
-            "stage": stage,
-            "stage_title": stage_title or _PROGRESS_STAGE_TITLES.get(stage, "Current Progress"),
-        },
-    )
+    metadata: dict[str, object] = {
+        "session_id": session_id,
+        "display_style": "progress",
+        "stage": stage,
+        "stage_title": stage_title or _PROGRESS_STAGE_TITLES.get(stage, "Current Progress"),
+    }
+    if turn_index is not None:
+        metadata["turn_index"] = turn_index
+    return WorkflowEvent(event_type="status", text=text, metadata=metadata)
 
 
 def _summarize_step_output(output_message: str) -> str:
@@ -121,7 +121,12 @@ def _summarize_step_output(output_message: str) -> str:
     return f"Current progress: {text}"
 
 
-def _build_orchestration_progress_event(step_event: dict[str, str], *, session_id: str) -> WorkflowEvent:
+def _build_orchestration_progress_event(
+    step_event: dict[str, str],
+    *,
+    session_id: str,
+    turn_index: int | None = None,
+) -> WorkflowEvent:
     """Convert one structured orchestrator step event into a progress event."""
     stage = str(step_event.get("stage", "")).strip() or "in_progress"
     title = str(step_event.get("title", "")).strip() or _PROGRESS_STAGE_TITLES.get(stage, "Current Progress")
@@ -131,6 +136,7 @@ def _build_orchestration_progress_event(step_event: dict[str, str], *, session_i
         session_id=session_id,
         stage=stage,
         stage_title=title,
+        turn_index=turn_index,
     )
 
 
@@ -277,22 +283,25 @@ class CreativeClawRuntime:
             return
 
         user_id, session_id = await self._ensure_session(inbound)
+        current_turn = await self._next_turn_index(user_id, session_id)
 
         yield _build_progress_event(
             "I'll start processing your request.",
             session_id=session_id,
             stage="started",
+            turn_index=current_turn,
         )
-        reset_step_event_history(session_id=session_id)
+        reset_step_event_history(session_id=session_id, turn_index=current_turn)
         for attachment in inbound.attachments:
             yield _build_progress_event(
                 f"Received attachment: {attachment.name}",
                 session_id=session_id,
                 stage="attachment_received",
+                turn_index=current_turn,
             )
 
         try:
-            await self._set_initial_state(user_id, session_id, inbound)
+            await self._set_initial_state(user_id, session_id, inbound, turn_index=current_turn)
         except Exception as exc:
             error_summary = _format_exception_summary(exc)
             error_text = f"Init state failed (session_id={session_id}): {error_summary}"
@@ -303,7 +312,11 @@ class CreativeClawRuntime:
                 inbound.sender_id or SYS_CONFIG.user_id_default,
                 error_summary,
             )
-            yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
+            yield WorkflowEvent(
+                event_type="error",
+                text=error_text,
+                metadata={"session_id": session_id, "turn_index": current_turn},
+            )
             return
 
         orchestrator_agent = Orchestrator(
@@ -342,7 +355,11 @@ class CreativeClawRuntime:
 
             for step_event in orchestration_events:
                 orchestration_history.append(step_event)
-                progress_event = _build_orchestration_progress_event(step_event, session_id=session_id)
+                progress_event = _build_orchestration_progress_event(
+                    step_event,
+                    session_id=session_id,
+                    turn_index=current_turn,
+                )
                 progress_event.text = _render_orchestration_history(orchestration_history)
                 yield progress_event
 
@@ -350,6 +367,7 @@ class CreativeClawRuntime:
                 user_id,
                 session_id,
                 final_response or final_summary,
+                turn_index=current_turn,
             )
             yield final_event
         except Exception as exc:
@@ -360,7 +378,11 @@ class CreativeClawRuntime:
                 session_id,
                 error_summary,
             )
-            yield WorkflowEvent(event_type="error", text=error_text, metadata={"session_id": session_id})
+            yield WorkflowEvent(
+                event_type="error",
+                text=error_text,
+                metadata={"session_id": session_id, "turn_index": current_turn},
+            )
 
     async def reset_session(self, inbound: InboundMessage) -> tuple[str, str]:
         """Force-create a fresh ADK session for the current channel conversation."""
@@ -403,7 +425,26 @@ class CreativeClawRuntime:
         logger.info("Created session for {} -> {}", session_key, session_id)
         return user_id, session_id
 
-    async def _set_initial_state(self, user_id: str, session_id: str, inbound: InboundMessage) -> None:
+    async def _next_turn_index(self, user_id: str, session_id: str) -> int:
+        """Return the next turn index for one ADK session without mutating state."""
+        current_session = await self.session_service.get_session(
+            app_name=SYS_CONFIG.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if current_session is None:
+            return 1
+        previous_turn = int(current_session.state.get("turn_index", 0) or 0)
+        return previous_turn + 1
+
+    async def _set_initial_state(
+        self,
+        user_id: str,
+        session_id: str,
+        inbound: InboundMessage,
+        *,
+        turn_index: int | None = None,
+    ) -> None:
         """Append the normalized user message and attachments to session state."""
         current_session = await self.session_service.get_session(
             app_name=SYS_CONFIG.app_name,
@@ -415,7 +456,7 @@ class CreativeClawRuntime:
 
         state_delta = {key: None for key in current_session.state.keys()}
         previous_turn = int(current_session.state.get("turn_index", 0) or 0)
-        current_turn = previous_turn + 1
+        current_turn = turn_index if turn_index is not None else previous_turn + 1
         previous_uploaded = list(current_session.state.get("uploaded") or current_session.state.get("input_files") or [])
         previous_generated = list(current_session.state.get("generated") or [])
         uploaded_history = _append_turn_file_history(
@@ -515,6 +556,8 @@ class CreativeClawRuntime:
         user_id: str,
         session_id: str,
         final_summary: str,
+        *,
+        turn_index: int | None = None,
     ) -> WorkflowEvent:
         """Build the final workflow event from the current session state."""
         final_session = await self.session_service.get_session(
@@ -548,11 +591,16 @@ class CreativeClawRuntime:
                     history_text = "\n".join(f"- {summary}" for summary in summary_history)
                     final_summary = f"{final_summary}\nExecution history:\n{history_text}"
 
+        final_turn_index = turn_index if turn_index is not None else int(final_session.state.get("turn_index", 0) or 0)
         return WorkflowEvent(
             event_type="final",
             text=final_summary,
             artifact_paths=artifact_paths,
-            metadata={"session_id": session_id, "display_style": "final"},
+            metadata={
+                "session_id": session_id,
+                "turn_index": final_turn_index,
+                "display_style": "final",
+            },
         )
 
 

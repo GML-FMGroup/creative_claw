@@ -70,9 +70,26 @@ def _render_history(history: list[dict[str, str]], limit: int = 8) -> str:
     return "\n\n".join(blocks)
 
 
-def _session_history_key(channel: str, chat_id: str, session_id: str) -> str:
-    """Build the in-memory history key for one channel session."""
-    return f"{channel}:{chat_id}:{session_id}"
+def _normalize_turn_index(turn_index: Any) -> int | None:
+    """Return a positive turn index when one is available."""
+    try:
+        normalized = int(turn_index or 0)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
+def _session_history_key(
+    channel: str,
+    chat_id: str,
+    session_id: str,
+    turn_index: int | None = None,
+) -> str:
+    """Build the in-memory history key for one channel turn."""
+    turn = _normalize_turn_index(turn_index)
+    if turn is None:
+        return f"{channel}:{chat_id}:{session_id}"
+    return f"{channel}:{chat_id}:{session_id}:turn:{turn}"
 
 
 def _build_detail(*, status: str, args: dict[str, Any], result_text: str | None = None) -> str:
@@ -83,9 +100,19 @@ def _build_detail(*, status: str, args: dict[str, Any], result_text: str | None 
     return "\n".join(lines)
 
 
+def _resolve_tool_turn_index(tool_context: Any) -> int | None:
+    """Extract the current turn index from an ADK tool context when present."""
+    session = getattr(tool_context, "session", None)
+    state = getattr(session, "state", None)
+    if not isinstance(state, dict):
+        return None
+    return _normalize_turn_index(state.get("turn_index"))
+
+
 async def _publish_step_event(
     *,
     session_id: str,
+    turn_index: int | None = None,
     tool_name: str,
     stage: str,
     detail: str,
@@ -96,38 +123,43 @@ async def _publish_step_event(
     if publisher is None or not channel or not chat_id:
         return
 
-    key = _session_history_key(channel, chat_id, session_id)
+    normalized_turn = _normalize_turn_index(turn_index)
+    key = _session_history_key(channel, chat_id, session_id, normalized_turn)
     history = _HISTORY_BY_SESSION.setdefault(key, [])
     history.append({"title": tool_name, "detail": detail, "stage": stage})
+    metadata: dict[str, Any] = {
+        "session_id": session_id,
+        "display_style": "progress",
+        "stage": stage,
+        "stage_title": tool_name,
+    }
+    if normalized_turn is not None:
+        metadata["turn_index"] = normalized_turn
 
     maybe_awaitable = publisher(
         OutboundMessage(
             channel=channel,
             chat_id=chat_id,
             text=_render_history(history),
-            metadata={
-                "session_id": session_id,
-                "display_style": "progress",
-                "stage": stage,
-                "stage_title": tool_name,
-            },
+            metadata=metadata,
         )
     )
     if inspect.isawaitable(maybe_awaitable):
         await maybe_awaitable
 
 
-def reset_step_event_history(*, session_id: str) -> None:
-    """Reset the in-memory realtime history for the current routed session."""
+def reset_step_event_history(*, session_id: str, turn_index: int | None = None) -> None:
+    """Reset the in-memory realtime history for the current routed turn."""
     channel, chat_id = get_route()
     if not channel or not chat_id or not session_id:
         return
-    _HISTORY_BY_SESSION[_session_history_key(channel, chat_id, session_id)] = []
+    _HISTORY_BY_SESSION[_session_history_key(channel, chat_id, session_id, turn_index)] = []
 
 
 def publish_orchestration_step_event(
     *,
     session_id: str,
+    turn_index: int | None = None,
     title: str,
     detail: str,
     stage: str,
@@ -142,6 +174,7 @@ def publish_orchestration_step_event(
     loop.create_task(
         _publish_step_event(
             session_id=session_id,
+            turn_index=turn_index,
             tool_name=title,
             stage=stage,
             detail=detail,
@@ -176,6 +209,7 @@ class CreativeClawStepEventPlugin(BasePlugin):
             return None
         await _publish_step_event(
             session_id=tool_context.session.id,
+            turn_index=_resolve_tool_turn_index(tool_context),
             tool_name=tool.name,
             stage=stage,
             detail=_build_detail(status="started", args=tool_args),
@@ -197,6 +231,7 @@ class CreativeClawStepEventPlugin(BasePlugin):
         status, summary = summarize_tool_result(tool.name, result)
         await _publish_step_event(
             session_id=tool_context.session.id,
+            turn_index=_resolve_tool_turn_index(tool_context),
             tool_name=tool.name,
             stage=stage,
             detail=_build_detail(
@@ -221,6 +256,7 @@ class CreativeClawStepEventPlugin(BasePlugin):
             return None
         await _publish_step_event(
             session_id=tool_context.session.id,
+            turn_index=_resolve_tool_turn_index(tool_context),
             tool_name=tool.name,
             stage=stage,
             detail=_build_detail(status="error", args=tool_args, result_text=str(error).strip()),

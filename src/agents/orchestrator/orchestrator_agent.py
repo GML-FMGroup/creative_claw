@@ -519,6 +519,7 @@ Expert parameter contracts:
         if resolved_session_id:
             publish_orchestration_step_event(
                 session_id=resolved_session_id,
+                turn_index=int(state.get("turn_index", 0) or 0),
                 title=normalized_title,
                 detail=normalized_detail,
                 stage=normalized_stage,

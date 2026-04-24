@@ -3,6 +3,8 @@ import asyncio
 
 from src.channels.manager import ChannelManager
 from src.channels.local import LocalChannel
+from src.channels.base import BaseChannel
+from src.channels.events import OutboundMessage
 from src.runtime.models import InboundMessage, WorkflowEvent
 from src.runtime.tool_context import get_route
 
@@ -33,6 +35,23 @@ class _SerializedRuntime:
         await asyncio.sleep(0.01)
         yield WorkflowEvent(event_type="final", text="done")
         self.active_calls -= 1
+
+
+class _CaptureChannel(BaseChannel):
+    name = "feishu"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[OutboundMessage] = []
+
+    async def start(self) -> None:
+        self._running = True
+
+    async def stop(self) -> None:
+        self._running = False
+
+    async def send(self, message: OutboundMessage) -> None:
+        self.messages.append(message)
 
 
 class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -136,6 +155,25 @@ class ChannelManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(runtime.max_active_calls, 1)
         self.assertEqual(lines, ["done", "done"])
+
+    async def test_manager_copies_inbound_reply_metadata_to_outbound(self) -> None:
+        manager = ChannelManager(runtime=_FakeRuntime())  # type: ignore[arg-type]
+        channel = _CaptureChannel()
+        manager.register(channel)
+
+        await manager.handle_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_1",
+                chat_id="oc_1",
+                text="hello",
+                metadata={"message_id": "om_1", "root_id": "om_root", "thread_id": "omt_1"},
+            )
+        )
+
+        self.assertEqual(channel.messages[-1].metadata["message_id"], "om_1")
+        self.assertEqual(channel.messages[-1].metadata["root_id"], "om_root")
+        self.assertEqual(channel.messages[-1].metadata["thread_id"], "omt_1")
 
 
 if __name__ == "__main__":

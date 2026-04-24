@@ -49,6 +49,7 @@ class ChannelManager:
                     outbound = _render_outbound(message.channel, message.chat_id, event)
                     if outbound is None:
                         continue
+                    _copy_inbound_reply_metadata(outbound, message.metadata)
                     await channel.send(outbound)
 
     def _get_session_lock(self, session_key: str) -> asyncio.Lock:
@@ -84,3 +85,11 @@ def _render_outbound(channel: str, chat_id: str, event: WorkflowEvent) -> Outbou
         artifact_paths=list(event.artifact_paths),
         metadata=metadata,
     )
+
+
+def _copy_inbound_reply_metadata(outbound: OutboundMessage, inbound_metadata: dict[str, object]) -> None:
+    """Copy channel reply context from inbound metadata unless the event already set it."""
+    for key in ("message_id", "chat_type", "msg_type", "parent_id", "root_id", "thread_id"):
+        value = inbound_metadata.get(key)
+        if value and key not in outbound.metadata:
+            outbound.metadata[key] = value

@@ -233,6 +233,38 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].text, "The image is ready.")
         self.assertNotIn("Image generation is complete.", events[-1].text)
 
+    async def test_run_message_scopes_progress_metadata_by_turn_index(self) -> None:
+        runtime = CreativeClawRuntime()
+        inbound = InboundMessage(
+            channel="feishu",
+            sender_id="ou_1",
+            chat_id="oc_1",
+            text="Generate something",
+        )
+
+        class _FakeOrchestrator:
+            def __init__(self, **_kwargs) -> None:
+                self.uid = ""
+                self.sid = ""
+
+            async def run_until_done(self) -> dict:
+                return {
+                    "workflow_status": "finished",
+                    "final_summary": "Done.",
+                    "final_response": "Done.",
+                    "last_output_message": "",
+                    "new_orchestration_events": [],
+                }
+
+        with patch("src.runtime.workflow_service.Orchestrator", _FakeOrchestrator):
+            first_events = [event async for event in runtime.run_message(inbound)]
+            second_events = [event async for event in runtime.run_message(inbound)]
+
+        self.assertEqual(first_events[0].metadata["turn_index"], 1)
+        self.assertEqual(first_events[-1].metadata["turn_index"], 1)
+        self.assertEqual(second_events[0].metadata["turn_index"], 2)
+        self.assertEqual(second_events[-1].metadata["turn_index"], 2)
+
     async def test_run_message_emits_granular_orchestration_events(self) -> None:
         runtime = CreativeClawRuntime()
         inbound = InboundMessage(
@@ -273,9 +305,11 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
         progress_events = [event for event in events if event.event_type == "status"]
         self.assertEqual(progress_events[1].metadata["stage_title"], "List Skills")
         self.assertEqual(progress_events[1].metadata["stage"], "planning")
+        self.assertEqual(progress_events[1].metadata["turn_index"], 1)
         self.assertIn("Checking the currently available skills.", progress_events[1].text)
         self.assertEqual(progress_events[2].metadata["stage_title"], "invoke_agent")
         self.assertEqual(progress_events[2].metadata["stage"], "expert_execution")
+        self.assertEqual(progress_events[2].metadata["turn_index"], 1)
         self.assertIn("1. List Skills", progress_events[2].text)
         self.assertIn("2. invoke_agent", progress_events[2].text)
 

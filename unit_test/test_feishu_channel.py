@@ -11,7 +11,12 @@ from unittest.mock import MagicMock, patch
 
 import src.channels.feishu as feishu_module
 from src.channels.events import OutboundMessage
-from src.channels.feishu import FeishuChannel, _build_status_card, _should_use_interactive_card
+from src.channels.feishu import (
+    FeishuChannel,
+    _build_final_reply_card,
+    _build_status_card,
+    _should_use_interactive_card,
+)
 from src.runtime import InboundMessage
 
 
@@ -33,7 +38,13 @@ def _record_and_return(calls: list, request: object, response: object) -> object
 
 
 class _TestFeishuChannel(FeishuChannel):
-    def __init__(self, *, inbound_messages: list[InboundMessage]) -> None:
+    def __init__(
+        self,
+        *,
+        inbound_messages: list[InboundMessage],
+        group_policy: str = "open",
+        reply_to_message: bool = False,
+    ) -> None:
         async def _handler(message: InboundMessage) -> None:
             inbound_messages.append(message)
 
@@ -41,14 +52,18 @@ class _TestFeishuChannel(FeishuChannel):
             app_id="app-id",
             app_secret="app-secret",
             allow_from=["ou_allowed"],
+            group_policy=group_policy,
+            reply_to_message=reply_to_message,
             inbound_handler=_handler,
         )
         self.sent_texts: list[tuple[str, str]] = []
         self.sent_cards: list[tuple[str, dict]] = []
         self.patched_cards: list[tuple[str, dict]] = []
         self.sent_images: list[tuple[str, str]] = []
+        self.sent_videos: list[tuple[str, str]] = []
         self.sent_files: list[tuple[str, str]] = []
         self.reactions: list[tuple[str, str]] = []
+        self.replies: list[tuple[str, str, str]] = []
 
     def _send_text_sync(self, chat_id: str, text: str) -> str:
         self.sent_texts.append((chat_id, text))
@@ -56,7 +71,7 @@ class _TestFeishuChannel(FeishuChannel):
 
     def _send_interactive_sync(self, chat_id: str, card: dict) -> str:
         self.sent_cards.append((chat_id, card))
-        return "om_card_1"
+        return f"om_card_{len(self.sent_cards)}"
 
     def _patch_interactive_sync(self, message_id: str, card: dict) -> None:
         self.patched_cards.append((message_id, card))
@@ -65,9 +80,17 @@ class _TestFeishuChannel(FeishuChannel):
         self.sent_images.append((chat_id, image_path))
         return "om_image_1"
 
+    def _send_video_sync(self, chat_id: str, video_path: str) -> str:
+        self.sent_videos.append((chat_id, video_path))
+        return "om_video_1"
+
     def _send_file_sync(self, chat_id: str, file_path: str) -> str:
         self.sent_files.append((chat_id, file_path))
         return "om_file_1"
+
+    def _reply_message_sync(self, parent_message_id: str, msg_type: str, content: str) -> str:
+        self.replies.append((parent_message_id, msg_type, content))
+        return "om_reply_1"
 
     async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
         self.reactions.append((message_id, emoji_type))
@@ -243,16 +266,22 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(legacy_file_api.calls), 1)
         self.assertEqual(legacy_file_api.calls[0].file_key, "file_v3_demo")
 
-    def test_build_status_card_uses_final_header(self) -> None:
+    def test_build_status_card_does_not_use_result_header_for_final_style(self) -> None:
         card = _build_status_card("The image is ready.", {"display_style": "final"})
 
-        self.assertEqual(card["header"]["title"]["content"], "Result")
+        self.assertEqual(card["header"]["title"]["content"], "Completed")
         self.assertEqual(card["header"]["template"], "green")
+        self.assertIn("The image is ready.", card["elements"][0]["content"])
+
+    def test_build_final_reply_card_has_no_status_header(self) -> None:
+        card = _build_final_reply_card("The image is ready.")
+
+        self.assertNotIn("header", card)
         self.assertIn("The image is ready.", card["elements"][0]["content"])
 
     def test_should_use_interactive_card_for_progress_messages(self) -> None:
         self.assertTrue(_should_use_interactive_card("I'll start processing your request.", {"display_style": "progress"}))
-        self.assertTrue(_should_use_interactive_card("Done.", {"display_style": "final"}))
+        self.assertFalse(_should_use_interactive_card("Done.", {"display_style": "final"}))
         self.assertFalse(_should_use_interactive_card("done", {}))
 
     def test_build_status_card_uses_stage_title_when_provided(self) -> None:
@@ -339,6 +368,98 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         await channel._on_message(data)
         self.assertEqual(inbound_messages, [])
         self.assertEqual(channel.reactions, [])
+
+    async def test_on_group_message_requires_bot_mention_by_default_policy(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages, group_policy="mention")
+        channel._bot_open_id = "ou_bot"
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_group_plain",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"hello group"}',
+                    mentions=[],
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+
+        self.assertEqual(inbound_messages, [])
+        self.assertEqual(channel.reactions, [])
+
+    async def test_on_group_message_accepts_bot_mention_and_strips_placeholder(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages, group_policy="mention")
+        channel._bot_open_id = "ou_bot"
+
+        bot_mention = SimpleNamespace(
+            key="@_user_1",
+            name="CreativeClaw",
+            id=SimpleNamespace(open_id="ou_bot", user_id=""),
+        )
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_group_mention",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"@_user_1 please create a poster"}',
+                    mentions=[bot_mention],
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(inbound_messages[0].text, "please create a poster")
+        self.assertEqual(channel.reactions, [("om_group_mention", "THUMBSUP")])
+
+    async def test_on_message_includes_reply_context_and_thread_metadata(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        data = SimpleNamespace(
+            event=SimpleNamespace(
+                message=SimpleNamespace(
+                    message_id="om_reply_1",
+                    chat_id="oc_group_1",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"make it brighter"}',
+                    parent_id="om_parent",
+                    root_id="om_root",
+                    thread_id="omt_thread",
+                ),
+                sender=SimpleNamespace(
+                    sender_type="user",
+                    sender_id=SimpleNamespace(open_id="ou_allowed"),
+                ),
+            )
+        )
+
+        with patch.object(channel, "_get_reply_context", return_value="[Reply to: original image]"):
+            await channel._on_message(data)
+
+        self.assertEqual(len(inbound_messages), 1)
+        self.assertEqual(inbound_messages[0].text, "[Reply to: original image]\nmake it brighter")
+        self.assertEqual(inbound_messages[0].metadata["parent_id"], "om_parent")
+        self.assertEqual(inbound_messages[0].metadata["root_id"], "om_root")
+        self.assertEqual(inbound_messages[0].metadata["thread_id"], "omt_thread")
 
     async def test_send_routes_text_and_image_artifact(self) -> None:
         inbound_messages: list[InboundMessage] = []
@@ -482,6 +603,183 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(channel.patched_cards), 1)
         self.assertEqual(channel.patched_cards[0][0], "om_card_1")
         self.assertEqual(channel.patched_cards[0][1]["header"]["title"]["content"], "In Progress")
+
+    async def test_send_keeps_progress_cards_separate_across_turns(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Working on the first request.",
+                metadata={
+                    "display_style": "progress",
+                    "stage": "started",
+                    "session_id": "s1",
+                    "turn_index": 1,
+                },
+            )
+        )
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Working on the second request.",
+                metadata={
+                    "display_style": "progress",
+                    "stage": "started",
+                    "session_id": "s1",
+                    "turn_index": 2,
+                },
+            )
+        )
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Second request is generating an image.",
+                metadata={
+                    "display_style": "progress",
+                    "stage": "in_progress",
+                    "session_id": "s1",
+                    "turn_index": 2,
+                },
+            )
+        )
+
+        self.assertEqual(len(channel.sent_cards), 2)
+        self.assertEqual(len(channel.patched_cards), 1)
+        self.assertEqual(channel.patched_cards[0][0], "om_card_2")
+        self.assertEqual(channel.patched_cards[0][1]["header"]["title"]["content"], "In Progress")
+
+    async def test_send_final_reply_uses_chat_text_not_result_card(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Here is the final answer.",
+                metadata={"display_style": "final", "session_id": "s1"},
+            )
+        )
+
+        self.assertEqual(channel.sent_texts, [("oc_group_1", "Here is the final answer.")])
+        self.assertEqual(channel.sent_cards, [])
+
+    async def test_send_final_reply_patches_progress_card_to_completed(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Working.",
+                metadata={"display_style": "progress", "stage": "started", "session_id": "s1"},
+            )
+        )
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Here is the final answer.",
+                metadata={"display_style": "final", "session_id": "s1"},
+            )
+        )
+
+        self.assertEqual(len(channel.sent_cards), 1)
+        self.assertEqual(len(channel.patched_cards), 1)
+        self.assertEqual(channel.patched_cards[0][0], "om_card_1")
+        self.assertEqual(channel.patched_cards[0][1]["header"]["title"]["content"], "Completed")
+        self.assertEqual(channel.sent_texts, [("oc_group_1", "Here is the final answer.")])
+
+    async def test_send_final_reply_completes_only_current_turn_progress_card(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="First request is working.",
+                metadata={
+                    "display_style": "progress",
+                    "stage": "started",
+                    "session_id": "s1",
+                    "turn_index": 1,
+                },
+            )
+        )
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Second request is working.",
+                metadata={
+                    "display_style": "progress",
+                    "stage": "started",
+                    "session_id": "s1",
+                    "turn_index": 2,
+                },
+            )
+        )
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Here is the second answer.",
+                metadata={"display_style": "final", "session_id": "s1", "turn_index": 2},
+            )
+        )
+
+        self.assertEqual(len(channel.sent_cards), 2)
+        self.assertEqual(len(channel.patched_cards), 1)
+        self.assertEqual(channel.patched_cards[0][0], "om_card_2")
+        self.assertIn(("oc_group_1", "s1", "1"), channel._progress_cards)
+        self.assertNotIn(("oc_group_1", "s1", "2"), channel._progress_cards)
+        self.assertEqual(channel.sent_texts, [("oc_group_1", "Here is the second answer.")])
+
+    async def test_send_final_reply_uses_reply_api_when_configured(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages, reply_to_message=True)
+
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_group_1",
+                text="Here is the final answer.",
+                metadata={"display_style": "final", "message_id": "om_user_1"},
+            )
+        )
+
+        self.assertEqual(len(channel.replies), 1)
+        self.assertEqual(channel.replies[0][0], "om_user_1")
+        self.assertEqual(channel.replies[0][1], "text")
+        self.assertEqual(json.loads(channel.replies[0][2]), {"text": "Here is the final answer."})
+        self.assertEqual(channel.sent_texts, [])
+
+    async def test_send_routes_video_artifact_as_video_message(self) -> None:
+        inbound_messages: list[InboundMessage] = []
+        channel = _TestFeishuChannel(inbound_messages=inbound_messages)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            video_path = Path(tmp_dir) / "clip.mp4"
+            video_path.write_bytes(b"fake-video")
+
+            await channel.send(
+                OutboundMessage(
+                    channel="feishu",
+                    chat_id="oc_group_1",
+                    text="done",
+                    artifact_paths=[str(video_path)],
+                )
+            )
+
+            self.assertEqual(channel.sent_texts, [("oc_group_1", "done")])
+            self.assertEqual(channel.sent_videos, [("oc_group_1", str(video_path))])
 
     async def test_on_message_downloads_image_attachment(self) -> None:
         inbound_messages: list[InboundMessage] = []
