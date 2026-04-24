@@ -16,6 +16,7 @@ _DESCRIPTION_SECTIONS = (
     "Provider Boundaries",
     "When Not to Use",
 )
+_PARAMETER_METADATA_KEYS = ("parameter_examples", "parameters")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,14 @@ class ExpertCard:
         sections = _extract_markdown_sections(self.body, _DESCRIPTION_SECTIONS)
         raw_description = "\n".join(sections) if sections else self.body
         return _normalize_markdown_text(raw_description)
+
+    def build_parameters(self) -> str:
+        """Return compact invoke-agent parameter examples from card metadata."""
+        for key in _PARAMETER_METADATA_KEYS:
+            examples = _normalize_parameter_examples(self.metadata.get(key))
+            if examples:
+                return " or ".join(f"`{example}`" for example in examples)
+        return ""
 
 
 def parse_expert_card(path: Path) -> ExpertCard:
@@ -106,3 +115,15 @@ def _normalize_markdown_text(value: str) -> str:
         line = re.sub(r"^[-*]\s+", "", line)
         lines.append(line)
     return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def _normalize_parameter_examples(value: Any) -> list[str]:
+    """Normalize card parameter examples into a clean string list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    raise ValueError("Expert card parameter examples must be a string or list of strings.")

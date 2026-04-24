@@ -13,8 +13,8 @@ class ExpertAgentConfig(BaseModel):
 
     name: str  # Name of the expert agent
     enable: bool  # Whether the agent is enabled or not
-    description: str
-    parameters: str
+    description: str = ""
+    parameters: str = ""
 
     def __str__(self) -> str:
         return (
@@ -28,7 +28,7 @@ class ExpertAgentConfig(BaseModel):
 
 
 def load_expert_configs(config_file_path: str | Path) -> list[ExpertAgentConfig]:
-    """Load expert configurations from the JSON prompt metadata file."""
+    """Load the expert roster and enrich it with data from `EXPERT.md` cards."""
     config_path = Path(config_file_path)
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -45,7 +45,7 @@ def load_expert_configs(config_file_path: str | Path) -> list[ExpertAgentConfig]
 
 
 def _apply_expert_cards(expert_agents: list[ExpertAgentConfig]) -> None:
-    """Replace expert descriptions with `EXPERT.md` card descriptions when available."""
+    """Replace expert descriptions and parameter examples from `EXPERT.md` cards when available."""
     cards = discover_expert_cards()
     for expert_agent in expert_agents:
         card = cards.get(expert_agent.name)
@@ -54,6 +54,9 @@ def _apply_expert_cards(expert_agents: list[ExpertAgentConfig]) -> None:
         description = card.build_description()
         if description:
             expert_agent.description = description
+        parameters = card.build_parameters()
+        if parameters:
+            expert_agent.parameters = parameters
 
 
 EXPERTS_LIST: list[ExpertAgentConfig] = load_expert_configs(

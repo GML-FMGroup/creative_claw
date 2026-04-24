@@ -4,6 +4,14 @@ enabled = true
 input_types = ["image"]
 output_types = ["image", "metadata"]
 routing_keywords = ["crop", "resize", "rotate", "flip", "convert image", "image info", "metadata"]
+parameter_examples = [
+  "{'operation': 'crop', 'input_path': 'workspace/path.png', 'left': 10, 'top': 20, 'right': 200, 'bottom': 180}",
+  "{'operation': 'rotate', 'input_path': 'workspace/path.png', 'degrees': 90, 'expand': true}",
+  "{'operation': 'flip', 'input_path': 'workspace/path.png', 'direction': 'horizontal|vertical'}",
+  "{'operation': 'info', 'input_path': 'workspace/path.png'}",
+  "{'operation': 'resize', 'input_path': 'workspace/path.png', 'width': 1024, 'height': 1024, 'keep_aspect_ratio': true, 'resample': 'nearest|bilinear|bicubic|lanczos'(optional)}",
+  "{'operation': 'convert', 'input_path': 'workspace/path.png', 'output_format': 'png|jpg|jpeg|webp', 'mode': 'RGB'(optional), 'quality': 90(optional)}",
+]
 +++
 
 # ImageBasicOperations

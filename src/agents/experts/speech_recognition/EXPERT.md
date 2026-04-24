@@ -5,6 +5,12 @@ default_task = "auto"
 input_types = ["audio", "video"]
 output_types = ["transcript", "subtitle_file"]
 routing_keywords = ["speech recognition", "transcribe", "transcript", "subtitle", "caption", "srt", "vtt"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.wav', 'task': 'asr'(optional), 'timestamps': true(optional), 'language': 'en'(optional)}",
+  "{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_format': 'srt|vtt'(optional), 'output_path': 'workspace/subtitles.srt'(optional)}",
+  "{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_text': 'existing subtitle or transcript text', 'subtitle_format': 'srt|vtt'(optional)}",
+  "{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'task': 'asr'(optional), 'timestamps': false(optional)}",
+]
 +++
 
 # SpeechRecognitionExpert

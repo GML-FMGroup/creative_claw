@@ -5,6 +5,9 @@ input_types = ["query"]
 output_types = ["image", "search_results"]
 providers = ["serper", "duckduckgo"]
 routing_keywords = ["search", "reference image", "web result", "internet", "lookup", "visual reference"]
+parameter_examples = [
+  "{'query': 'content need to be search', 'mode': 'image|text|all'}",
+]
 +++
 
 # SearchAgent

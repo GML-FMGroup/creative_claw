@@ -5,6 +5,10 @@ default_provider = "nano_banana"
 input_types = ["image", "prompt"]
 output_types = ["image"]
 routing_keywords = ["image edit", "modify image", "reference image", "inpaint", "replace", "change background"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.png', 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}",
+  "{'input_paths': ['workspace/path1.png', ...], 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}",
+]
 +++
 
 # ImageEditingAgent

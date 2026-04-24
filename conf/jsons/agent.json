@@ -1,106 +1,21 @@
 {
     "expert_agents": [
-        {
-            "name": "ImageGroundingAgent",
-            "enable": true,
-            "description": "Ground one target description in one workspace image with the DeepDataSpace DINO-XSeek model. DINO-XSeek combines the DINO-X unified vision backbone with a multimodal large language model, so it can take a precise natural-language prompt, including position, color, and other visual attributes, and locate the matching object in the image. Input: `input_path` for one workspace image plus `prompt` for the target object phrase, with optional `model`. Output: structured grounding results containing the provider response `objects` list and a simplified `bboxes` list, where each bbox is `[x1, y1, x2, y2]` in the original image coordinate space.",
-            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-XSeek-1.0'(optional)}`"
-        },
-        {
-            "name": "ImageSegmentationAgent",
-            "enable": true,
-            "description": "Segment one target description in one workspace image with the DeepDataSpace DINO-X model. Input: `input_path` for one workspace image plus `prompt` for the target object phrase, with optional `model` and `threshold`. Output: one saved binary mask image file plus structured segmentation results containing the provider response `objects` list, simplified `bboxes`, and the generated `mask_path`. Example `invoke_agent` payload: `{\"input_path\":\"inbox/cli/demo.png\",\"prompt\":\"person\",\"threshold\":0.2}`. Chaining example: first call `ImageSegmentationAgent`, then read `current_output.results[0].mask_path`, and pass that workspace file path into a later step such as `ImageEditingAgent` or a built-in file/image tool.",
-            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-X-1.0'(optional), 'threshold': 0.25(optional)}`"
-        },
-        {
-            "name": "ImageGenerationAgent",
-            "enable": true,
-            "description": "Generate one or more images from text only. This agent does not accept reference images. It supports provider selection, where `nano_banana` is the default, `seedream` can be requested explicitly, and OpenAI GPT Image is available through `gpt_image`. For Gemini image generation you can also pass optional `aspect_ratio` and `resolution` values. For GPT Image you can pass optional `size` (`1024x1024|1024x1536|1536x1024`) and `quality` (`low|medium|high`).",
-            "parameters": "`{'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream|gpt_image'(optional), 'aspect_ratio': '16:9'(optional), 'resolution': '1K|2K|4K'(optional), 'size': '1024x1024|1024x1536|1536x1024'(optional, gpt_image only), 'quality': 'low|medium|high'(optional, gpt_image only)}`"
-        },
-        {
-            "name": "ImageEditingAgent",
-            "enable": true,
-            "description": "Edit one or more existing images. `input_path` or `input_paths` should point to workspace files for the image to edit plus optional reference images. If multiple input images are provided, the prompt should explain their order. This agent supports provider selection, where `nano_banana` is the default and `seedream` can be requested explicitly.",
-            "parameters": "`{'input_path': 'workspace/path.png', 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}` or `{'input_paths': ['workspace/path1.png', ...], 'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream'(optional)}`"
-        },
-        {
-            "name": "KnowledgeAgent",
-            "enable": true,
-            "description": "Perform art design and text optimization. Given the original task and optional reference images, this agent generates a professional design plan and image generation prompts derived from those inputs. It is best suited for tasks that need specialized visual design, promotional marketing effects, or detailed analysis of reference images for precise image generation. Ordinary image generation does not require this agent. This agent can complete more than one design and prompt at the same time, but the task must clearly specify how many designs and prompts are required.",
-            "parameters": "`{'prompt': 'original task', 'input_path': 'workspace/path.png'(optional)}` or `{'prompt': 'original task', 'input_paths': ['workspace/path1.png', ...](optional)}`"
-        },
-        {
-            "name": "ImageUnderstandingAgent",
-            "enable": true,
-            "description": "Analyze one or more workspace images and return structured understanding results plus user-readable text. Supported modes are `description`, `style`, `ocr`, `all`, and `prompt`. Use `prompt` when the goal is to reverse engineer a reusable image-generation prompt from a reference image. You may pass one mode string to reuse across all input images, or a mode list whose length matches `input_paths`.",
-            "parameters": "`{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all|prompt'}` or `{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all|prompt'}` or `{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'prompt']}`"
-        },
-        {
-            "name": "ImageBasicOperations",
-            "enable": true,
-            "description": "Run one deterministic image operation inside the workspace. Supported operations are `crop`, `rotate`, `flip`, `info`, `resize`, and `convert`. Use this expert when the task is local image manipulation or metadata inspection rather than model-based image understanding or generation.",
-            "parameters": "`{'operation': 'crop', 'input_path': 'workspace/path.png', 'left': 10, 'top': 20, 'right': 200, 'bottom': 180}` or `{'operation': 'rotate', 'input_path': 'workspace/path.png', 'degrees': 90, 'expand': true}` or `{'operation': 'flip', 'input_path': 'workspace/path.png', 'direction': 'horizontal|vertical'}` or `{'operation': 'info', 'input_path': 'workspace/path.png'}` or `{'operation': 'resize', 'input_path': 'workspace/path.png', 'width': 1024, 'height': 1024, 'keep_aspect_ratio': true, 'resample': 'nearest|bilinear|bicubic|lanczos'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.png', 'output_format': 'png|jpg|jpeg|webp', 'mode': 'RGB'(optional), 'quality': 90(optional)}`"
-        },
-        {
-            "name": "TextTransformExpert",
-            "enable": true,
-            "description": "Run one atomic text transformation only. Supported modes are `rewrite`, `expand`, `compress`, `translate`, `structure`, `title`, and `script`. Use this expert when the task is transforming text rather than understanding files or generating media.",
-            "parameters": "`{'input_text': 'source text', 'mode': 'rewrite|expand|compress|translate|structure|title|script'}` or `{'text': 'source text', 'mode': 'translate', 'target_language': 'zh-CN'}`"
-        },
-        {
-            "name": "SearchAgent",
-            "enable": true,
-            "description": "Search the Internet for pictures or text related to the input parameter query, has three modes: image, text, all. How to choose mode: If the task requires images as a reference, choose `image`; If the task requires obtaining knowledge-based information such as design concepts, choose `text`; If both, choose `all`",
-            "parameters": "`{'query': 'content need to be search', 'mode': 'image|text|all'}`"
-        },
-        {
-            "name": "VideoGenerationAgent",
-            "enable": true,
-            "description": "Generate one or more videos from a text prompt, prompt-plus-image guidance, multi-image reference guidance, or one workspace video for Veo extension. Supported providers are `seedance`, `veo`, and `kling`, where `seedance` is the default. Supported modes across the integration are `prompt`, `first_frame`, `first_frame_and_last_frame`, `multi_reference`, `reference_asset`, `reference_style`, and `video_extension` (`veo` only). Optional controls include agent-side `prompt_rewrite`, plus `aspect_ratio`, `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, `model_name`, and `kling_mode`. Provider boundaries: `veo` supports `video_extension` and generates audio natively from prompt cues such as dialogue, ambient sound, and SFX, so do not pass a separate audio file; `kling` currently supports only `prompt`, `first_frame`, `first_frame_and_last_frame`, and `multi_reference`, and does not support `reference_asset`, `reference_style`, or `video_extension` in this integration. Kling basic routes now default to `kling-v3`; Kling `multi_reference` continues to use the official `model_name=kling-v1-6` schema. If Kling input images do not meet the official size limits, inspect them and preprocess them with local image tools first because the expert does not auto-resize or auto-crop inputs.",
-            "parameters": "`{'prompt': 'make a cinematic cat video', 'prompt_rewrite': 'auto|off'(optional, agent-side), 'provider': 'seedance|veo|kling'(optional), 'mode': 'prompt'(optional), 'aspect_ratio': '16:9|9:16|1:1'(optional), 'resolution': '720p|1080p|4k'(optional, veo only), 'duration_seconds': '3-15 integer'(optional, provider-specific), 'negative_prompt': 'things to avoid'(optional, veo or kling), 'person_generation': 'allow_all|allow_adult'(optional, veo only), 'seed': 123(optional, veo only), 'model_name': 'kling-v3'(optional, kling basic routes), 'kling_mode': 'std|pro'(optional, kling only)}` or `{'input_path': 'workspace/path.png', 'prompt': 'animate this image'(optional), 'prompt_rewrite': 'auto|off'(optional, agent-side), 'provider': 'seedance|veo|kling'(optional), 'mode': 'first_frame', 'aspect_ratio': '16:9|9:16|1:1'(optional), 'resolution': '720p|1080p|4k'(optional, veo only), 'duration_seconds': '3-15 integer'(optional, provider-specific), 'model_name': 'kling-v3'(optional, kling basic routes), 'kling_mode': 'std|pro'(optional, kling only)}` or `{'input_paths': ['workspace/first.png', 'workspace/last.png'], 'prompt': 'transition between them'(optional), 'prompt_rewrite': 'auto|off'(optional, agent-side), 'provider': 'seedance|veo|kling'(optional), 'mode': 'first_frame_and_last_frame', 'aspect_ratio': '16:9|9:16|1:1'(optional), 'resolution': '720p|1080p|4k'(optional, veo only), 'duration_seconds': '3-15 integer'(optional, provider-specific), 'model_name': 'kling-v3'(optional, kling basic routes), 'kling_mode': 'std|pro'(optional, kling only)}` or `{'input_paths': ['workspace/a.png', 'workspace/b.png'], 'prompt': 'keep the subject and motion consistent', 'prompt_rewrite': 'auto|off'(optional, agent-side), 'provider': 'kling', 'mode': 'multi_reference', 'aspect_ratio': '16:9|9:16|1:1'(optional), 'duration_seconds': '5|10'(optional), 'model_name': 'kling-v1-6'(optional), 'kling_mode': 'std|pro'(optional)}` or `{'input_path': 'workspace/clip.mp4', 'prompt': 'continue the motion naturally'(optional), 'prompt_rewrite': 'auto|off'(optional, agent-side), 'provider': 'veo', 'mode': 'video_extension', 'resolution': '720p'(optional), 'duration_seconds': '8'(optional), 'negative_prompt': 'things to avoid'(optional), 'person_generation': 'allow_all|allow_adult'(optional), 'seed': 123(optional)}`"
-        },
-        {
-            "name": "VideoUnderstandingExpert",
-            "enable": true,
-            "description": "Analyze one or more workspace videos and return structured understanding results plus user-readable text. Supported modes are `description`, `shot_breakdown`, `ocr`, and `prompt`. Use `prompt` when the goal is to reverse engineer a reusable creative prompt or recreation brief from a reference video.",
-            "parameters": "`{'input_path': 'workspace/path.mp4', 'mode': 'description|shot_breakdown|ocr|prompt'}` or `{'input_paths': ['workspace/path1.mp4', 'workspace/path2.mp4'], 'mode': ['description', 'prompt']}`"
-        },
-        {
-            "name": "VideoBasicOperations",
-            "enable": true,
-            "description": "Run one deterministic video operation inside the workspace. Supported operations are `info`, `extract_frame`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local video inspection and file-level processing rather than model-based video generation.",
-            "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.mp4'}` or `{'operation': 'extract_frame', 'input_path': 'workspace/path.mp4', 'timestamp': '00:00:01.500', 'output_format': 'png|jpg|jpeg|webp'(optional)}` or `{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.mp4', 'workspace/b.mp4'], 'output_format': 'mp4|mov|mkv|webm'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.mp4', 'output_format': 'mp4|mov|mkv|webm', 'video_codec': 'libx264'(optional), 'audio_codec': 'aac'(optional)}`"
-        },
-        {
-            "name": "AudioBasicOperations",
-            "enable": true,
-            "description": "Run one deterministic audio operation inside the workspace. Supported operations are `info`, `trim`, `concat`, and `convert`. The concat path assumes compatible input clips. Use this expert for local audio inspection and file-level processing rather than transcription or synthesis.",
-            "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.wav'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.wav', 'workspace/b.wav'], 'output_format': 'mp3|wav|aac|m4a|flac|ogg'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.wav', 'output_format': 'mp3|wav|aac|m4a|flac|ogg', 'sample_rate': 44100(optional), 'bitrate': '192k'(optional), 'channels': 2(optional)}`"
-        },
-        {
-            "name": "SpeechRecognitionExpert",
-            "enable": true,
-            "description": "Convert one or more workspace audio or video files into transcript text, timestamped ASR, or subtitle files. Use this expert when the task is transcription, captions, SRT/VTT subtitle files, or subtitle timing.",
-            "parameters": "`{'input_path': 'workspace/path.wav', 'task': 'asr'(optional), 'timestamps': true(optional), 'language': 'en'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_format': 'srt|vtt'(optional), 'output_path': 'workspace/subtitles.srt'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_text': 'existing subtitle or transcript text', 'subtitle_format': 'srt|vtt'(optional)}` or `{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'task': 'asr'(optional), 'timestamps': false(optional)}`"
-        },
-        {
-            "name": "SpeechSynthesisExpert",
-            "enable": true,
-            "description": "Generate one speech audio file from text or SSML only. This expert uses the ByteDance HTTP streaming TTS path and is intended for narration or voiceover generation rather than transcription or music creation.",
-            "parameters": "`{'text': 'Hello from Creative Claw.'}` or `{'ssml': '<speak>Hello<break time=\"500ms\"/>world</speak>', 'speaker': 'zh_female_yingyujiaoyu_mars_bigtts', 'audio_format': 'mp3', 'enable_timestamp': true}`"
-        },
-        {
-            "name": "MusicGenerationExpert",
-            "enable": true,
-            "description": "Generate one music or BGM clip from text instructions. You can provide optional lyrics for song-like output, or omit lyrics and keep `instrumental=true` for BGM-style generation.",
-            "parameters": "`{'prompt': 'cinematic orchestral background music', 'instrumental': true}` or `{'prompt': 'warm folk pop song', 'lyrics': 'custom lyric lines', 'audio_format': 'mp3'}`"
-        },
-        {
-            "name": "3DGeneration",
-            "enable": true,
-            "description": "Generate 3D assets through Tencent Cloud Hunyuan 3D Pro. The current implementation only supports provider `hy3d`. It accepts prompt-only generation, image-only generation, and prompt-plus-image Sketch mode. Returned 3D model files are downloaded into the workspace and exposed as expert output files.",
-            "parameters": "`{'prompt': 'a wooden toy corgi', 'provider': 'hy3d'(optional), 'model': '3.0|3.1'(optional), 'generate_type': 'normal|lowpoly|sketch|geometry'(optional), 'enable_pbr': false(optional), 'face_count': 10000(optional), 'polygon_type': 'quad'(optional), 'result_format': 'stl|usdz|fbx'(optional), 'timeout_seconds': 900(optional), 'interval_seconds': 8(optional)}` or `{'input_path': 'workspace/path.png', 'provider': 'hy3d'(optional), 'model': '3.0|3.1'(optional), 'generate_type': 'normal|lowpoly|geometry'(optional), 'enable_pbr': false(optional), 'face_count': 10000(optional), 'polygon_type': 'quad'(optional), 'result_format': 'stl|usdz|fbx'(optional), 'timeout_seconds': 900(optional), 'interval_seconds': 8(optional)}` or `{'prompt': 'wood carving style', 'input_path': 'workspace/path.png', 'provider': 'hy3d'(optional), 'model': '3.0|3.1'(optional), 'generate_type': 'sketch', 'enable_pbr': false(optional), 'face_count': 10000(optional), 'polygon_type': 'quad'(optional), 'result_format': 'stl|usdz|fbx'(optional), 'timeout_seconds': 900(optional), 'interval_seconds': 8(optional)}`"
-        }
+        {"name": "ImageGroundingAgent", "enable": true},
+        {"name": "ImageSegmentationAgent", "enable": true},
+        {"name": "ImageGenerationAgent", "enable": true},
+        {"name": "ImageEditingAgent", "enable": true},
+        {"name": "KnowledgeAgent", "enable": true},
+        {"name": "ImageUnderstandingAgent", "enable": true},
+        {"name": "ImageBasicOperations", "enable": true},
+        {"name": "TextTransformExpert", "enable": true},
+        {"name": "SearchAgent", "enable": true},
+        {"name": "VideoGenerationAgent", "enable": true},
+        {"name": "VideoUnderstandingExpert", "enable": true},
+        {"name": "VideoBasicOperations", "enable": true},
+        {"name": "AudioBasicOperations", "enable": true},
+        {"name": "SpeechRecognitionExpert", "enable": true},
+        {"name": "SpeechSynthesisExpert", "enable": true},
+        {"name": "MusicGenerationExpert", "enable": true},
+        {"name": "3DGeneration", "enable": true}
     ]
 }

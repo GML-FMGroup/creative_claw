@@ -6,6 +6,9 @@ default_model = "DINO-X-1.0"
 input_types = ["image", "prompt"]
 output_types = ["mask", "objects", "bboxes"]
 routing_keywords = ["segment", "mask", "cut out", "isolate", "remove background", "region edit"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-X-1.0'(optional), 'threshold': 0.25(optional)}",
+]
 +++
 
 # ImageSegmentationAgent

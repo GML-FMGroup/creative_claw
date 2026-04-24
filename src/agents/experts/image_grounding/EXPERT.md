@@ -6,6 +6,9 @@ default_model = "DINO-XSeek-1.0"
 input_types = ["image", "prompt"]
 output_types = ["objects", "bboxes"]
 routing_keywords = ["ground", "locate", "find object", "bbox", "bounding box", "object coordinates"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.png', 'prompt': 'object description', 'model': 'DINO-XSeek-1.0'(optional)}",
+]
 +++
 
 # ImageGroundingAgent

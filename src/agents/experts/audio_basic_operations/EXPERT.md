@@ -4,6 +4,13 @@ enabled = true
 input_types = ["audio"]
 output_types = ["audio", "metadata"]
 routing_keywords = ["audio info", "trim audio", "concat audio", "convert audio", "sample rate", "bitrate"]
+parameter_examples = [
+  "{'operation': 'info', 'input_path': 'workspace/path.wav'}",
+  "{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'end_time': '00:00:03'}",
+  "{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'duration': '2.0'}",
+  "{'operation': 'concat', 'input_paths': ['workspace/a.wav', 'workspace/b.wav'], 'output_format': 'mp3|wav|aac|m4a|flac|ogg'(optional)}",
+  "{'operation': 'convert', 'input_path': 'workspace/path.wav', 'output_format': 'mp3|wav|aac|m4a|flac|ogg', 'sample_rate': 44100(optional), 'bitrate': '192k'(optional), 'channels': 2(optional)}",
+]
 +++
 
 # AudioBasicOperations

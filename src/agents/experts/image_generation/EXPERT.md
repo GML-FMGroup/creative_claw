@@ -5,6 +5,9 @@ default_provider = "nano_banana"
 input_types = ["prompt"]
 output_types = ["image"]
 routing_keywords = ["image generation", "text to image", "poster", "illustration", "visual", "render"]
+parameter_examples = [
+  "{'prompt': ['prompt1', 'prompt2', ...], 'provider': 'nano_banana|seedream|gpt_image'(optional), 'aspect_ratio': '16:9'(optional), 'resolution': '1K|2K|4K'(optional), 'size': '1024x1024|1024x1536|1536x1024'(optional, gpt_image only), 'quality': 'low|medium|high'(optional, gpt_image only)}",
+]
 +++
 
 # ImageGenerationAgent

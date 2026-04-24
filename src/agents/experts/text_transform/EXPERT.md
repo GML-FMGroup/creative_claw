@@ -4,6 +4,10 @@ enabled = true
 input_types = ["text"]
 output_types = ["text"]
 routing_keywords = ["rewrite", "expand", "compress", "translate", "structure", "title", "script"]
+parameter_examples = [
+  "{'input_text': 'source text', 'mode': 'rewrite|expand|compress|translate|structure|title|script'}",
+  "{'text': 'source text', 'mode': 'translate', 'target_language': 'zh-CN'}",
+]
 +++
 
 # TextTransformExpert

@@ -6,6 +6,10 @@ default_model = "seed-tts-1.0"
 input_types = ["text", "ssml"]
 output_types = ["audio"]
 routing_keywords = ["text to speech", "tts", "voiceover", "narration", "ssml", "speaker"]
+parameter_examples = [
+  "{'text': 'Hello from Creative Claw.'}",
+  '''{'ssml': '<speak>Hello<break time="500ms"/>world</speak>', 'speaker': 'zh_female_yingyujiaoyu_mars_bigtts', 'audio_format': 'mp3', 'enable_timestamp': true}''',
+]
 +++
 
 # SpeechSynthesisExpert

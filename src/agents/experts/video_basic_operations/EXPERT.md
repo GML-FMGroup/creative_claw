@@ -4,6 +4,14 @@ enabled = true
 input_types = ["video"]
 output_types = ["video", "image", "metadata"]
 routing_keywords = ["video info", "extract frame", "trim video", "concat video", "convert video", "transcode"]
+parameter_examples = [
+  "{'operation': 'info', 'input_path': 'workspace/path.mp4'}",
+  "{'operation': 'extract_frame', 'input_path': 'workspace/path.mp4', 'timestamp': '00:00:01.500', 'output_format': 'png|jpg|jpeg|webp'(optional)}",
+  "{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'end_time': '00:00:03'}",
+  "{'operation': 'trim', 'input_path': 'workspace/path.mp4', 'start_time': '00:00:01', 'duration': '2.0'}",
+  "{'operation': 'concat', 'input_paths': ['workspace/a.mp4', 'workspace/b.mp4'], 'output_format': 'mp4|mov|mkv|webm'(optional)}",
+  "{'operation': 'convert', 'input_path': 'workspace/path.mp4', 'output_format': 'mp4|mov|mkv|webm', 'video_codec': 'libx264'(optional), 'audio_codec': 'aac'(optional)}",
+]
 +++
 
 # VideoBasicOperations

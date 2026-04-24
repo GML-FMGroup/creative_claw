@@ -6,6 +6,10 @@ default_model = "music-2.5"
 input_types = ["prompt", "lyrics"]
 output_types = ["audio"]
 routing_keywords = ["music", "bgm", "song", "instrumental", "lyrics", "soundtrack"]
+parameter_examples = [
+  "{'prompt': 'cinematic orchestral background music', 'instrumental': true}",
+  "{'prompt': 'warm folk pop song', 'lyrics': 'custom lyric lines', 'audio_format': 'mp3'}",
+]
 +++
 
 # MusicGenerationExpert

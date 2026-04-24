@@ -4,6 +4,10 @@ enabled = true
 input_types = ["prompt", "image"]
 output_types = ["design_plan", "image_prompt"]
 routing_keywords = ["design plan", "creative brief", "prompt optimization", "reference analysis", "campaign concept"]
+parameter_examples = [
+  "{'prompt': 'original task', 'input_path': 'workspace/path.png'(optional)}",
+  "{'prompt': 'original task', 'input_paths': ['workspace/path1.png', ...](optional)}",
+]
 +++
 
 # KnowledgeAgent

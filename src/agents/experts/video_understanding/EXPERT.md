@@ -4,6 +4,10 @@ enabled = true
 input_types = ["video"]
 output_types = ["text", "metadata"]
 routing_keywords = ["video description", "shot breakdown", "video OCR", "reverse prompt", "analyze video"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.mp4', 'mode': 'description|shot_breakdown|ocr|prompt'}",
+  "{'input_paths': ['workspace/path1.mp4', 'workspace/path2.mp4'], 'mode': ['description', 'prompt']}",
+]
 +++
 
 # VideoUnderstandingExpert

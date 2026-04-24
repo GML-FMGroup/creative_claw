@@ -5,6 +5,11 @@ default_mode = "description"
 input_types = ["image"]
 output_types = ["text", "analysis"]
 routing_keywords = ["describe image", "analyze image", "ocr", "style analysis", "reverse prompt", "prompt extraction"]
+parameter_examples = [
+  "{'input_path': 'workspace/path.png', 'mode': 'description|style|ocr|all|prompt'}",
+  "{'input_paths': ['workspace/path1.png', ...], 'mode': 'description|style|ocr|all|prompt'}",
+  "{'input_paths': ['workspace/path1.png', 'workspace/path2.png'], 'mode': ['description', 'prompt']}",
+]
 +++
 
 # ImageUnderstandingAgent

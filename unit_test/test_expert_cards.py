@@ -38,11 +38,14 @@ class ExpertCardTests(unittest.TestCase):
         card = parse_expert_card(self._video_card_path())
 
         description = card.build_description()
+        parameters = card.build_parameters()
 
         self.assertEqual(card.name, "VideoGenerationAgent")
         self.assertIn("Use this expert for text-to-video", description)
         self.assertIn("Prefer `veo`", description)
         self.assertIn("does not return structured subtitle files", description)
+        self.assertIn("'provider': 'seedance|veo|kling'", parameters)
+        self.assertIn("'mode': 'video_extension'", parameters)
         self.assertNotIn("##", description)
 
     def test_discover_expert_cards_finds_video_generation_card(self) -> None:
@@ -174,7 +177,7 @@ class ExpertCardTests(unittest.TestCase):
             for phrase in phrases:
                 self.assertIn(phrase, description, card.name)
 
-    def test_agent_config_uses_expert_card_description_with_json_parameters_fallback(self) -> None:
+    def test_agent_config_uses_expert_card_description_and_parameters(self) -> None:
         expert_agents = load_expert_configs(Path(CONF_ROOT) / "jsons" / "agent.json")
         generation_agent = next(agent for agent in expert_agents if agent.name == "ImageGenerationAgent")
         editing_agent = next(agent for agent in expert_agents if agent.name == "ImageEditingAgent")
@@ -205,3 +208,10 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("instrumental", music_agent.parameters)
         self.assertIn("only supports provider `hy3d`", three_d_agent.description)
         self.assertIn("result_format", three_d_agent.parameters)
+
+    def test_minimal_agent_roster_is_enriched_by_expert_cards(self) -> None:
+        expert_agents = load_expert_configs(Path(CONF_ROOT) / "jsons" / "agent.json")
+
+        for agent in expert_agents:
+            self.assertTrue(agent.description, agent.name)
+            self.assertTrue(agent.parameters, agent.name)
