@@ -29,4 +29,4 @@ Use this expert to analyze one or more workspace videos and return text understa
 
 ## When Not to Use
 
-Do not use this expert for local video file operations; use `VideoBasicOperations`. Do not use it for speech transcription or subtitle files; use `SpeechRecognitionExpert` or `SpeechTranscriptionExpert`.
+Do not use this expert for local video file operations; use `VideoBasicOperations`. Do not use it for speech transcription or subtitle files; use `SpeechRecognitionExpert`.

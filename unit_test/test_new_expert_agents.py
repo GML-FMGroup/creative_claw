@@ -10,7 +10,6 @@ from google.genai.types import Content, Part
 
 from src.agents.experts.speech_recognition import tool as recognition_tool
 from src.agents.experts.speech_recognition.speech_recognition_expert import SpeechRecognitionExpert
-from src.agents.experts.speech_transcription.speech_transcription_expert import SpeechTranscriptionExpert
 from src.agents.experts.text_transform.text_transform_expert import TextTransformExpert
 from src.agents.experts.video_understanding import tool as video_tool
 from src.agents.experts.video_understanding.video_understanding_expert import VideoUnderstandingExpert
@@ -321,39 +320,6 @@ class SpeechRecognitionExpertTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asr_mock.await_count, 0)
         current_output = events[0].actions.state_delta["current_output"]
         self.assertEqual(current_output["results"][0]["subtitle_backend"], "volcengine_subtitle_alignment")
-
-    async def test_speech_transcription_alias_still_works(self) -> None:
-        agent = SpeechTranscriptionExpert(name="SpeechTranscriptionExpert")
-        ctx = _build_ctx(
-            {
-                "current_parameters": {
-                    "input_path": "inbox/session/demo.wav",
-                }
-            }
-        )
-
-        with patch(
-            "src.agents.experts.speech_recognition.speech_recognition_expert.speech_recognition_tool",
-            new=AsyncMock(
-                return_value={
-                    "status": "success",
-                    "message": "plain transcript",
-                    "transcription_text": "plain transcript",
-                    "basic_info": "Basic media info: duration_seconds=2.4.",
-                    "input_path": "inbox/session/demo.wav",
-                    "provider": "google_adk",
-                    "model_name": "volc.bigasr.auc_turbo",
-                    "task": "asr",
-                    "timestamps": False,
-                }
-            ),
-        ):
-            events = [event async for event in agent._run_async_impl(ctx)]
-
-        current_output = events[0].actions.state_delta["current_output"]
-        self.assertEqual(current_output["status"], "success")
-        self.assertEqual(events[0].actions.state_delta["speech_transcription_results"][0]["task"], "asr")
-
 
 if __name__ == "__main__":
     unittest.main()

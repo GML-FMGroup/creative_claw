@@ -123,7 +123,7 @@ creative-claw init
 - 对 `VideoGenerationAgent` 的 `provider="kling"` 来说，文生和图生默认模型已经切到 `kling-v3`，而 `mode="multi_reference"` 仍按官方独立接口走 `kling-v1-6`。
 - 如果没有显式配置 `services.kling_api_base` 或 `KLING_API_BASE`，内置 Kling provider 会自动探测北京和新加坡官方网关，并缓存首个可用结果。
 - Kling 的图像输入路径只做官方文档约束校验，不会自动 resize，也不会自动裁剪；如果图片不符合要求，应先用本地图像工具预处理，再调用 `VideoGenerationAgent`。
-- `SpeechRecognitionExpert` 以及兼容别名 `SpeechTranscriptionExpert` 依赖 Volcengine 语音服务。除了 `VOLCENGINE_APPID` 和 `VOLCENGINE_ACCESS_TOKEN` 之外，当前后端还需要开通这些资源权限：`volc.bigasr.auc_turbo` 用于 `task=asr`，`vc.async.default` 用于直接生成字幕，`volc.ata.default` 用于在传入 `subtitle_text` / `audio_text` 时做自动字幕打轴。开通入口是 [Volcengine 语音控制台](https://console.volcengine.com/speech/app)。未开通时，接口通常会返回 `requested resource not granted` 或 `requested grant not found`。
+- `SpeechRecognitionExpert` 依赖 Volcengine 语音服务。除了 `VOLCENGINE_APPID` 和 `VOLCENGINE_ACCESS_TOKEN` 之外，当前后端还需要开通这些资源权限：`volc.bigasr.auc_turbo` 用于 `task=asr`，`vc.async.default` 用于直接生成字幕，`volc.ata.default` 用于在传入 `subtitle_text` / `audio_text` 时做自动字幕打轴。开通入口是 [Volcengine 语音控制台](https://console.volcengine.com/speech/app)。未开通时，接口通常会返回 `requested resource not granted` 或 `requested grant not found`。
 - 读取顺序是：`conf.json` 优先；如果某个 API key 在 `conf.json` 里是空字符串，运行时会回退到同名环境变量。
 - 第一轮文本 LLM provider 已支持：`openai`、`anthropic`、`gemini`、`openrouter`、`deepseek`、`groq`、`zhipu`、`dashscope`、`vllm`、`ollama`、`moonshot`、`minimax`、`mistral`、`stepfun`、`siliconflow`、`volcengine`、`byteplus`、`qianfan`、`azure_openai`、`custom`。
 - 更完整的环境与凭证说明、完整模板参考、以及常用字段解释，统一见 [docs/development.md](docs/development.md)。

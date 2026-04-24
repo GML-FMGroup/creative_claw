@@ -192,7 +192,7 @@ Recommended parameters:
 {"input_path":"inbox/cli/reference.mp4","mode":"prompt"}
 ```
 
-### `SpeechTranscriptionExpert`
+### `SpeechRecognitionExpert`
 
 Use when:
 
@@ -297,7 +297,7 @@ Prefer this before generation when:
 
 ### Speech Media -> Transcript -> Script Rewrite
 
-1. `SpeechTranscriptionExpert`
+1. `SpeechRecognitionExpert`
 2. `TextTransformExpert`
 
 ### Uploaded Image -> Understand -> Decide Edit Direction
@@ -331,7 +331,7 @@ Prefer this before generation when:
 - If the user says "mask / cutout / segment", start from `ImageSegmentationAgent`.
 - If the user says "analyze this video / break down shots / OCR video / reverse prompt video", start from `VideoUnderstandingExpert`.
 - If the user says "video generation", start from `VideoGenerationAgent`.
-- If the user says "transcribe audio / transcribe video / speech to text", start from `SpeechTranscriptionExpert`.
+- If the user says "transcribe audio / transcribe video / speech to text", start from `SpeechRecognitionExpert`.
 - If the user says "text to speech / narration / voiceover", start from `SpeechSynthesisExpert`.
 - If the user says "BGM / generate music / song draft", start from `MusicGenerationExpert`.
 - If the user says "search references / web info", start from `SearchAgent`.

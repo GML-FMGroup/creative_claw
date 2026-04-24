@@ -1,34 +1,21 @@
 google-adk>=1.29.0,<2.0.0
-google-genai
-google-cloud-aiplatform
-pillow
-pycocotools
-pydantic
-requests
-loguru
-flask
-dds-cloudapi-sdk
-opencv-python
-opencv-contrib-python
-litellm
-volcengine
-volcengine-python-sdk[ark]
-
-# Tools
-dashscope
-httpx[socks]
-requests-toolbelt
-openai
+google-genai>=0.6.0
+pydantic>=2.7.0
+requests>=2.31.0
+pillow>=10.3.0
+pycocotools>=2.0.8
+loguru>=0.7.2
+litellm>=1.0.0
+dashscope>=1.20.7
+httpx[socks]>=0.27.0
+requests-toolbelt>=1.0.0
+openai>=1.16.0
 asyncddgs==0.1.0a1
-lark-oapi
-websockets
-Deprecated
-python-socks
-tencentcloud-sdk-python
+lark-oapi>=1.4.13
+websockets>=12.0
+volcengine-python-sdk[ark]
+tencentcloud-sdk-python>=3.1.76
 
 # Dev/Testing
-pytest
-pytest-mock
-
-# log
-loguru
+pytest>=8.2.0
+pytest-mock>=3.12.0

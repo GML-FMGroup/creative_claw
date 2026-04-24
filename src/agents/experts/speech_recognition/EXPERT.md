@@ -25,7 +25,6 @@ Use this expert for speech recognition on workspace audio or video files, transc
 - This expert accepts workspace audio or video files through `input_path` or `input_paths`.
 - Subtitle output supports `subtitle_format` values `srt` and `vtt`.
 - The subtitle path is written into the workspace and returned in `current_output.results[*].subtitle_path` plus `output_files`.
-- `SpeechTranscriptionExpert` is a compatibility alias for this expert; it should not be treated as a separate speech provider.
 
 ## When Not to Use
 

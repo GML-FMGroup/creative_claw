@@ -4,8 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from google.adk.agents import BaseAgent
+
+from src.agents.experts.audio_basic_operations.audio_basic_operations_agent import AudioBasicOperationsAgent
+from src.agents.experts.image_basic_operations.image_basic_operations_agent import ImageBasicOperationsAgent
+from src.agents.experts.image_editing.image_editing_agent import ImageEditingAgent
+from src.agents.experts.image_generation.image_generation_agent import ImageGenerationAgent
+from src.agents.experts.image_grounding.image_grounding_agent import ImageGroundingAgent
+from src.agents.experts.image_segmentation.image_segmentation_agent import ImageSegmentationAgent
+from src.agents.experts.image_understanding.image_understanding_agent import ImageUnderstandingAgent
+from src.agents.experts.knowledge.knowledge_agent import KnowledgeAgent
+from src.agents.experts.music_generation.music_generation_expert import MusicGenerationExpert
+from src.agents.experts.search.search_agent import SearchAgent
+from src.agents.experts.speech_recognition.speech_recognition_expert import SpeechRecognitionExpert
+from src.agents.experts.speech_synthesis.speech_synthesis_expert import SpeechSynthesisExpert
+from src.agents.experts.text_transform.text_transform_expert import TextTransformExpert
+from src.agents.experts.three_d_generation.three_d_generation_agent import ThreeDGenerationAgent
+from src.agents.experts.video_basic_operations.video_basic_operations_agent import VideoBasicOperationsAgent
 from src.agents.experts.video_generation.capabilities import (
     VIDEO_GENERATION_KLING_MODE_VALUES,
     VIDEO_GENERATION_PERSON_GENERATION_VALUES,
@@ -14,6 +32,9 @@ from src.agents.experts.video_generation.capabilities import (
     get_video_generation_default_parameters,
     validate_video_generation_parameters,
 )
+from src.agents.experts.video_generation.video_generation_agent import VideoGenerationAgent
+from src.agents.experts.video_understanding.video_understanding_expert import VideoUnderstandingExpert
+from src.runtime.adk_compat import annotate_agent_origin
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +50,7 @@ class ExpertSpec:
     """Static contract metadata for one expert agent."""
 
     name: str
+    agent_factory: Callable[[], BaseAgent] | None = None
     default_prompt_key: str = "prompt"
     supports_plain_prompt: bool = True
     default_parameters: dict[str, Any] = field(default_factory=dict)
@@ -46,6 +68,7 @@ _DEFAULT_SPEC = ExpertSpec(name="default")
 _EXPERT_SPECS = {
     "ImageGenerationAgent": ExpertSpec(
         name="ImageGenerationAgent",
+        agent_factory=lambda: ImageGenerationAgent(name="ImageGenerationAgent"),
         default_prompt_key="prompt",
         default_parameters={
             "provider": "nano_banana",
@@ -68,6 +91,7 @@ _EXPERT_SPECS = {
     ),
     "ImageEditingAgent": ExpertSpec(
         name="ImageEditingAgent",
+        agent_factory=lambda: ImageEditingAgent(name="ImageEditingAgent"),
         default_prompt_key="prompt",
         supports_plain_prompt=False,
         default_parameters={"provider": "nano_banana"},
@@ -84,6 +108,7 @@ _EXPERT_SPECS = {
     ),
     "ImageUnderstandingAgent": ExpertSpec(
         name="ImageUnderstandingAgent",
+        agent_factory=lambda: ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
         default_prompt_key="mode",
         supports_plain_prompt=False,
         default_parameters={"mode": "description"},
@@ -104,6 +129,7 @@ _EXPERT_SPECS = {
     ),
     "ImageBasicOperations": ExpertSpec(
         name="ImageBasicOperations",
+        agent_factory=lambda: ImageBasicOperationsAgent(name="ImageBasicOperations"),
         default_prompt_key="operation",
         supports_plain_prompt=False,
         required_parameters=("operation", "input_path or input_paths"),
@@ -128,6 +154,7 @@ _EXPERT_SPECS = {
     ),
     "TextTransformExpert": ExpertSpec(
         name="TextTransformExpert",
+        agent_factory=lambda: TextTransformExpert(name="TextTransformExpert"),
         default_prompt_key="input_text",
         supports_plain_prompt=False,
         required_parameters=("input_text or text", "mode"),
@@ -146,6 +173,7 @@ _EXPERT_SPECS = {
     ),
     "ImageGroundingAgent": ExpertSpec(
         name="ImageGroundingAgent",
+        agent_factory=lambda: ImageGroundingAgent(name="ImageGroundingAgent"),
         default_prompt_key="prompt",
         supports_plain_prompt=False,
         required_parameters=("input_path", "prompt"),
@@ -158,6 +186,7 @@ _EXPERT_SPECS = {
     ),
     "ImageSegmentationAgent": ExpertSpec(
         name="ImageSegmentationAgent",
+        agent_factory=lambda: ImageSegmentationAgent(name="ImageSegmentationAgent"),
         default_prompt_key="prompt",
         supports_plain_prompt=False,
         default_parameters={"model": "DINO-X-1.0", "threshold": 0.25},
@@ -177,6 +206,7 @@ _EXPERT_SPECS = {
     ),
     "KnowledgeAgent": ExpertSpec(
         name="KnowledgeAgent",
+        agent_factory=lambda: KnowledgeAgent(name="KnowledgeAgent"),
         default_prompt_key="prompt",
         required_parameters=("prompt",),
         required_parameter_groups=(RequiredParameterGroup(keys=("prompt",), description="prompt"),),
@@ -184,6 +214,7 @@ _EXPERT_SPECS = {
     ),
     "SearchAgent": ExpertSpec(
         name="SearchAgent",
+        agent_factory=lambda: SearchAgent(name="SearchAgent"),
         default_prompt_key="query",
         default_parameters={"mode": "all"},
         required_parameters=("query", "mode"),
@@ -196,6 +227,7 @@ _EXPERT_SPECS = {
     ),
     "VideoGenerationAgent": ExpertSpec(
         name="VideoGenerationAgent",
+        agent_factory=lambda: VideoGenerationAgent(name="VideoGenerationAgent"),
         default_prompt_key="prompt",
         default_parameters=get_video_generation_default_parameters(),
         required_parameters=("prompt or input_path/input_paths",),
@@ -215,6 +247,7 @@ _EXPERT_SPECS = {
     ),
     "VideoUnderstandingExpert": ExpertSpec(
         name="VideoUnderstandingExpert",
+        agent_factory=lambda: VideoUnderstandingExpert(name="VideoUnderstandingExpert"),
         default_prompt_key="mode",
         supports_plain_prompt=False,
         default_parameters={"mode": "description"},
@@ -232,6 +265,7 @@ _EXPERT_SPECS = {
     ),
     "VideoBasicOperations": ExpertSpec(
         name="VideoBasicOperations",
+        agent_factory=lambda: VideoBasicOperationsAgent(name="VideoBasicOperations"),
         default_prompt_key="operation",
         supports_plain_prompt=False,
         required_parameters=("operation", "input_path or input_paths"),
@@ -254,6 +288,7 @@ _EXPERT_SPECS = {
     ),
     "AudioBasicOperations": ExpertSpec(
         name="AudioBasicOperations",
+        agent_factory=lambda: AudioBasicOperationsAgent(name="AudioBasicOperations"),
         default_prompt_key="operation",
         supports_plain_prompt=False,
         required_parameters=("operation", "input_path or input_paths"),
@@ -276,6 +311,7 @@ _EXPERT_SPECS = {
     ),
     "SpeechRecognitionExpert": ExpertSpec(
         name="SpeechRecognitionExpert",
+        agent_factory=lambda: SpeechRecognitionExpert(name="SpeechRecognitionExpert"),
         default_prompt_key="input_path",
         supports_plain_prompt=False,
         default_parameters={"task": "auto"},
@@ -291,39 +327,16 @@ _EXPERT_SPECS = {
             "subtitle_format": ("srt", "vtt"),
             "caption_type": ("auto", "speech", "singing"),
         },
-        mirrored_output_keys=("speech_recognition_results", "speech_transcription_results"),
+        mirrored_output_keys=("speech_recognition_results",),
         notes=(
             "Speech recognition and subtitle generation for audio or video files. "
             "Optional parameters: task, language, timestamps, subtitle_format, output_path, "
             "subtitle_text/audio_text, caption_type, sta_punc_mode, words_per_line, max_lines."
         ),
     ),
-    "SpeechTranscriptionExpert": ExpertSpec(
-        name="SpeechTranscriptionExpert",
-        default_prompt_key="input_path",
-        supports_plain_prompt=False,
-        default_parameters={"task": "auto"},
-        required_parameters=("input_path or input_paths",),
-        required_parameter_groups=(
-            RequiredParameterGroup(
-                keys=("input_path", "input_paths"),
-                description="input_path or input_paths",
-            ),
-        ),
-        allowed_values={
-            "task": ("auto", "asr", "subtitle"),
-            "subtitle_format": ("srt", "vtt"),
-            "caption_type": ("auto", "speech", "singing"),
-        },
-        mirrored_output_keys=("speech_recognition_results", "speech_transcription_results"),
-        notes=(
-            "Compatibility alias for SpeechRecognitionExpert. "
-            "Optional parameters: task, language, timestamps, subtitle_format, output_path, "
-            "subtitle_text/audio_text, caption_type, sta_punc_mode, words_per_line, max_lines."
-        ),
-    ),
     "SpeechSynthesisExpert": ExpertSpec(
         name="SpeechSynthesisExpert",
+        agent_factory=lambda: SpeechSynthesisExpert(name="SpeechSynthesisExpert"),
         default_prompt_key="text",
         supports_plain_prompt=True,
         required_parameters=("text or ssml",),
@@ -339,6 +352,7 @@ _EXPERT_SPECS = {
     ),
     "MusicGenerationExpert": ExpertSpec(
         name="MusicGenerationExpert",
+        agent_factory=lambda: MusicGenerationExpert(name="MusicGenerationExpert"),
         default_prompt_key="prompt",
         supports_plain_prompt=True,
         default_parameters={"instrumental": True},
@@ -353,6 +367,10 @@ _EXPERT_SPECS = {
     ),
     "3DGeneration": ExpertSpec(
         name="3DGeneration",
+        agent_factory=lambda: ThreeDGenerationAgent(
+            name="ThreeDGenerationAgent",
+            public_name="3DGeneration",
+        ),
         default_prompt_key="prompt",
         default_parameters={
             "provider": "hy3d",
@@ -382,6 +400,30 @@ _EXPERT_SPECS = {
         ),
     ),
 }
+
+
+def default_expert_origin_path() -> Path:
+    """Return the source directory used for ADK origin annotations."""
+    return Path(__file__).resolve().parents[1] / "agents"
+
+
+def build_expert_agents(
+    *,
+    app_name: str,
+    origin_path: Path | None = None,
+) -> dict[str, BaseAgent]:
+    """Instantiate and annotate all runtime expert agents from the registry."""
+    expert_origin_path = origin_path or default_expert_origin_path()
+    agents: dict[str, BaseAgent] = {}
+    for runtime_name, spec in _EXPERT_SPECS.items():
+        if spec.agent_factory is None:
+            continue
+        agents[runtime_name] = annotate_agent_origin(
+            spec.agent_factory(),
+            app_name=app_name,
+            origin_path=expert_origin_path,
+        )
+    return agents
 
 
 def get_expert_spec(agent_name: str) -> ExpertSpec:

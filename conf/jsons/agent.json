@@ -1,5 +1,4 @@
 {
-    "root_agent": [],
     "expert_agents": [
         {
             "name": "ImageGroundingAgent",
@@ -80,9 +79,9 @@
             "parameters": "`{'operation': 'info', 'input_path': 'workspace/path.wav'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'end_time': '00:00:03'}` or `{'operation': 'trim', 'input_path': 'workspace/path.wav', 'start_time': '00:00:01', 'duration': '2.0'}` or `{'operation': 'concat', 'input_paths': ['workspace/a.wav', 'workspace/b.wav'], 'output_format': 'mp3|wav|aac|m4a|flac|ogg'(optional)}` or `{'operation': 'convert', 'input_path': 'workspace/path.wav', 'output_format': 'mp3|wav|aac|m4a|flac|ogg', 'sample_rate': 44100(optional), 'bitrate': '192k'(optional), 'channels': 2(optional)}`"
         },
         {
-            "name": "SpeechTranscriptionExpert",
+            "name": "SpeechRecognitionExpert",
             "enable": true,
-            "description": "Convert one or more workspace audio or video files into transcript text only. Use this expert when the task is transcription, not audio editing, synthesis, or music generation.",
+            "description": "Convert one or more workspace audio or video files into transcript text, timestamped ASR, or subtitle files. Use this expert when the task is transcription, captions, SRT/VTT subtitle files, or subtitle timing.",
             "parameters": "`{'input_path': 'workspace/path.wav', 'task': 'asr'(optional), 'timestamps': true(optional), 'language': 'en'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_format': 'srt|vtt'(optional), 'output_path': 'workspace/subtitles.srt'(optional)}` or `{'input_path': 'workspace/path.mp4', 'task': 'subtitle', 'subtitle_text': 'existing subtitle or transcript text', 'subtitle_format': 'srt|vtt'(optional)}` or `{'input_paths': ['workspace/a.wav', 'workspace/b.mp4'], 'task': 'asr'(optional), 'timestamps': false(optional)}`"
         },
         {

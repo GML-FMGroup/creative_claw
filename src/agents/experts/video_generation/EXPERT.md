@@ -29,4 +29,4 @@ Use this expert for text-to-video, image-guided video, first-frame plus last-fra
 
 ## When Not to Use
 
-Do not use this expert as the final step for subtitle-file creation. Use `SpeechRecognitionExpert` or `SpeechTranscriptionExpert` after the video is available.
+Do not use this expert as the final step for subtitle-file creation. Use `SpeechRecognitionExpert` after the video is available.

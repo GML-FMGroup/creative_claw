@@ -62,16 +62,14 @@ class CreativeClawCliParserTests(unittest.TestCase):
         self.assertEqual(args.message, "hello")
         self.assertEqual(args.attachment, ["one.png", "two.png"])
 
-    def test_collect_cli_attachment_paths_includes_legacy_flags(self) -> None:
+    def test_collect_cli_attachment_paths_uses_attachment_flags(self) -> None:
         args = argparse.Namespace(
             attachment=["from-new-flag.png"],
-            img1="from-img1.png",
-            img2="from-img2.png",
         )
 
         self.assertEqual(
             collect_cli_attachment_paths(args),
-            ["from-new-flag.png", "from-img1.png", "from-img2.png"],
+            ["from-new-flag.png"],
         )
 
     def test_build_parser_parses_web_chat_command(self) -> None:

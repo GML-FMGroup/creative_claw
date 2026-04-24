@@ -3,40 +3,29 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator
 
 from typing_extensions import override
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Content, Part
+from google.adk.events import Event
 from pydantic import PrivateAttr
 
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.three_d_generation import tool as generation_tools
 from src.logger import logger
 from src.runtime.workspace import build_workspace_file_record
 
 
-class ThreeDGenerationAgent(BaseAgent):
+class ThreeDGenerationAgent(CreativeExpert):
     """Generate 3D assets through provider-specific tools."""
 
-    model_config = {"arbitrary_types_allowed": True}
     _public_name: str = PrivateAttr(default="3DGeneration")
 
     def __init__(self, name: str, description: str = "", public_name: str = "3DGeneration") -> None:
         """Initialize the 3D generation expert."""
         super().__init__(name=name, sub_agents=[], description=description)
         self._public_name = public_name
-
-    def format_event(self, content_text: str | None = None, state_delta: Dict | None = None) -> Event:
-        """Build one ADK event carrying text and/or state delta."""
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role="model", parts=[Part(text=content_text)])
-        return event
 
     @staticmethod
     def _normalize_prompt(raw_prompt: Any) -> str:

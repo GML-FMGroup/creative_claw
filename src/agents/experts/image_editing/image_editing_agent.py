@@ -1,20 +1,17 @@
-from typing import AsyncGenerator, Dict
+from typing import AsyncGenerator
 from typing_extensions import override
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
+from google.adk.events import Event
 from google.adk.tools import ToolContext
-from google.genai.types import Part, Content
 
 from src.logger import logger
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.image_editing import tool as editing_tools
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
-class ImageEditingAgent(BaseAgent):
+class ImageEditingAgent(CreativeExpert):
     """A custom agent that orchestrates a sequence of agents to generate an image from text."""
-
-    model_config = {"arbitrary_types_allowed": True}
 
     def __init__(
         self,
@@ -27,15 +24,6 @@ class ImageEditingAgent(BaseAgent):
             name=name,
             description=description
         )
-
-    def format_event(self, content_text: str=None, state_delta: Dict=None):
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role='model', parts=[Part(text=content_text)])
-        return event
-
 
     @override
     async def _run_async_impl(

@@ -18,7 +18,7 @@ from google.adk.tools.tool_context import ToolContext
 from google.adk.models import LlmRequest
 from google.genai.types import Content, Part
 
-from conf.agent import experts_list
+from conf.agent import EXPERTS_LIST
 from conf.llm import build_llm, resolve_llm_model_name
 from conf.system import SYS_CONFIG
 from src.agents.experts.video_generation.capabilities import build_video_generation_routing_notes
@@ -401,7 +401,7 @@ class Orchestrator:
     def _build_instruction(self) -> str:
         """Build the planner instruction for the orchestrator."""
         available_experts = "\n".join(
-            str(expert) for expert in experts_list if expert.enable
+            str(expert) for expert in EXPERTS_LIST if expert.enable
         )
         skills_summary = self.skill_registry.build_summary()
         expert_contracts = build_expert_contract_summary()
@@ -722,6 +722,24 @@ Expert parameter contracts:
             )
         return result
 
+    def _run_builtin_tool(
+        self,
+        *,
+        tool_context: ToolContext | None,
+        tool_name: str,
+        stage: str,
+        args: dict[str, Any],
+    ):
+        """Run one BuiltinToolbox method with standard orchestrator event handling."""
+        method = getattr(self.toolbox, tool_name)
+        return self._run_tool_with_events(
+            tool_context=tool_context,
+            tool_name=tool_name,
+            stage=stage,
+            args=args,
+            runner=lambda: method(**args),
+        )
+
     async def _run_async_tool_with_events(
         self,
         *,
@@ -787,12 +805,11 @@ Expert parameter contracts:
 
     def list_dir(self, path: str = ".", tool_context: ToolContext | None = None) -> str:
         """List one directory and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="list_dir",
             stage="inspection",
             args={"path": path},
-            runner=lambda: self.toolbox.list_dir(path),
         )
 
     def glob(
@@ -804,7 +821,7 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Find workspace paths matching one glob pattern."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="glob",
             stage="inspection",
@@ -814,12 +831,6 @@ Expert parameter contracts:
                 "max_results": max_results,
                 "entry_type": entry_type,
             },
-            runner=lambda: self.toolbox.glob(
-                pattern,
-                path=path,
-                max_results=max_results,
-                entry_type=entry_type,
-            ),
         )
 
     def grep(
@@ -836,7 +847,7 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Search workspace file contents with regex or fixed-string matching."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="grep",
             stage="inspection",
@@ -851,37 +862,24 @@ Expert parameter contracts:
                 "context_after": context_after,
                 "max_results": max_results,
             },
-            runner=lambda: self.toolbox.grep(
-                pattern,
-                path=path,
-                glob_pattern=glob_pattern,
-                case_insensitive=case_insensitive,
-                fixed_strings=fixed_strings,
-                output_mode=output_mode,
-                context_before=context_before,
-                context_after=context_after,
-                max_results=max_results,
-            ),
         )
 
     def read_file(self, path: str, tool_context: ToolContext | None = None) -> str:
         """Read one file and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="read_file",
             stage="inspection",
             args={"path": path},
-            runner=lambda: self.toolbox.read_file(path),
         )
 
     def write_file(self, path: str, content: str, tool_context: ToolContext | None = None) -> str:
         """Write one file and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="write_file",
             stage="editing",
             args={"path": path, "content": content},
-            runner=lambda: self.toolbox.write_file(path, content),
         )
 
     def edit_file(
@@ -892,12 +890,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Edit one file and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="edit_file",
             stage="editing",
             args={"path": path, "old_text": old_text, "new_text": new_text},
-            runner=lambda: self.toolbox.edit_file(path, old_text, new_text),
         )
 
     def image_crop(
@@ -910,12 +907,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Crop one image and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_crop",
             stage="image_processing",
             args={"path": path, "left": left, "top": top, "right": right, "bottom": bottom},
-            runner=lambda: self.toolbox.image_crop(path, left, top, right, bottom),
         )
 
     def image_rotate(
@@ -926,32 +922,29 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Rotate one image and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_rotate",
             stage="image_processing",
             args={"path": path, "degrees": degrees, "expand": expand},
-            runner=lambda: self.toolbox.image_rotate(path, degrees, expand),
         )
 
     def image_flip(self, path: str, direction: str, tool_context: ToolContext | None = None) -> str:
         """Flip one image and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_flip",
             stage="image_processing",
             args={"path": path, "direction": direction},
-            runner=lambda: self.toolbox.image_flip(path, direction),
         )
 
     def image_info(self, path: str, tool_context: ToolContext | None = None) -> str:
         """Read one image metadata payload and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_info",
             stage="image_processing",
             args={"path": path},
-            runner=lambda: self.toolbox.image_info(path),
         )
 
     def image_resize(
@@ -964,7 +957,7 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Resize one image and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_resize",
             stage="image_processing",
@@ -975,13 +968,6 @@ Expert parameter contracts:
                 "keep_aspect_ratio": keep_aspect_ratio,
                 "resample": resample,
             },
-            runner=lambda: self.toolbox.image_resize(
-                path,
-                width=width,
-                height=height,
-                keep_aspect_ratio=keep_aspect_ratio,
-                resample=resample,
-            ),
         )
 
     def image_convert(
@@ -993,27 +979,20 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Convert one image and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="image_convert",
             stage="image_processing",
             args={"path": path, "output_format": output_format, "mode": mode, "quality": quality},
-            runner=lambda: self.toolbox.image_convert(
-                path,
-                output_format=output_format,
-                mode=mode,
-                quality=quality,
-            ),
         )
 
     def video_info(self, path: str, tool_context: ToolContext | None = None) -> str:
         """Read one video metadata payload and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="video_info",
             stage="video_processing",
             args={"path": path},
-            runner=lambda: self.toolbox.video_info(path),
         )
 
     def video_extract_frame(
@@ -1024,16 +1003,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Extract one frame from one video and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="video_extract_frame",
             stage="video_processing",
             args={"path": path, "timestamp": timestamp, "output_format": output_format},
-            runner=lambda: self.toolbox.video_extract_frame(
-                path,
-                timestamp=timestamp,
-                output_format=output_format,
-            ),
         )
 
     def video_trim(
@@ -1045,17 +1019,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Trim one video and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="video_trim",
             stage="video_processing",
             args={"path": path, "start_time": start_time, "end_time": end_time, "duration": duration},
-            runner=lambda: self.toolbox.video_trim(
-                path,
-                start_time=start_time,
-                end_time=end_time,
-                duration=duration,
-            ),
         )
 
     def video_concat(
@@ -1065,12 +1033,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Concatenate videos and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="video_concat",
             stage="video_processing",
             args={"paths": paths, "output_format": output_format},
-            runner=lambda: self.toolbox.video_concat(paths, output_format=output_format),
         )
 
     def video_convert(
@@ -1082,7 +1049,7 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Convert one video and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="video_convert",
             stage="video_processing",
@@ -1092,22 +1059,15 @@ Expert parameter contracts:
                 "video_codec": video_codec,
                 "audio_codec": audio_codec,
             },
-            runner=lambda: self.toolbox.video_convert(
-                path,
-                output_format=output_format,
-                video_codec=video_codec,
-                audio_codec=audio_codec,
-            ),
         )
 
     def audio_info(self, path: str, tool_context: ToolContext | None = None) -> str:
         """Read one audio metadata payload and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="audio_info",
             stage="audio_processing",
             args={"path": path},
-            runner=lambda: self.toolbox.audio_info(path),
         )
 
     def audio_trim(
@@ -1119,17 +1079,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Trim one audio clip and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="audio_trim",
             stage="audio_processing",
             args={"path": path, "start_time": start_time, "end_time": end_time, "duration": duration},
-            runner=lambda: self.toolbox.audio_trim(
-                path,
-                start_time=start_time,
-                end_time=end_time,
-                duration=duration,
-            ),
         )
 
     def audio_concat(
@@ -1139,12 +1093,11 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Concatenate audio clips and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="audio_concat",
             stage="audio_processing",
             args={"paths": paths, "output_format": output_format},
-            runner=lambda: self.toolbox.audio_concat(paths, output_format=output_format),
         )
 
     def audio_convert(
@@ -1157,7 +1110,7 @@ Expert parameter contracts:
         tool_context: ToolContext | None = None,
     ) -> str:
         """Convert one audio clip and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="audio_convert",
             stage="audio_processing",
@@ -1168,13 +1121,6 @@ Expert parameter contracts:
                 "bitrate": bitrate,
                 "channels": channels,
             },
-            runner=lambda: self.toolbox.audio_convert(
-                path,
-                output_format=output_format,
-                sample_rate=sample_rate,
-                bitrate=bitrate,
-                channels=channels,
-            ),
         )
 
     def exec_command(
@@ -1246,22 +1192,20 @@ Expert parameter contracts:
 
     def web_search(self, query: str, count: int = 5, tool_context: ToolContext | None = None) -> str:
         """Search the web and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="web_search",
             stage="research",
             args={"query": query, "count": count},
-            runner=lambda: self.toolbox.web_search(query, count),
         )
 
     def web_fetch(self, url: str, max_chars: int = 50000, tool_context: ToolContext | None = None) -> str:
         """Fetch one webpage and record the step."""
-        return self._run_tool_with_events(
+        return self._run_builtin_tool(
             tool_context=tool_context,
             tool_name="web_fetch",
             stage="research",
             args={"url": url, "max_chars": max_chars},
-            runner=lambda: self.toolbox.web_fetch(url, max_chars),
         )
 
     def list_session_files(self, section: str = "all", tool_context: ToolContext | None = None) -> str:

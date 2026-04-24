@@ -375,7 +375,7 @@ def build_video_generation_routing_notes() -> str:
             (
                 "- For subtitle files, captions, SRT/VTT, or transcripts, do not rely on video "
                 "generation models to produce structured subtitles; generate or obtain the video "
-                "first, then use `SpeechRecognitionExpert` or `SpeechTranscriptionExpert`."
+                "first, then use `SpeechRecognitionExpert`."
             ),
             (
                 "- Treat `VideoGenerationAgent` provider `seedance` as visual-only in the current "

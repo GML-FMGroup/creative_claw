@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator, Dict
+from typing import AsyncGenerator
 from typing_extensions import override
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Content, Part
+from google.adk.events import Event
 
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.video_generation.capabilities import (
     get_default_video_duration,
     get_default_video_resolution,
@@ -54,23 +53,12 @@ async def _prepare_prompts(
     return normalized_prompts
 
 
-class VideoGenerationAgent(BaseAgent):
+class VideoGenerationAgent(CreativeExpert):
     """Generate one or more videos from prompt, image, or video-guided inputs."""
-
-    model_config = {"arbitrary_types_allowed": True}
 
     def __init__(self, name: str, description: str = "") -> None:
         """Initialize the video generation expert."""
         super().__init__(name=name, sub_agents=[], description=description)
-
-    def format_event(self, content_text: str | None = None, state_delta: Dict | None = None) -> Event:
-        """Build one ADK event carrying text and/or state delta."""
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role="model", parts=[Part(text=content_text)])
-        return event
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:

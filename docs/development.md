@@ -37,8 +37,6 @@ Module fallback before installing the console script:
 - `python -m src.creative_claw_cli chat telegram`
 - `python -m src.creative_claw_cli chat feishu`
 
-Legacy compatibility wrappers are still available under `apps/`.
-
 ## Environment Setup
 
 ```bash
@@ -170,7 +168,7 @@ Useful config sections:
 
 Speech recognition and subtitle service grants:
 
-- `SpeechRecognitionExpert` and the compatibility alias `SpeechTranscriptionExpert` route `task=asr` and `task=subtitle` through Volcengine speech services.
+- `SpeechRecognitionExpert` routes `task=asr` and `task=subtitle` through Volcengine speech services.
 - In addition to `services.volcengine_app_id` and `services.volcengine_access_token`, the current backend requires these Volcengine resource grants:
   - `volc.bigasr.auc_turbo`: required for `task=asr`
   - `vc.async.default`: required for subtitle generation from audio or video

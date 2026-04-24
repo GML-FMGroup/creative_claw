@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from pathlib import Path
 
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.events import Event, EventActions
@@ -12,29 +11,9 @@ from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
 from conf.system import SYS_CONFIG
-from src.agents.experts import (
-    AudioBasicOperationsAgent,
-    ImageBasicOperationsAgent,
-    ImageGroundingAgent,
-    ImageSegmentationAgent,
-    ImageEditingAgent,
-    ImageGenerationAgent,
-    ImageUnderstandingAgent,
-    KnowledgeAgent,
-    MusicGenerationExpert,
-    SearchAgent,
-    SpeechRecognitionExpert,
-    SpeechSynthesisExpert,
-    SpeechTranscriptionExpert,
-    TextTransformExpert,
-    VideoBasicOperationsAgent,
-    VideoGenerationAgent,
-    VideoUnderstandingExpert,
-    ThreeDGenerationAgent,
-)
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
 from src.logger import logger
-from src.runtime.adk_compat import annotate_agent_origin
+from src.runtime.expert_registry import build_expert_agents
 from src.runtime.models import InboundMessage, WorkflowEvent
 from src.runtime.step_events import reset_step_event_history, step_event_streaming_active
 from src.runtime.workspace import (
@@ -158,103 +137,7 @@ class CreativeClawRuntime:
         self.session_service = InMemorySessionService()
         self.artifact_service = InMemoryArtifactService()
         self._session_keys: dict[str, str] = {}
-        expert_origin_path = Path(__file__).resolve().parents[1] / "agents"
-
-        self.expert_agents = {
-            "ImageBasicOperations": annotate_agent_origin(
-                ImageBasicOperationsAgent(name="ImageBasicOperations"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageGroundingAgent": annotate_agent_origin(
-                ImageGroundingAgent(name="ImageGroundingAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageSegmentationAgent": annotate_agent_origin(
-                ImageSegmentationAgent(name="ImageSegmentationAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageGenerationAgent": annotate_agent_origin(
-                ImageGenerationAgent(name="Text2ImageAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageEditingAgent": annotate_agent_origin(
-                ImageEditingAgent(name="ImageEditingAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "ImageUnderstandingAgent": annotate_agent_origin(
-                ImageUnderstandingAgent(name="ImageUnderstandingAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "TextTransformExpert": annotate_agent_origin(
-                TextTransformExpert(name="TextTransformExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "KnowledgeAgent": annotate_agent_origin(
-                KnowledgeAgent(name="KnowledgeAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "SearchAgent": annotate_agent_origin(
-                SearchAgent(name="SearchAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "SpeechSynthesisExpert": annotate_agent_origin(
-                SpeechSynthesisExpert(name="SpeechSynthesisExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "VideoBasicOperations": annotate_agent_origin(
-                VideoBasicOperationsAgent(name="VideoBasicOperations"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "VideoGenerationAgent": annotate_agent_origin(
-                VideoGenerationAgent(name="VideoGenerationAgent"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "VideoUnderstandingExpert": annotate_agent_origin(
-                VideoUnderstandingExpert(name="VideoUnderstandingExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "AudioBasicOperations": annotate_agent_origin(
-                AudioBasicOperationsAgent(name="AudioBasicOperations"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "SpeechRecognitionExpert": annotate_agent_origin(
-                SpeechRecognitionExpert(name="SpeechRecognitionExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "SpeechTranscriptionExpert": annotate_agent_origin(
-                SpeechTranscriptionExpert(name="SpeechTranscriptionExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "MusicGenerationExpert": annotate_agent_origin(
-                MusicGenerationExpert(name="MusicGenerationExpert"),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-            "3DGeneration": annotate_agent_origin(
-                ThreeDGenerationAgent(
-                    name="ThreeDGenerationAgent",
-                    public_name="3DGeneration",
-                ),
-                app_name=SYS_CONFIG.app_name,
-                origin_path=expert_origin_path,
-            ),
-        }
+        self.expert_agents = build_expert_agents(app_name=SYS_CONFIG.app_name)
 
         self.workspace_root = workspace_root()
         self.generated_dir = generated_root()

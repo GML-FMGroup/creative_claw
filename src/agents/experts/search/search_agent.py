@@ -1,27 +1,21 @@
-import asyncio
-import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator
 from typing_extensions import override
 
-from google.genai.types import Content
-from google.adk.agents import BaseAgent, LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
+from google.adk.events import Event
 from google.adk.tools import ToolContext
-from google.genai.types import Part
 from src.logger import logger
 
 from conf.system import SYS_CONFIG
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.search.tool import retrieve_image_by_text, DDGS_search
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
-class SearchAgent(BaseAgent):
+class SearchAgent(CreativeExpert):
     """
     a custom agent for search image or text
     """
 
-    model_config = {"arbitrary_types_allowed": True}
     def __init__(
         self,
         name: str,
@@ -31,14 +25,6 @@ class SearchAgent(BaseAgent):
             name = name,
             description = description
         )
-
-    def format_event(self, content_text: str=None, state_delta: Dict=None):
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role='model', parts=[Part(text=content_text)])
-        return event
 
     @override
     async def _run_async_impl(
@@ -177,7 +163,6 @@ class SearchAgent(BaseAgent):
                 "message": text
             }
             return current_output
-
 
 
 

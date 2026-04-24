@@ -64,7 +64,6 @@ class RuntimeSessionTests(unittest.IsolatedAsyncioTestCase):
             "TextTransformExpert",
             "VideoUnderstandingExpert",
             "SpeechRecognitionExpert",
-            "SpeechTranscriptionExpert",
             "SpeechSynthesisExpert",
             "MusicGenerationExpert",
         ):

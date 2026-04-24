@@ -1,20 +1,17 @@
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator
 from typing_extensions import override
 import asyncio
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Content, Part
-from src.utils import SYS_CONFIG
+from google.adk.events import Event
 from src.logger import logger
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.image_generation import tool as generation_tools
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
 
-class ImageGenerationAgent(BaseAgent):
+class ImageGenerationAgent(CreativeExpert):
     """A custom agent that orchestrates a sequence of agents to generate an image from text."""
-    model_config = {"arbitrary_types_allowed": True}
 
     def __init__(
         self,
@@ -22,22 +19,11 @@ class ImageGenerationAgent(BaseAgent):
         description: str = "",
     ) -> None:
         """Initializes the Text2ImageAgent."""
-
-        sub_agents_list: List[BaseAgent] = []
         super().__init__(
             name=name,
-            sub_agents=sub_agents_list,
+            sub_agents=[],
             description=description,
         )
-
-
-    def format_event(self, content_text: str=None, state_delta: Dict=None):
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role='model', parts=[Part(text=content_text)])
-        return event
 
     @override
     async def _run_async_impl(

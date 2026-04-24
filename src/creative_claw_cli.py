@@ -65,8 +65,6 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Attachment path for non-interactive mode. Repeat this flag to send multiple files.",
     )
-    cli_parser.add_argument("--img1", type=str, default=None, help=argparse.SUPPRESS)
-    cli_parser.add_argument("--img2", type=str, default=None, help=argparse.SUPPRESS)
 
     for name in ("telegram", "feishu"):
         channel_parsers.add_parser(
@@ -106,13 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def collect_cli_attachment_paths(args: argparse.Namespace) -> list[str]:
-    """Collect CLI attachment paths including legacy compatibility flags."""
-    attachment_paths = list(getattr(args, "attachment", []) or [])
-    for legacy_flag in ("img1", "img2"):
-        value = getattr(args, legacy_flag, None)
-        if value:
-            attachment_paths.append(value)
-    return attachment_paths
+    """Collect CLI attachment paths from the current public flag."""
+    return list(getattr(args, "attachment", []) or [])
 
 
 def build_web_channel_config(args: argparse.Namespace) -> WebChannelConfig:

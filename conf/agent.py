@@ -1,31 +1,9 @@
-import os
 import json
+from pathlib import Path
 
 from pydantic import BaseModel
 from conf.path import CONF_ROOT
 from src.runtime.expert_cards import discover_expert_cards
-
-
-class RootAgentConfig(BaseModel):
-    """
-    Root agent configuration model.
-    """
-
-    name: str
-    model: str
-    description: str  # Description of the root agent's purpose
-    instruction: str  # Teach the LLM how & when to delegate tasks to sub-agents
-    sub_agents: list[str]  # List of sub-agent names
-    tools: list[str]  # List of tool names available to the root agent
-
-    def __str__(self) -> str:
-        return (
-            f"**{self.name}**\n"
-            f"**Description:** {self.description}\n"
-            f"**Instruction:** {self.instruction}\n"
-            f"**Sub-agents:** {', '.join(self.sub_agents)}\n"
-            f"**Tools:** {', '.join(self.tools)}"
-        )
 
 
 class ExpertAgentConfig(BaseModel):
@@ -49,34 +27,21 @@ class ExpertAgentConfig(BaseModel):
         )
 
 
-def load_agent_configs(
-    config_file_path: str,
-) -> tuple[list[RootAgentConfig], list[ExpertAgentConfig]]:
-    """
-    Load agent configurations from a JSON file.
-    Args:
-        config_file_path (str): Path to the JSON configuration file.
-    Returns:
-        tuple: A tuple containing two lists:
-            - List of RootAgentConfig objects.
-            - List of ExpertAgentConfig objects.
-    Raises:
-        FileNotFoundError: If the configuration file does not exist.
-        json.JSONDecodeError: If the configuration file is not a valid JSON.
-    """
-    if not os.path.exists(config_file_path):
-        raise FileNotFoundError(f"Configuration file not found: {config_file_path}")
+def load_expert_configs(config_file_path: str | Path) -> list[ExpertAgentConfig]:
+    """Load expert configurations from the JSON prompt metadata file."""
+    config_path = Path(config_file_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    with open(config_file_path, "r", encoding="utf-8") as file:
+    with config_path.open("r", encoding="utf-8") as file:
         data = json.load(file)
 
-    root_agents = [RootAgentConfig(**agent) for agent in data.get("root_agent", [])]
     expert_agents = [
         ExpertAgentConfig(**agent) for agent in data.get("expert_agents", [])
     ]
     _apply_expert_cards(expert_agents)
 
-    return root_agents, expert_agents
+    return expert_agents
 
 
 def _apply_expert_cards(expert_agents: list[ExpertAgentConfig]) -> None:
@@ -91,6 +56,6 @@ def _apply_expert_cards(expert_agents: list[ExpertAgentConfig]) -> None:
             expert_agent.description = description
 
 
-experts_list: list[ExpertAgentConfig] = load_agent_configs(
-    os.path.join(CONF_ROOT, "jsons/agent.json")
-)[1]
+EXPERTS_LIST: list[ExpertAgentConfig] = load_expert_configs(
+    Path(CONF_ROOT) / "jsons" / "agent.json"
+)

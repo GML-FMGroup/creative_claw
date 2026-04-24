@@ -1,13 +1,11 @@
 import asyncio
 from typing_extensions import override
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Part
-from google.genai.types import Content
+from google.adk.events import Event
 
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.image_understanding.tool import image_to_text_tool
 from src.logger import logger
 
@@ -15,12 +13,11 @@ from src.logger import logger
 _SUPPORTED_MODES = {"description", "style", "ocr", "all", "prompt"}
 
 
-class ImageUnderstandingAgent(BaseAgent):
+class ImageUnderstandingAgent(CreativeExpert):
     """
     a custom agent for understanding image
     """
 
-    model_config = {"arbitrary_types_allowed": True}
     def __init__(
         self,
         name: str,
@@ -30,16 +27,6 @@ class ImageUnderstandingAgent(BaseAgent):
             name = name,
             description = description
         )
-
-    def format_event(self, content_text: str = "", state_delta: dict[str, Any] | None = None):
-        """Build one ADK event with optional text content and state updates."""
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role='model', parts=[Part(text=content_text)])
-        return event
-
 
     @override
     async def _run_async_impl(

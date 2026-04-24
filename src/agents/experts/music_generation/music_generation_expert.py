@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator
 from typing_extensions import override
 
-from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event, EventActions
-from google.genai.types import Content, Part
+from google.adk.events import Event
 
+from src.agents.experts.base import CreativeExpert
 from src.agents.experts.music_generation.tool import (
     _parse_bool,
     music_generation_tool,
@@ -18,27 +17,12 @@ from src.agents.experts.music_generation.tool import (
 from src.runtime.workspace import build_workspace_file_record, save_binary_output
 
 
-class MusicGenerationExpert(BaseAgent):
+class MusicGenerationExpert(CreativeExpert):
     """Generate one music or BGM clip from text instructions."""
-
-    model_config = {"arbitrary_types_allowed": True}
 
     def __init__(self, name: str, description: str = "") -> None:
         """Initialize the music generation expert."""
         super().__init__(name=name, description=description)
-
-    def format_event(
-        self,
-        content_text: str | None = None,
-        state_delta: dict[str, Any] | None = None,
-    ) -> Event:
-        """Build one ADK event with optional content and state updates."""
-        event = Event(author=self.name)
-        if state_delta:
-            event.actions = EventActions(state_delta=state_delta)
-        if content_text:
-            event.content = Content(role="model", parts=[Part(text=content_text)])
-        return event
 
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:

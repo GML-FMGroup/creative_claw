@@ -28,4 +28,4 @@ Use this expert for deterministic local audio operations inside the workspace: `
 
 ## When Not to Use
 
-Do not use this expert for ASR, subtitle files, text-to-speech, or music generation. Route those tasks to `SpeechRecognitionExpert`, `SpeechTranscriptionExpert`, `SpeechSynthesisExpert`, or `MusicGenerationExpert`.
+Do not use this expert for ASR, subtitle files, text-to-speech, or music generation. Route those tasks to `SpeechRecognitionExpert`, `SpeechSynthesisExpert`, or `MusicGenerationExpert`.

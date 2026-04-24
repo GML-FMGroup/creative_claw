@@ -1,7 +1,7 @@
 from pathlib import Path
 import unittest
 
-from conf.agent import load_agent_configs
+from conf.agent import load_expert_configs
 from conf.path import CONF_ROOT
 from src.runtime.expert_cards import discover_expert_cards, parse_expert_card
 
@@ -54,10 +54,9 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("ImageEditingAgent", cards)
         self.assertIn("ImageUnderstandingAgent", cards)
         self.assertIn("SpeechRecognitionExpert", cards)
-        self.assertIn("SpeechTranscriptionExpert", cards)
 
     def test_all_enabled_experts_have_expert_cards(self) -> None:
-        _, expert_agents = load_agent_configs(str(Path(CONF_ROOT) / "jsons" / "agent.json"))
+        expert_agents = load_expert_configs(Path(CONF_ROOT) / "jsons" / "agent.json")
         cards = discover_expert_cards()
 
         missing_cards = sorted(
@@ -98,18 +97,12 @@ class ExpertCardTests(unittest.TestCase):
         recognition_card = parse_expert_card(
             self._expert_card_path("speech_recognition", "EXPERT.md")
         )
-        transcription_card = parse_expert_card(
-            self._expert_card_path("speech_transcription", "EXPERT.md")
-        )
 
         recognition_description = recognition_card.build_description()
-        transcription_description = transcription_card.build_description()
 
         self.assertIn("Use `task=subtitle`", recognition_description)
         self.assertIn("SRT/VTT", recognition_description)
         self.assertIn("subtitle_path", recognition_description)
-        self.assertIn("compatibility alias", transcription_description)
-        self.assertIn("same capability family as `SpeechRecognitionExpert`", transcription_description)
 
     def test_remaining_expert_cards_parse_core_boundaries(self) -> None:
         expected_phrases = {
@@ -182,12 +175,12 @@ class ExpertCardTests(unittest.TestCase):
                 self.assertIn(phrase, description, card.name)
 
     def test_agent_config_uses_expert_card_description_with_json_parameters_fallback(self) -> None:
-        _, expert_agents = load_agent_configs(str(Path(CONF_ROOT) / "jsons" / "agent.json"))
+        expert_agents = load_expert_configs(Path(CONF_ROOT) / "jsons" / "agent.json")
         generation_agent = next(agent for agent in expert_agents if agent.name == "ImageGenerationAgent")
         editing_agent = next(agent for agent in expert_agents if agent.name == "ImageEditingAgent")
         understanding_agent = next(agent for agent in expert_agents if agent.name == "ImageUnderstandingAgent")
         video_agent = next(agent for agent in expert_agents if agent.name == "VideoGenerationAgent")
-        transcription_agent = next(agent for agent in expert_agents if agent.name == "SpeechTranscriptionExpert")
+        recognition_agent = next(agent for agent in expert_agents if agent.name == "SpeechRecognitionExpert")
         segmentation_agent = next(agent for agent in expert_agents if agent.name == "ImageSegmentationAgent")
         synthesis_agent = next(agent for agent in expert_agents if agent.name == "SpeechSynthesisExpert")
         music_agent = next(agent for agent in expert_agents if agent.name == "MusicGenerationExpert")
@@ -202,9 +195,8 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("Use this expert for text-to-video", video_agent.description)
         self.assertIn("does not return structured subtitle files", video_agent.description)
         self.assertIn("'provider': 'seedance|veo|kling'", video_agent.parameters)
-        self.assertIn("compatibility alias", transcription_agent.description)
-        self.assertIn("Use `task=subtitle`", transcription_agent.description)
-        self.assertIn("subtitle_format", transcription_agent.parameters)
+        self.assertIn("Use `task=subtitle`", recognition_agent.description)
+        self.assertIn("subtitle_format", recognition_agent.parameters)
         self.assertIn("save a binary mask image file", segmentation_agent.description)
         self.assertIn("'model': 'DINO-X-1.0'", segmentation_agent.parameters)
         self.assertIn("default resource id is `seed-tts-1.0`", synthesis_agent.description)
