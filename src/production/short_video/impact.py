@@ -5,21 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 from src.production.short_video.models import ShortVideoProductionState
+from src.production.short_video.user_response import normalize_user_response
 
 
 def build_revision_impact_view(
     state: ShortVideoProductionState,
-    response: dict[str, Any],
+    response: Any,
 ) -> dict[str, Any]:
     """Build a read-only view describing what a requested revision would affect."""
+    response_payload = normalize_user_response(response)
     view = _base_revision_view(state)
-    targets = _revision_targets_from_response(response)
+    targets = _revision_targets_from_response(response_payload)
     matched_targets, unmatched_targets = _match_revision_targets(state, targets)
     impacted = _revision_impact_entries(state, matched_targets, unmatched_targets)
     view.update(
         {
             "revision_request": {
-                "notes": _revision_notes(response),
+                "notes": _revision_notes(response_payload),
                 "targets": targets,
             },
             "matched_targets": matched_targets,

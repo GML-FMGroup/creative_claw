@@ -38,6 +38,7 @@ from src.production.short_video.providers import (
     VeoTtsProviderRuntime,
 )
 from src.production.short_video.renderer import TimelineRenderer
+from src.production.short_video.user_response import normalize_user_response
 from src.production.short_video.validators import RenderValidator
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
@@ -283,7 +284,7 @@ class ShortVideoProductionManager:
         self,
         *,
         production_session_id: str | None,
-        user_response: dict[str, Any] | None,
+        user_response: Any | None,
         adk_state,
     ) -> ProductionRunResult:
         """Return a read-only impact analysis for a requested production revision."""
@@ -313,7 +314,7 @@ class ShortVideoProductionManager:
         return self._result_from_state(
             state,
             message="Loaded short-video revision impact analysis. No production state was changed.",
-            view=build_revision_impact_view(state, user_response or {}),
+            view=build_revision_impact_view(state, normalize_user_response(user_response)),
         )
 
     async def add_reference_assets(
@@ -321,7 +322,7 @@ class ShortVideoProductionManager:
         *,
         production_session_id: str | None,
         input_files: list[dict[str, Any]],
-        user_response: dict[str, Any] | None,
+        user_response: Any | None,
         adk_state,
     ) -> ProductionRunResult:
         """Add or replace user reference assets in an existing production session."""
@@ -362,7 +363,7 @@ class ShortVideoProductionManager:
                 ),
             )
 
-        response = user_response or {}
+        response = normalize_user_response(user_response)
         replace_reference_id = _replacement_reference_id(response)
         replaced_reference_ids: list[str] = []
         if replace_reference_id:
@@ -434,7 +435,7 @@ class ShortVideoProductionManager:
         self,
         *,
         production_session_id: str | None,
-        user_response: dict[str, Any] | None,
+        user_response: Any | None,
         adk_state,
     ) -> ProductionRunResult:
         """Resume a short-video production session from an active review breakpoint."""
@@ -449,7 +450,7 @@ class ShortVideoProductionManager:
             )
         except ProductionRuntimeError:
             return await self.status(production_session_id=session_id, adk_state=adk_state)
-        response = user_response or {}
+        response = normalize_user_response(user_response)
         decision = _normalize_resume_decision(response)
         if state.active_breakpoint is None:
             state.production_events.append(

@@ -5,7 +5,7 @@ This directory contains ADK eval assets for CreativeClaw agent behavior.
 Run the short-video P0 eval manually with live model credentials:
 
 ```bash
-.venv/bin/adk eval tests/eval/creative_claw_orchestrator/__init__.py \
+.venv/bin/adk eval tests/eval/creative_claw_orchestrator \
   tests/eval/evalsets/short_video_p0_evalset.json \
   --config_file_path tests/eval/eval_config.json \
   --print_detailed_results

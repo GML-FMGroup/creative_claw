@@ -38,7 +38,7 @@ async def run_short_video_production(
         input_files: Optional workspace file records to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
         render_settings: Optional aspect ratio, duration, fps, width, and height settings.
-        user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for analyze_revision_impact.
+        user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for analyze_revision_impact. Plain text is accepted and treated as notes.
     """
     if tool_context is None:
         return ProductionRunResult(

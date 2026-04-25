@@ -613,6 +613,30 @@ class ShortVideoProductionTests(unittest.TestCase):
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
         self.assertIn("Make it energetic.", state_payload["asset_plan"]["shot_plan"]["voiceover_text"])
 
+    def test_manager_resume_accepts_plain_text_approval(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+
+        result = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response="可以",
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.stage, "completed")
+
     def test_tool_uses_uploaded_files_when_input_files_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
             upload_path = Path(tmpdir) / "product.png"
@@ -737,6 +761,35 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(result["view"]["unmatched_targets"][0]["id"], "shot_3")
         available_kinds = {item["kind"] for item in result["view"]["available_targets"]}
         self.assertIn("shot", available_kinds)
+
+    def test_tool_analyze_revision_impact_accepts_plain_text_user_response(self) -> None:
+        state = _adk_state()
+        tool_context = SimpleNamespace(state=state)
+        asyncio.run(
+            run_short_video_production(
+                action="start",
+                user_prompt="make a product ad",
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "16:9"},
+                tool_context=tool_context,
+            )
+        )
+
+        result = asyncio.run(
+            run_short_video_production(
+                action="analyze_revision_impact",
+                user_response="Only change the current voiceover. Do not apply it yet.",
+                tool_context=tool_context,
+            )
+        )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["view"]["view_type"], "revision_impact")
+        self.assertEqual(
+            result["view"]["revision_request"]["notes"],
+            "Only change the current voiceover. Do not apply it yet.",
+        )
+        self.assertEqual(result["view"]["state_mutation"], "none")
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()

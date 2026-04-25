@@ -184,6 +184,8 @@ outputs
 uploads
 logs
 workspace
+.adk/
+**/.adk/
 task_plan.md
 findings.md
 progress.md
