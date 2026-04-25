@@ -1,0 +1,41 @@
+{
+  "criteria": {
+    "rubric_based_tool_use_quality_v1": {
+      "threshold": 0.8,
+      "judge_model_options": {
+        "judge_model": "gemini-2.5-flash",
+        "num_samples": 1
+      },
+      "rubrics": [
+        {
+          "rubric_id": "short_video_uses_production_tool",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for durable short-video production, the agent uses the run_short_video_production tool instead of manually chaining video, TTS, or media expert tools."
+          }
+        },
+        {
+          "rubric_id": "short_video_review_before_generation",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for product-ad short-video generation and has not explicitly approved the asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
+          }
+        },
+        {
+          "rubric_id": "short_video_view_for_intermediate_state",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks about current short-video production state, intermediate plans, events, timeline, or artifacts, the agent uses run_short_video_production with a read-only production view action."
+          }
+        },
+        {
+          "rubric_id": "short_video_impact_before_targeted_revision",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks what would happen if they change a specific short-video shot, voiceover, plan item, timeline, or final output, the agent uses run_short_video_production with analyze_revision_impact before applying the change."
+          }
+        }
+      ]
+    }
+  }
+}

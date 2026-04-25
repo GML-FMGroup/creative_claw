@@ -1,0 +1,122 @@
+{
+  "eval_set_id": "short_video_p0",
+  "name": "Short-video P0 behavior",
+  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for user review before real generation.",
+  "eval_cases": [
+    {
+      "eval_id": "start_product_ad_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_product_ad_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请为一款智能保温杯做一个 8 秒产品广告短视频。先给我生产计划和比例选择，不要直接生成真实视频。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_start_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "view_active_production_plan",
+      "conversation": [
+        {
+          "invocation_id": "view_active_production_plan_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "我要做一个 9:16 的智能台灯广告短视频，先停在计划确认，不要直接生成。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "view_active_production_plan_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "现在这个短视频任务到哪一步了？把当前 asset plan 给我看一下。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_view",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "analyze_targeted_revision_impact",
+      "conversation": [
+        {
+          "invocation_id": "analyze_targeted_revision_impact_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "我要做一个 16:9 的产品广告短视频，主题是耳机新品发布。先生成计划让我确认。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "analyze_targeted_revision_impact_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "如果我只改当前镜头的旁白，会影响哪些素材和最终视频？先不要真的改。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_impact",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    }
+  ]
+}
