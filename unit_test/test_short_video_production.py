@@ -377,6 +377,52 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
         self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
 
+    def test_manager_analyze_revision_impact_is_read_only_for_completed_outputs(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+        state_path = resolve_workspace_path(completed.state_ref or "")
+        state_payload_before = state_path.read_text(encoding="utf-8")
+        shot_id = json.loads(state_payload_before)["asset_plan"]["shot_plan"]["shot_id"]
+        adk_state_before = json.dumps(state, sort_keys=True)
+
+        result = asyncio.run(manager.analyze_revision_impact(
+            production_session_id=completed.production_session_id,
+            user_response={
+                "targets": [{"kind": "shot", "id": shot_id}],
+                "notes": "Change the shot pacing.",
+            },
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.view["view_type"], "revision_impact")
+        self.assertEqual(result.view["impact_level"], "generated_outputs_would_be_stale")
+        self.assertEqual(result.view["state_mutation"], "none")
+        impacted_kinds = {item["kind"] for item in result.view["impacted"]}
+        self.assertTrue(
+            {"asset_plan", "video_asset", "audio_asset", "timeline", "final_artifact"}.issubset(
+                impacted_kinds
+            )
+        )
+        self.assertEqual(json.dumps(state, sort_keys=True), adk_state_before)
+        self.assertEqual(state_path.read_text(encoding="utf-8"), state_payload_before)
+
     def test_manager_add_reference_assets_marks_outputs_stale_without_duplicate_projection(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(
@@ -631,6 +677,38 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(result["review_payload"]["review_type"], "asset_plan_review")
         reference_item = next(item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets")
         self.assertEqual(reference_item["count"], 1)
+
+    def test_tool_analyze_revision_impact_reports_unmatched_target(self) -> None:
+        state = _adk_state()
+        tool_context = SimpleNamespace(state=state)
+        started = asyncio.run(
+            run_short_video_production(
+                action="start",
+                user_prompt="make a product ad",
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "9:16"},
+                tool_context=tool_context,
+            )
+        )
+
+        result = asyncio.run(
+            run_short_video_production(
+                action="analyze_revision_impact",
+                user_response={
+                    "targets": [{"kind": "shot", "id": "shot_3"}],
+                    "notes": "Only change the third shot.",
+                },
+                tool_context=tool_context,
+            )
+        )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["production_session_id"], started["production_session_id"])
+        self.assertEqual(result["view"]["view_type"], "revision_impact")
+        self.assertEqual(result["view"]["impact_level"], "target_unmatched")
+        self.assertEqual(result["view"]["unmatched_targets"][0]["id"], "shot_3")
+        available_kinds = {item["kind"] for item in result["view"]["available_targets"]}
+        self.assertIn("shot", available_kinds)
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()

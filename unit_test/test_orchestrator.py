@@ -122,6 +122,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("P0b asset-plan review", instruction)
         self.assertIn('action="view"', instruction)
         self.assertIn('action="add_reference_assets"', instruction)
+        self.assertIn('action="analyze_revision_impact"', instruction)
         self.assertIn("needs_user_review", instruction)
         self.assertIn("completed artifacts", instruction)
 

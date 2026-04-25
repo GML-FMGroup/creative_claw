@@ -30,6 +30,7 @@ from src.production.short_video.models import (
     VideoClip,
     VideoTrack,
 )
+from src.production.short_video.impact import build_revision_impact_view
 from src.production.short_video.placeholders import PlaceholderAssetFactory
 from src.production.short_video.providers import (
     ShortVideoProviderError,
@@ -276,6 +277,43 @@ class ShortVideoProductionManager:
             state,
             message=f"Loaded short-video production view: {normalized_view_type}.",
             view=_build_production_view(state, normalized_view_type),
+        )
+
+    async def analyze_revision_impact(
+        self,
+        *,
+        production_session_id: str | None,
+        user_response: dict[str, Any] | None,
+        adk_state,
+    ) -> ProductionRunResult:
+        """Return a read-only impact analysis for a requested production revision."""
+        context = _context_from_adk_state(adk_state)
+        session_id = _resolve_requested_session_id(production_session_id, adk_state)
+        try:
+            state = self.store.load_state(
+                production_session_id=session_id,
+                adk_session_id=context["sid"],
+                owner_ref=context["owner_ref"],
+                state_type=ShortVideoProductionState,
+            )
+        except ProductionSessionNotFoundError:
+            return ProductionRunResult(
+                status="failed",
+                capability=self.capability,
+                production_session_id=session_id or "",
+                stage="not_found",
+                progress_percent=0,
+                message="Production session was not found or is not owned by this conversation.",
+                error=ProductionErrorInfo(
+                    code="production_session_not_found_or_not_owned",
+                    message="Production session was not found or is not owned by this conversation.",
+                ),
+            )
+
+        return self._result_from_state(
+            state,
+            message="Loaded short-video revision impact analysis. No production state was changed.",
+            view=build_revision_impact_view(state, user_response or {}),
         )
 
     async def add_reference_assets(
