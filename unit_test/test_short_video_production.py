@@ -1,4 +1,5 @@
 import asyncio
+import json
 import shutil
 import tempfile
 import unittest
@@ -113,6 +114,51 @@ class _FakeValidator:
         )
 
 
+class _FakeProviderRuntime:
+    def generate_video_clip(
+        self,
+        *,
+        session_root: Path,
+        asset_plan,
+        render_settings: ShortVideoRenderSettings,
+        reference_assets,
+    ) -> AssetManifestEntry:
+        video_path = session_root / "assets" / "veo_clip.mp4"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"fake-veo-video")
+        return AssetManifestEntry(
+            asset_id="asset_veo_1",
+            kind="video",
+            path=workspace_relative_path(video_path),
+            source="expert",
+            provider="veo",
+            prompt_ref=asset_plan.plan_id,
+            duration_seconds=asset_plan.duration_seconds,
+            width=render_settings.width,
+            height=render_settings.height,
+            derived_from=asset_plan.reference_asset_ids,
+        )
+
+    def synthesize_voiceover(
+        self,
+        *,
+        session_root: Path,
+        asset_plan,
+        render_settings: ShortVideoRenderSettings,
+    ) -> AudioManifestEntry:
+        audio_path = session_root / "audio" / "voiceover.mp3"
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.write_bytes(b"fake-tts-audio")
+        return AudioManifestEntry(
+            audio_id="audio_tts_1",
+            kind="voiceover",
+            path=workspace_relative_path(audio_path),
+            source="expert",
+            provider="mock_tts",
+            duration_seconds=asset_plan.duration_seconds,
+        )
+
+
 class ShortVideoProductionTests(unittest.TestCase):
     def test_manager_start_p0a_saves_state_and_projects_final_artifact(self) -> None:
         state = _adk_state()
@@ -175,6 +221,122 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(wrong_status.status, "failed")
         self.assertEqual(wrong_status.error.code, "production_session_not_found_or_not_owned")
 
+    def test_manager_start_p0b_returns_asset_plan_review(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = manager.start(
+            user_prompt="make a product ad for a desk lamp",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={},
+            adk_state=state,
+        )
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertEqual(result.review_payload.review_type, "asset_plan_review")
+        self.assertEqual(state["active_production_session_id"], result.production_session_id)
+        self.assertEqual(state["active_production_status"], "needs_user_review")
+        state_path = resolve_workspace_path(result.state_ref or "")
+        asset_plan_payload = json.loads((state_path.parent / "asset_plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_provider"], "veo")
+        self.assertIsNone(asset_plan_payload["asset_plan"]["selected_ratio"])
+        self.assertIn("active_review", asset_plan_payload)
+
+    def test_manager_resume_requires_ratio_before_provider_generation(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(provider_runtime=_FakeProviderRuntime())
+        started = manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={},
+            adk_state=state,
+        )
+
+        result = manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        )
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertIn("aspect ratio", result.message)
+        self.assertEqual(state["active_production_status"], "needs_user_review")
+
+    def test_manager_resume_approve_generates_p0b_with_fake_providers(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = manager.start(
+            user_prompt="make a clean product ad for a smart mug",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={},
+            adk_state=state,
+        )
+
+        result = manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve", "selected_ratio": "9:16"},
+            adk_state=state,
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.stage, "completed")
+        self.assertEqual(state["final_file_paths"], [result.artifacts[0].path])
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_plan"]["selected_ratio"], "9:16")
+        self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
+        self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
+
+    def test_manager_resume_cancel_marks_production_cancelled(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        started = manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "1:1"},
+            adk_state=state,
+        )
+
+        result = manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "cancel"},
+            adk_state=state,
+        )
+
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(result.stage, "cancelled")
+        self.assertEqual(state["active_production_status"], "cancelled")
+
+    def test_manager_resume_revise_rebuilds_asset_plan_review(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        started = manager.start(
+            user_prompt="make a calm product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "16:9"},
+            adk_state=state,
+        )
+
+        result = manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "revise", "notes": "Make it energetic."},
+            adk_state=state,
+        )
+
+        self.assertEqual(result.status, "needs_user_review")
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertIn("Make it energetic.", state_payload["asset_plan"]["shot_plan"]["voiceover_text"])
+
     def test_tool_uses_uploaded_files_when_input_files_are_omitted(self) -> None:
         with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
             upload_path = Path(tmpdir) / "product.png"
@@ -199,8 +361,12 @@ class ShortVideoProductionTests(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(result["status"], "needs_user_input")
-        self.assertIn("placeholder_assets=true", result["message"])
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["review_payload"]["review_type"], "asset_plan_review")
+        reference_item = next(
+            item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets"
+        )
+        self.assertEqual(reference_item["count"], 1)
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()

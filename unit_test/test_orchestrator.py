@@ -119,7 +119,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("creative-workflow-router", instruction)
         self.assertIn("creative-qc", instruction)
         self.assertIn("do not skip straight to `ImageGenerationAgent` or `VideoGenerationAgent`", instruction)
-        self.assertIn("placeholder production", instruction)
+        self.assertIn("P0b asset-plan review", instruction)
+        self.assertIn("needs_user_review", instruction)
         self.assertIn("completed artifacts", instruction)
 
     def test_agent_uses_structured_output_schema(self) -> None:

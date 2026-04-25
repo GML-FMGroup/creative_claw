@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from src.production.models import ProductionState
+from src.production.models import ProductionState, new_id
 
 
 class ShortVideoRenderSettings(BaseModel):
@@ -110,6 +110,34 @@ class AudioTrack(BaseModel):
     gain_db: float = 0
 
 
+class ShortVideoShotPlan(BaseModel):
+    """One planned shot used to drive provider generation and timeline creation."""
+
+    shot_id: str = Field(default_factory=lambda: new_id("shot"))
+    duration_seconds: float = 8.0
+    visual_prompt: str
+    voiceover_text: str
+    reference_asset_ids: list[str] = Field(default_factory=list)
+
+
+class ShortVideoAssetPlan(BaseModel):
+    """User-reviewable asset plan for the first P0b product-ad workflow."""
+
+    plan_id: str = Field(default_factory=lambda: new_id("asset_plan"))
+    video_type: Literal["product_ad", "cartoon_short_drama", "social_media_short"] = "product_ad"
+    planned_video_provider: Literal["veo"] = "veo"
+    planned_tts: bool = True
+    planned_tts_provider: str = "speech_synthesis"
+    ratio_options: list[Literal["9:16", "16:9", "1:1"]] = Field(
+        default_factory=lambda: ["9:16", "16:9", "1:1"]
+    )
+    selected_ratio: Literal["9:16", "16:9", "1:1"] | None = None
+    duration_seconds: float = 8.0
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    shot_plan: ShortVideoShotPlan
+    status: Literal["draft", "approved", "stale"] = "draft"
+
+
 class ShortVideoTimeline(BaseModel):
     """Mechanical render plan consumed by the short-video timeline renderer."""
 
@@ -150,9 +178,9 @@ class ShortVideoProductionState(ProductionState):
 
     brief_summary: str = ""
     reference_assets: list[ReferenceAssetEntry] = Field(default_factory=list)
+    asset_plan: ShortVideoAssetPlan | None = None
     asset_manifest: list[AssetManifestEntry] = Field(default_factory=list)
     audio_manifest: list[AudioManifestEntry] = Field(default_factory=list)
     timeline: ShortVideoTimeline | None = None
     render_report: RenderReport | None = None
     render_validation_report: RenderValidationReport | None = None
-
