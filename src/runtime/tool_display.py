@@ -209,6 +209,26 @@ def _summarize_invoke_agent_result(result: Any) -> str:
     return stringify_value(result, max_chars=220)
 
 
+def _summarize_production_result(result: Any) -> str:
+    if isinstance(result, dict):
+        status = str(result.get("status", "")).strip() or "unknown"
+        capability = str(result.get("capability", "")).strip() or "production"
+        stage = str(result.get("stage", "")).strip() or "unknown"
+        progress = result.get("progress_percent", 0)
+        message = stringify_value(result.get("message", ""), max_chars=180)
+        artifacts = result.get("artifacts") or []
+        parts = [
+            f"{capability} status={status}",
+            f"stage={stage}",
+            f"progress={progress}%",
+            f"message={message}",
+        ]
+        if artifacts:
+            parts.append(f"artifacts={len(artifacts)}")
+        return "; ".join(parts)
+    return stringify_value(result, max_chars=220)
+
+
 def _summarize_list_session_files_result(result_text: str) -> str:
     try:
         payload = json.loads(result_text)
@@ -271,6 +291,12 @@ def _summarize_list_session_files_result(result_text: str) -> str:
 
 def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
     """Summarize one tool result into status plus short preview."""
+    if tool_name == "run_short_video_production":
+        status = "success"
+        if isinstance(result, dict) and str(result.get("status", "")).strip().lower() == "failed":
+            status = "error"
+        return status, _summarize_production_result(result)
+
     if tool_name == "invoke_agent":
         if hasattr(result, "tool_result"):
             result = result.tool_result

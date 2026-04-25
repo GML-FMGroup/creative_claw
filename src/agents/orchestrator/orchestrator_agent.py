@@ -43,6 +43,7 @@ from src.runtime.workspace import (
     resolve_workspace_path,
     workspace_relative_path,
 )
+from src.production.short_video.tool import run_short_video_production as run_short_video_production_tool
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
     BuiltinToolbox,
@@ -74,6 +75,7 @@ _PLUGIN_MANAGED_TOOL_NAMES = {
     "process_session",
     "web_search",
     "web_fetch",
+    "run_short_video_production",
 }
 
 _AUTO_OUTPUT_TOOL_NAMES = {
@@ -95,6 +97,7 @@ _DISPLAY_TOOL_TITLES = {
     "list_skills": "List Skills",
     "read_skill": "Read Skill",
     "list_session_files": "List Session Files",
+    "run_short_video_production": "Short Video Production",
 }
 
 
@@ -383,6 +386,7 @@ class Orchestrator:
                 self.web_search,
                 self.web_fetch,
                 self.list_session_files,
+                self.run_short_video_production,
                 self.invoke_agent,
             ],
         )
@@ -412,15 +416,16 @@ You are Creative Claw's primary user-facing orchestrator.
 
 Your job is to inspect the current state, use skills and tools when helpful, and directly complete the user's request in this invocation whenever possible.
 Do not create a full upfront plan unless the user explicitly asks for one.
-You can use built-in tools, skills, `invoke_agent`, and your own reasoning to complete the task.
+You can use built-in tools, skills, production tools, `invoke_agent`, and your own reasoning to complete the task.
 You are the main agent, and expert agents are supporting capabilities invoked through `invoke_agent`.
 Prefer completing the task directly instead of describing an internal workflow.
 
-You can use four kinds of capabilities:
+You can use five kinds of capabilities:
 1. Skills from local markdown files
 2. Built-in local file tools inside the fixed workspace
 3. Built-in shell and web tools
 4. Existing expert agents through `invoke_agent(agent_name, prompt)`
+5. Typed production tools for multi-step production capabilities
 
 Rules:
 - Treat yourself as the main conversational agent. Reply to the user's actual request, not to an internal workflow.
@@ -429,6 +434,9 @@ Rules:
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
 - Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state.
+- For short-video production workflows that need durable state, review/resume, generated artifacts, or future iteration, use `run_short_video_production` instead of manually chaining video experts in the orchestrator.
+- Current short-video P0a supports placeholder production only. Use `action="start"` with `placeholder_assets=true` when validating the production framework; use `action="status"` for read-only status.
+- When `run_short_video_production` returns completed artifacts, include those artifact paths in `final_file_paths`.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
 - Inspect local files with `list_dir`, `glob`, `grep`, and `read_file` before changing them when the path or contents are uncertain.
 - Use local image, video, and audio tools for lightweight deterministic preprocessing, and keep the returned suffixed output path instead of overwriting the original by default.
@@ -1256,6 +1264,43 @@ Expert parameter contracts:
             allowed = ", ".join(payload_by_section.keys())
             return f"Error: Unsupported section `{section}`. Allowed: {allowed}"
         return json.dumps(payload_by_section[normalized_section], ensure_ascii=False, indent=2)
+
+    async def run_short_video_production(
+        self,
+        action: str,
+        user_prompt: str = "",
+        production_session_id: str | None = None,
+        input_files: list[dict[str, Any]] | None = None,
+        placeholder_assets: bool = False,
+        render_settings: dict[str, Any] | None = None,
+        user_response: dict[str, Any] | None = None,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Run, inspect, or resume a short-video production task."""
+        return await self._run_async_tool_with_events(
+            tool_context=tool_context,
+            tool_name="run_short_video_production",
+            stage="video_processing",
+            args={
+                "action": action,
+                "user_prompt": user_prompt,
+                "production_session_id": production_session_id,
+                "input_files": input_files,
+                "placeholder_assets": placeholder_assets,
+                "render_settings": render_settings,
+                "user_response": user_response,
+            },
+            runner=lambda: run_short_video_production_tool(
+                action=action,  # type: ignore[arg-type]
+                user_prompt=user_prompt,
+                production_session_id=production_session_id,
+                input_files=input_files,
+                placeholder_assets=placeholder_assets,
+                render_settings=render_settings,
+                user_response=user_response,
+                tool_context=tool_context,
+            ),
+        )
 
     async def invoke_agent(
         self,

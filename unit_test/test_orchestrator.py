@@ -40,6 +40,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("read_skill", instruction)
         self.assertIn("web_fetch", instruction)
         self.assertIn("web_search", instruction)
+        self.assertIn("run_short_video_production", instruction)
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)
         self.assertIn("image_flip", instruction)
@@ -118,6 +119,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("creative-workflow-router", instruction)
         self.assertIn("creative-qc", instruction)
         self.assertIn("do not skip straight to `ImageGenerationAgent` or `VideoGenerationAgent`", instruction)
+        self.assertIn("placeholder production", instruction)
+        self.assertIn("completed artifacts", instruction)
 
     def test_agent_uses_structured_output_schema(self) -> None:
         orchestrator = Orchestrator(
