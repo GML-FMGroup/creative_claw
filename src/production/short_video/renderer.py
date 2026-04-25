@@ -26,7 +26,7 @@ class TimelineRenderer:
         audio_manifest: list[AudioManifestEntry],
         output_path: Path,
     ) -> RenderReport:
-        """Render a P0a timeline using the referenced valid video and audio assets."""
+        """Render a single-clip timeline using the referenced valid video and audio assets."""
         video_clip = _require_single_video_clip(timeline)
         audio_clip = _require_single_audio_clip(timeline)
         video_asset = _find_valid_video_asset(asset_manifest, video_clip.asset_id)
@@ -52,7 +52,6 @@ class TimelineRenderer:
             "yuv420p",
             "-c:a",
             "aac",
-            "-shortest",
             "-movflags",
             "+faststart",
             str(output_path),
@@ -68,19 +67,19 @@ class TimelineRenderer:
             height=_safe_int(video_stream.get("height")) if video_stream else None,
             video_codec=str(video_stream.get("codec_name", "")).strip() if video_stream else "",
             audio_codec=str(audio_stream.get("codec_name", "")).strip() if audio_stream else "",
-            command_summary="ffmpeg mux placeholder video and silent audio",
+            command_summary="ffmpeg mux video and audio to timeline duration",
         )
 
 
 def _require_single_video_clip(timeline: ShortVideoTimeline):
     if len(timeline.video_tracks) != 1 or len(timeline.video_tracks[0].clips) != 1:
-        raise ValueError("P0a renderer requires exactly one video track with one clip.")
+        raise ValueError("Short-video renderer requires exactly one video track with one clip.")
     return timeline.video_tracks[0].clips[0]
 
 
 def _require_single_audio_clip(timeline: ShortVideoTimeline):
     if len(timeline.audio_tracks) != 1 or len(timeline.audio_tracks[0].clips) != 1:
-        raise ValueError("P0a renderer requires exactly one audio track with one clip.")
+        raise ValueError("Short-video renderer requires exactly one audio track with one clip.")
     return timeline.audio_tracks[0].clips[0]
 
 
@@ -168,4 +167,3 @@ def _safe_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
