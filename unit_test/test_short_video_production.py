@@ -377,6 +377,34 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
         self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
 
+    def test_manager_resume_defaults_to_active_session_after_misc_work(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad that pauses for review",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        state["generated"].append({"name": "notes.txt", "path": "generated/misc/notes.txt"})
+        state["uploaded"].append({"name": "unrelated.png", "path": "input/unrelated.png"})
+
+        result = asyncio.run(manager.resume(
+            production_session_id=None,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.production_session_id, started.production_session_id)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(state["active_production_session_id"], started.production_session_id)
+        self.assertEqual(state["uploaded"][0]["name"], "unrelated.png")
+
     def test_manager_analyze_revision_impact_is_read_only_for_completed_outputs(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(
