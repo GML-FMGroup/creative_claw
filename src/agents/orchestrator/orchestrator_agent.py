@@ -1279,7 +1279,7 @@ Expert parameter contracts:
         user_response: dict[str, Any] | None = None,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        """Run, inspect, or resume a short-video production task."""
+        """Run, inspect, resume, or view a short-video production task."""
         return await self._run_async_tool_with_events(
             tool_context=tool_context,
             tool_name="run_short_video_production",

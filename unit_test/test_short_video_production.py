@@ -305,6 +305,27 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(wrong_view.status, "failed")
         self.assertEqual(wrong_view.error.code, "production_session_not_found_or_not_owned")
 
+    def test_manager_view_rejects_invalid_view_type(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+
+        result = asyncio.run(manager.view(
+            production_session_id=started.production_session_id,
+            view_type="unknown",
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stage, "invalid_view_type")
+        self.assertEqual(result.error.code, "invalid_view_type")
+
     def test_manager_resume_requires_ratio_before_provider_generation(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(provider_runtime=_FakeProviderRuntime())

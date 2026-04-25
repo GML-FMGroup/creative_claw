@@ -21,7 +21,18 @@ async def run_short_video_production(
     user_response: dict[str, Any] | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """Run, inspect, or resume a short-video production task."""
+    """Run, inspect, resume, or view a short-video production task.
+
+    Args:
+        action: Use start, status, resume, or view.
+        user_prompt: User's short-video brief when starting production.
+        production_session_id: Existing production session id for status, resume, or view.
+        view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
+        input_files: Optional workspace file records to use as reference assets.
+        placeholder_assets: Use true only for P0a placeholder rendering.
+        render_settings: Optional aspect ratio, duration, fps, width, and height settings.
+        user_response: User decision payload for resume.
+    """
     if tool_context is None:
         return ProductionRunResult(
             status="failed",
