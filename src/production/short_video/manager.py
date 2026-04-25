@@ -41,6 +41,9 @@ from src.production.short_video.validators import RenderValidator
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
+_VIEW_TYPES = ("overview", "brief", "asset_plan", "timeline", "events", "artifacts")
+
+
 class ShortVideoProductionManager:
     """Coordinate short-video production state, rendering, and projection."""
 
@@ -223,6 +226,57 @@ class ShortVideoProductionManager:
                 ),
             )
         return self._result_from_state(state, message=_status_message(state))
+
+    async def view(
+        self,
+        *,
+        production_session_id: str | None,
+        view_type: str | None,
+        adk_state,
+    ) -> ProductionRunResult:
+        """Return a read-only production view derived from persisted state."""
+        context = _context_from_adk_state(adk_state)
+        session_id = _resolve_requested_session_id(production_session_id, adk_state)
+        try:
+            state = self.store.load_state(
+                production_session_id=session_id,
+                adk_session_id=context["sid"],
+                owner_ref=context["owner_ref"],
+                state_type=ShortVideoProductionState,
+            )
+        except ProductionSessionNotFoundError:
+            return ProductionRunResult(
+                status="failed",
+                capability=self.capability,
+                production_session_id=session_id or "",
+                stage="not_found",
+                progress_percent=0,
+                message="Production session was not found or is not owned by this conversation.",
+                error=ProductionErrorInfo(
+                    code="production_session_not_found_or_not_owned",
+                    message="Production session was not found or is not owned by this conversation.",
+                ),
+            )
+
+        normalized_view_type = _normalize_view_type(view_type)
+        if normalized_view_type is None:
+            return ProductionRunResult(
+                status="failed",
+                capability=self.capability,
+                production_session_id=state.production_session.production_session_id,
+                stage="invalid_view_type",
+                progress_percent=state.progress_percent,
+                message=f"Unsupported production view_type. Allowed: {', '.join(_VIEW_TYPES)}.",
+                error=ProductionErrorInfo(
+                    code="invalid_view_type",
+                    message=f"Unsupported production view_type. Allowed: {', '.join(_VIEW_TYPES)}.",
+                ),
+            )
+        return self._result_from_state(
+            state,
+            message=f"Loaded short-video production view: {normalized_view_type}.",
+            view=_build_production_view(state, normalized_view_type),
+        )
 
     async def resume(
         self,
@@ -565,6 +619,7 @@ class ShortVideoProductionManager:
         state: ShortVideoProductionState,
         *,
         message: str,
+        view: dict[str, Any] | None = None,
         error: ProductionErrorInfo | None = None,
     ) -> ProductionRunResult:
         state_ref = f"{state.production_session.root_dir}/state.json"
@@ -582,6 +637,7 @@ class ShortVideoProductionManager:
                 if state.active_breakpoint is not None
                 else None
             ),
+            view=view or {},
             error=error,
             events=state.production_events[-5:],
         )
@@ -641,6 +697,147 @@ def _resolve_requested_session_id(production_session_id: str | None, adk_state) 
     if requested:
         return requested
     return str(adk_state.get("active_production_session_id", "") or "").strip()
+
+
+def _normalize_view_type(view_type: str | None) -> str | None:
+    value = str(view_type or "overview").strip().lower() or "overview"
+    return value if value in _VIEW_TYPES else None
+
+
+def _build_production_view(state: ShortVideoProductionState, view_type: str) -> dict[str, Any]:
+    if view_type == "overview":
+        return _overview_view(state)
+    if view_type == "brief":
+        return _brief_view(state)
+    if view_type == "asset_plan":
+        return _asset_plan_view(state)
+    if view_type == "timeline":
+        return _timeline_view(state)
+    if view_type == "events":
+        return _events_view(state)
+    if view_type == "artifacts":
+        return _artifacts_view(state)
+    raise ValueError(f"Unsupported view_type: {view_type}")
+
+
+def _base_view(state: ShortVideoProductionState, view_type: str) -> dict[str, Any]:
+    session = state.production_session
+    return {
+        "view_type": view_type,
+        "production_session_id": session.production_session_id,
+        "capability": session.capability,
+        "status": state.status,
+        "stage": state.stage,
+        "progress_percent": state.progress_percent,
+        "state_ref": f"{session.root_dir}/state.json",
+        "project_root": session.root_dir,
+    }
+
+
+def _overview_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "overview")
+    view.update(
+        {
+            "brief_summary": state.brief_summary,
+            "active_review": (
+                state.active_breakpoint.review_payload.model_dump(mode="json")
+                if state.active_breakpoint is not None
+                else None
+            ),
+            "counts": {
+                "reference_assets": len(state.reference_assets),
+                "asset_manifest": len(state.asset_manifest),
+                "audio_manifest": len(state.audio_manifest),
+                "artifacts": len(state.artifacts),
+                "events": len(state.production_events),
+            },
+            "has_timeline": state.timeline is not None,
+            "has_render_report": state.render_report is not None,
+            "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+        }
+    )
+    return view
+
+
+def _brief_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "brief")
+    view.update(
+        {
+            "brief_summary": state.brief_summary,
+            "brief_path": f"{state.production_session.root_dir}/brief.md",
+        }
+    )
+    return view
+
+
+def _asset_plan_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "asset_plan")
+    view.update(
+        {
+            "asset_plan": (
+                state.asset_plan.model_dump(mode="json")
+                if state.asset_plan is not None
+                else None
+            ),
+            "active_review": (
+                state.active_breakpoint.review_payload.model_dump(mode="json")
+                if state.active_breakpoint is not None
+                else None
+            ),
+            "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
+            "asset_plan_path": f"{state.production_session.root_dir}/asset_plan.json",
+        }
+    )
+    return view
+
+
+def _timeline_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "timeline")
+    view.update(
+        {
+            "timeline": (
+                state.timeline.model_dump(mode="json")
+                if state.timeline is not None
+                else None
+            ),
+            "render_report": (
+                state.render_report.model_dump(mode="json")
+                if state.render_report is not None
+                else None
+            ),
+            "render_validation_report": (
+                state.render_validation_report.model_dump(mode="json")
+                if state.render_validation_report is not None
+                else None
+            ),
+            "timeline_path": f"{state.production_session.root_dir}/timeline.json",
+        }
+    )
+    return view
+
+
+def _events_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "events")
+    view.update(
+        {
+            "events": [item.model_dump(mode="json") for item in state.production_events],
+            "events_path": f"{state.production_session.root_dir}/events.jsonl",
+        }
+    )
+    return view
+
+
+def _artifacts_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "artifacts")
+    view.update(
+        {
+            "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+            "asset_manifest": [item.model_dump(mode="json") for item in state.asset_manifest],
+            "audio_manifest": [item.model_dump(mode="json") for item in state.audio_manifest],
+            "final_dir": f"{state.production_session.root_dir}/final",
+        }
+    )
+    return view
 
 
 def _brief_summary(user_prompt: str) -> str:

@@ -217,6 +217,7 @@ def _summarize_production_result(result: Any) -> str:
         progress = result.get("progress_percent", 0)
         message = stringify_value(result.get("message", ""), max_chars=180)
         artifacts = result.get("artifacts") or []
+        view = result.get("view") or {}
         parts = [
             f"{capability} status={status}",
             f"stage={stage}",
@@ -225,6 +226,8 @@ def _summarize_production_result(result: Any) -> str:
         ]
         if artifacts:
             parts.append(f"artifacts={len(artifacts)}")
+        if isinstance(view, dict) and view:
+            parts.append(f"view={stringify_value(view.get('view_type', 'available'), max_chars=40)}")
         return "; ".join(parts)
     return stringify_value(result, max_chars=220)
 

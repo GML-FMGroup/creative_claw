@@ -139,6 +139,6 @@ class ProductionRunResult(BaseModel):
     state_ref: str | None = None
     artifacts: list[WorkspaceFileRef] = Field(default_factory=list)
     review_payload: ReviewPayload | None = None
+    view: dict[str, Any] = Field(default_factory=dict)
     error: ProductionErrorInfo | None = None
     events: list[ProductionEvent] = Field(default_factory=list)
-

@@ -11,9 +11,10 @@ from src.production.short_video.manager import ShortVideoProductionManager
 
 
 async def run_short_video_production(
-    action: Literal["start", "status", "resume"],
+    action: Literal["start", "status", "resume", "view"],
     user_prompt: str = "",
     production_session_id: str | None = None,
+    view_type: Literal["overview", "brief", "asset_plan", "timeline", "events", "artifacts"] = "overview",
     input_files: list[dict[str, Any]] | None = None,
     placeholder_assets: bool = False,
     render_settings: dict[str, Any] | None = None,
@@ -55,6 +56,12 @@ async def run_short_video_production(
         result = await manager.resume(
             production_session_id=production_session_id,
             user_response=user_response,
+            adk_state=state,
+        )
+    elif action == "view":
+        result = await manager.view(
+            production_session_id=production_session_id,
+            view_type=view_type,
             adk_state=state,
         )
     else:

@@ -250,6 +250,61 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertIsNone(asset_plan_payload["asset_plan"]["selected_ratio"])
         self.assertIn("active_review", asset_plan_payload)
 
+    def test_manager_view_returns_asset_plan_without_mutating_adk_state(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad for a desk lamp",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={},
+            adk_state=state,
+        ))
+        state_before_view = json.dumps(state, sort_keys=True)
+
+        result = asyncio.run(manager.view(
+            production_session_id=started.production_session_id,
+            view_type="asset_plan",
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertEqual(result.view["view_type"], "asset_plan")
+        self.assertEqual(result.view["asset_plan"]["planned_video_provider"], "veo")
+        self.assertEqual(result.view["active_review"]["review_type"], "asset_plan_review")
+        self.assertEqual(json.dumps(state, sort_keys=True), state_before_view)
+
+    def test_manager_view_events_uses_owner_check(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+
+        events_view = asyncio.run(manager.view(
+            production_session_id=started.production_session_id,
+            view_type="events",
+            adk_state=state,
+        ))
+        self.assertEqual(events_view.status, "needs_user_review")
+        self.assertEqual(events_view.view["view_type"], "events")
+        self.assertGreaterEqual(len(events_view.view["events"]), 1)
+
+        wrong_state = dict(state)
+        wrong_state["sid"] = "other_session"
+        wrong_view = asyncio.run(manager.view(
+            production_session_id=started.production_session_id,
+            view_type="events",
+            adk_state=wrong_state,
+        ))
+        self.assertEqual(wrong_view.status, "failed")
+        self.assertEqual(wrong_view.error.code, "production_session_not_found_or_not_owned")
+
     def test_manager_resume_requires_ratio_before_provider_generation(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(provider_runtime=_FakeProviderRuntime())
@@ -407,6 +462,32 @@ class ShortVideoProductionTests(unittest.TestCase):
             item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets"
         )
         self.assertEqual(reference_item["count"], 1)
+
+    def test_tool_view_defaults_to_active_session(self) -> None:
+        state = _adk_state()
+        tool_context = SimpleNamespace(state=state)
+        started = asyncio.run(
+            run_short_video_production(
+                action="start",
+                user_prompt="make a product ad",
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "9:16"},
+                tool_context=tool_context,
+            )
+        )
+
+        result = asyncio.run(
+            run_short_video_production(
+                action="view",
+                view_type="overview",
+                tool_context=tool_context,
+            )
+        )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["production_session_id"], started["production_session_id"])
+        self.assertEqual(result["view"]["view_type"], "overview")
+        self.assertEqual(result["view"]["counts"]["events"], 2)
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()
