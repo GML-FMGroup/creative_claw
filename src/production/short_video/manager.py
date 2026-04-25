@@ -34,7 +34,7 @@ from src.production.short_video.placeholders import PlaceholderAssetFactory
 from src.production.short_video.providers import (
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
-    UnavailableShortVideoProviderRuntime,
+    VeoTtsProviderRuntime,
 )
 from src.production.short_video.renderer import TimelineRenderer
 from src.production.short_video.validators import RenderValidator
@@ -58,11 +58,11 @@ class ShortVideoProductionManager:
         """Initialize the short-video production manager."""
         self.store = store or ProductionSessionStore()
         self.placeholder_factory = placeholder_factory or PlaceholderAssetFactory()
-        self.provider_runtime = provider_runtime or UnavailableShortVideoProviderRuntime()
+        self.provider_runtime = provider_runtime or VeoTtsProviderRuntime()
         self.renderer = renderer or TimelineRenderer()
         self.validator = validator or RenderValidator()
 
-    def start(
+    async def start(
         self,
         *,
         user_prompt: str,
@@ -193,7 +193,7 @@ class ShortVideoProductionManager:
                 ),
             )
 
-    def status(
+    async def status(
         self,
         *,
         production_session_id: str | None,
@@ -224,7 +224,7 @@ class ShortVideoProductionManager:
             )
         return self._result_from_state(state, message=_status_message(state))
 
-    def resume(
+    async def resume(
         self,
         *,
         production_session_id: str | None,
@@ -242,7 +242,7 @@ class ShortVideoProductionManager:
                 state_type=ShortVideoProductionState,
             )
         except ProductionRuntimeError:
-            return self.status(production_session_id=session_id, adk_state=adk_state)
+            return await self.status(production_session_id=session_id, adk_state=adk_state)
         response = user_response or {}
         decision = _normalize_resume_decision(response)
         if state.active_breakpoint is None:
@@ -326,7 +326,7 @@ class ShortVideoProductionManager:
                 message="Please respond with decision=approve, revise, or cancel.",
             )
 
-        return self._approve_asset_plan_and_generate(
+        return await self._approve_asset_plan_and_generate(
             state,
             user_response=response,
             adk_state=adk_state,
@@ -375,7 +375,7 @@ class ShortVideoProductionManager:
             message="Please review the product-ad asset plan before real video and TTS generation.",
         )
 
-    def _approve_asset_plan_and_generate(
+    async def _approve_asset_plan_and_generate(
         self,
         state: ShortVideoProductionState,
         *,
@@ -427,11 +427,12 @@ class ShortVideoProductionManager:
             state.status = "running"
             state.stage = "provider_generation"
             state.progress_percent = 45
-            video_asset = self.provider_runtime.generate_video_clip(
+            video_asset = await self.provider_runtime.generate_video_clip(
                 session_root=session_root,
                 asset_plan=state.asset_plan,
                 render_settings=settings,
                 reference_assets=state.reference_assets,
+                owner_ref=state.production_session.owner_ref,
             )
             state.asset_manifest.append(video_asset)
             state.production_events.append(
@@ -445,10 +446,11 @@ class ShortVideoProductionManager:
 
             state.stage = "tts_generation"
             state.progress_percent = 60
-            audio_asset = self.provider_runtime.synthesize_voiceover(
+            audio_asset = await self.provider_runtime.synthesize_voiceover(
                 session_root=session_root,
                 asset_plan=state.asset_plan,
                 render_settings=settings,
+                owner_ref=state.production_session.owner_ref,
             )
             state.audio_manifest.append(audio_asset)
             state.production_events.append(

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from src.production.models import ProductionOwnerRef
 from src.production.session_store import ProductionSessionStore
@@ -14,8 +15,11 @@ from src.production.short_video.models import (
     AudioManifestEntry,
     RenderReport,
     RenderValidationReport,
+    ShortVideoAssetPlan,
     ShortVideoRenderSettings,
+    ShortVideoShotPlan,
 )
+from src.production.short_video.providers import ShortVideoProviderError, VeoTtsProviderRuntime
 from src.production.short_video.tool import run_short_video_production
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path, workspace_root
 
@@ -115,13 +119,14 @@ class _FakeValidator:
 
 
 class _FakeProviderRuntime:
-    def generate_video_clip(
+    async def generate_video_clip(
         self,
         *,
         session_root: Path,
         asset_plan,
         render_settings: ShortVideoRenderSettings,
         reference_assets,
+        owner_ref,
     ) -> AssetManifestEntry:
         video_path = session_root / "assets" / "veo_clip.mp4"
         video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,12 +144,13 @@ class _FakeProviderRuntime:
             derived_from=asset_plan.reference_asset_ids,
         )
 
-    def synthesize_voiceover(
+    async def synthesize_voiceover(
         self,
         *,
         session_root: Path,
         asset_plan,
         render_settings: ShortVideoRenderSettings,
+        owner_ref,
     ) -> AudioManifestEntry:
         audio_path = session_root / "audio" / "voiceover.mp3"
         audio_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,13 +174,13 @@ class ShortVideoProductionTests(unittest.TestCase):
             validator=_FakeValidator(),
         )
 
-        result = manager.start(
+        result = asyncio.run(manager.start(
             user_prompt="make a placeholder video",
             input_files=[],
             placeholder_assets=True,
             render_settings={"aspect_ratio": "16:9", "duration_seconds": 4},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.stage, "completed")
@@ -195,28 +201,28 @@ class ShortVideoProductionTests(unittest.TestCase):
             renderer=_FakeRenderer(),
             validator=_FakeValidator(),
         )
-        started = manager.start(
+        started = asyncio.run(manager.start(
             user_prompt="status test",
             input_files=[],
             placeholder_assets=True,
             render_settings={},
             adk_state=state,
-        )
+        ))
 
-        status = manager.status(
+        status = asyncio.run(manager.status(
             production_session_id=started.production_session_id,
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(status.status, "completed")
         self.assertEqual(status.production_session_id, started.production_session_id)
 
         wrong_state = dict(state)
         wrong_state["sid"] = "other_session"
-        wrong_status = manager.status(
+        wrong_status = asyncio.run(manager.status(
             production_session_id=started.production_session_id,
             adk_state=wrong_state,
-        )
+        ))
 
         self.assertEqual(wrong_status.status, "failed")
         self.assertEqual(wrong_status.error.code, "production_session_not_found_or_not_owned")
@@ -225,13 +231,13 @@ class ShortVideoProductionTests(unittest.TestCase):
         state = _adk_state()
         manager = ShortVideoProductionManager()
 
-        result = manager.start(
+        result = asyncio.run(manager.start(
             user_prompt="make a product ad for a desk lamp",
             input_files=[],
             placeholder_assets=False,
             render_settings={},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "needs_user_review")
         self.assertEqual(result.stage, "asset_plan_review")
@@ -247,19 +253,19 @@ class ShortVideoProductionTests(unittest.TestCase):
     def test_manager_resume_requires_ratio_before_provider_generation(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(provider_runtime=_FakeProviderRuntime())
-        started = manager.start(
+        started = asyncio.run(manager.start(
             user_prompt="make a product ad",
             input_files=[],
             placeholder_assets=False,
             render_settings={},
             adk_state=state,
-        )
+        ))
 
-        result = manager.resume(
+        result = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
             user_response={"decision": "approve"},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "needs_user_review")
         self.assertEqual(result.stage, "asset_plan_review")
@@ -273,19 +279,19 @@ class ShortVideoProductionTests(unittest.TestCase):
             renderer=_FakeRenderer(),
             validator=_FakeValidator(),
         )
-        started = manager.start(
+        started = asyncio.run(manager.start(
             user_prompt="make a clean product ad for a smart mug",
             input_files=[],
             placeholder_assets=False,
             render_settings={},
             adk_state=state,
-        )
+        ))
 
-        result = manager.resume(
+        result = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
             user_response={"decision": "approve", "selected_ratio": "9:16"},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.stage, "completed")
@@ -295,22 +301,56 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
         self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
 
+    def test_manager_resume_approve_uses_default_veo_tts_runtime(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a default-provider product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        video_mock = AsyncMock(
+            return_value={"status": "success", "message": b"video", "provider": "veo"}
+        )
+        tts_mock = AsyncMock(
+            return_value={"status": "success", "message": b"audio", "provider": "bytedance_tts"}
+        )
+
+        with (
+            patch("src.production.short_video.providers.video_tools.veo_video_generation_tool", video_mock),
+            patch("src.production.short_video.providers.speech_tools.speech_synthesis_tool", tts_mock),
+        ):
+            result = asyncio.run(manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            ))
+
+        self.assertEqual(result.status, "completed")
+        video_mock.assert_awaited_once()
+        tts_mock.assert_awaited_once()
+
     def test_manager_resume_cancel_marks_production_cancelled(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
-        started = manager.start(
+        started = asyncio.run(manager.start(
             user_prompt="make a product ad",
             input_files=[],
             placeholder_assets=False,
             render_settings={"aspect_ratio": "1:1"},
             adk_state=state,
-        )
+        ))
 
-        result = manager.resume(
+        result = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
             user_response={"decision": "cancel"},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(result.stage, "cancelled")
@@ -319,19 +359,19 @@ class ShortVideoProductionTests(unittest.TestCase):
     def test_manager_resume_revise_rebuilds_asset_plan_review(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
-        started = manager.start(
+        started = asyncio.run(manager.start(
             user_prompt="make a calm product ad",
             input_files=[],
             placeholder_assets=False,
             render_settings={"aspect_ratio": "16:9"},
             adk_state=state,
-        )
+        ))
 
-        result = manager.resume(
+        result = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
             user_response={"decision": "revise", "notes": "Make it energetic."},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "needs_user_review")
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
@@ -386,6 +426,96 @@ class ShortVideoProductionTests(unittest.TestCase):
             )
 
 
+def _provider_asset_plan(selected_ratio: str = "9:16") -> ShortVideoAssetPlan:
+    return ShortVideoAssetPlan(
+        selected_ratio=selected_ratio,  # type: ignore[arg-type]
+        duration_seconds=8,
+        shot_plan=ShortVideoShotPlan(
+            visual_prompt="Show a polished product ad.",
+            voiceover_text="Meet the product.",
+        ),
+    )
+
+
+class ShortVideoProviderRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_veo_tts_runtime_writes_provider_outputs(self) -> None:
+        provider = VeoTtsProviderRuntime()
+        asset_plan = _provider_asset_plan()
+        settings = ShortVideoRenderSettings(aspect_ratio="9:16", width=720, height=1280)
+        owner_ref = ProductionOwnerRef(channel="cli", chat_id="terminal", sender_id="user-1")
+        video_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"video-bytes",
+                "provider": "veo",
+                "model_name": "veo-3.1-generate-preview",
+            }
+        )
+        tts_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"audio-bytes",
+                "provider": "bytedance_tts",
+                "model_name": "seed-tts-1.0",
+                "speaker": "zh_female",
+                "log_id": "log-1",
+            }
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            session_root = Path(tmpdir)
+            with (
+                patch(
+                    "src.production.short_video.providers.video_tools.veo_video_generation_tool",
+                    video_mock,
+                ),
+                patch(
+                    "src.production.short_video.providers.speech_tools.speech_synthesis_tool",
+                    tts_mock,
+                ),
+            ):
+                video_asset = await provider.generate_video_clip(
+                    session_root=session_root,
+                    asset_plan=asset_plan,
+                    render_settings=settings,
+                    reference_assets=[],
+                    owner_ref=owner_ref,
+                )
+                audio_asset = await provider.synthesize_voiceover(
+                    session_root=session_root,
+                    asset_plan=asset_plan,
+                    render_settings=settings,
+                    owner_ref=owner_ref,
+                )
+
+            self.assertEqual(resolve_workspace_path(video_asset.path).read_bytes(), b"video-bytes")
+            self.assertEqual(resolve_workspace_path(audio_asset.path).read_bytes(), b"audio-bytes")
+            self.assertEqual(video_asset.provider, "veo")
+            self.assertEqual(audio_asset.provider, "bytedance_tts")
+            self.assertEqual(video_asset.metadata["model_name"], "veo-3.1-generate-preview")
+            self.assertEqual(audio_asset.metadata["speaker"], "zh_female")
+            self.assertEqual(video_mock.await_args.kwargs["aspect_ratio"], "9:16")
+            self.assertEqual(video_mock.await_args.kwargs["duration_seconds"], 8)
+            self.assertEqual(video_mock.await_args.kwargs["mode"], "prompt")
+            self.assertEqual(tts_mock.await_args.kwargs["user_id"], "user-1")
+            self.assertEqual(tts_mock.await_args.kwargs["text"], "Meet the product.")
+
+    async def test_veo_tts_runtime_rejects_square_ratio_before_provider_call(self) -> None:
+        provider = VeoTtsProviderRuntime()
+        asset_plan = _provider_asset_plan(selected_ratio="1:1")
+        settings = ShortVideoRenderSettings(aspect_ratio="1:1", width=1024, height=1024)
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            with self.assertRaisesRegex(ShortVideoProviderError, "16:9 or 9:16"):
+                await provider.generate_video_clip(
+                    session_root=Path(tmpdir),
+                    asset_plan=asset_plan,
+                    render_settings=settings,
+                    reference_assets=[],
+                    owner_ref=ProductionOwnerRef(sender_id="user-1"),
+                )
+
+
 class ShortVideoProductionAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_tool_requires_context(self) -> None:
         result = await run_short_video_production(action="start", placeholder_assets=True)
@@ -401,13 +531,13 @@ class ShortVideoProductionFfmpegTests(unittest.TestCase):
         state["sid"] = "session_short_video_ffmpeg_test"
         manager = ShortVideoProductionManager()
 
-        result = manager.start(
+        result = asyncio.run(manager.start(
             user_prompt="make a real placeholder video",
             input_files=[],
             placeholder_assets=True,
             render_settings={"aspect_ratio": "1:1", "duration_seconds": 1},
             adk_state=state,
-        )
+        ))
 
         self.assertEqual(result.status, "completed")
         final_path = resolve_workspace_path(result.artifacts[0].path)

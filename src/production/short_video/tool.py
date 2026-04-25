@@ -39,7 +39,7 @@ async def run_short_video_production(
     )
     manager = ShortVideoProductionManager()
     if action == "start":
-        result = manager.start(
+        result = await manager.start(
             user_prompt=user_prompt,
             input_files=resolved_input_files,
             placeholder_assets=placeholder_assets,
@@ -47,12 +47,12 @@ async def run_short_video_production(
             adk_state=state,
         )
     elif action == "status":
-        result = manager.status(
+        result = await manager.status(
             production_session_id=production_session_id,
             adk_state=state,
         )
     elif action == "resume":
-        result = manager.resume(
+        result = await manager.resume(
             production_session_id=production_session_id,
             user_response=user_response,
             adk_state=state,
@@ -67,4 +67,3 @@ async def run_short_video_production(
             message=f"Unsupported short-video production action: {action}",
         )
     return result.model_dump(mode="json")
-
