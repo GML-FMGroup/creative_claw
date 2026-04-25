@@ -377,6 +377,92 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
         self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
 
+    def test_manager_add_reference_assets_marks_outputs_stale_without_duplicate_projection(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+        generated_count = len(state["generated"])
+        files_history_count = len(state["files_history"])
+        final_file_paths = list(state["final_file_paths"])
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            reference_path = Path(tmpdir) / "new_product.png"
+            reference_path.write_bytes(b"new-reference")
+            result = asyncio.run(manager.add_reference_assets(
+                production_session_id=completed.production_session_id,
+                input_files=[
+                    {
+                        "name": "new_product.png",
+                        "path": workspace_relative_path(reference_path),
+                        "description": "new product angle",
+                    }
+                ],
+                user_response=None,
+                adk_state=state,
+            ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertEqual(state["active_production_status"], "needs_user_review")
+        self.assertEqual(len(state["generated"]), generated_count)
+        self.assertEqual(len(state["files_history"]), files_history_count)
+        self.assertEqual(state["final_file_paths"], final_file_paths)
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_manifest"][0]["status"], "stale")
+        self.assertEqual(state_payload["audio_manifest"][0]["status"], "stale")
+        self.assertIsNone(state_payload["timeline"])
+        self.assertEqual(state_payload["asset_plan"]["status"], "draft")
+        self.assertEqual(len(state_payload["asset_plan"]["reference_asset_ids"]), 1)
+        self.assertIn("stale", state_payload["artifacts"][0]["description"].lower())
+
+    def test_manager_add_reference_assets_can_replace_existing_reference(self) -> None:
+        state = _adk_state()
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            old_path = Path(tmpdir) / "old_product.png"
+            new_path = Path(tmpdir) / "new_product.png"
+            old_path.write_bytes(b"old-reference")
+            new_path.write_bytes(b"new-reference")
+            manager = ShortVideoProductionManager()
+            started = asyncio.run(manager.start(
+                user_prompt="make a product ad",
+                input_files=[{"name": "old_product.png", "path": workspace_relative_path(old_path)}],
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "9:16"},
+                adk_state=state,
+            ))
+            old_reference_id = started.view.get("asset_plan", {}).get("reference_asset_ids", [])
+            if not old_reference_id:
+                state_payload = json.loads(resolve_workspace_path(started.state_ref or "").read_text(encoding="utf-8"))
+                old_reference_id = state_payload["asset_plan"]["reference_asset_ids"]
+
+            result = asyncio.run(manager.add_reference_assets(
+                production_session_id=started.production_session_id,
+                input_files=[{"name": "new_product.png", "path": workspace_relative_path(new_path)}],
+                user_response={"replace_reference_asset_id": old_reference_id[0]},
+                adk_state=state,
+            ))
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        references = state_payload["reference_assets"]
+        self.assertEqual(references[0]["status"], "replaced")
+        self.assertEqual(references[0]["replaced_by"], references[1]["reference_asset_id"])
+        self.assertEqual(state_payload["asset_plan"]["reference_asset_ids"], [references[1]["reference_asset_id"]])
+
     def test_manager_resume_approve_uses_default_veo_tts_runtime(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(
@@ -509,6 +595,42 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(result["production_session_id"], started["production_session_id"])
         self.assertEqual(result["view"]["view_type"], "overview")
         self.assertEqual(result["view"]["counts"]["events"], 2)
+
+    def test_tool_add_reference_assets_uses_uploaded_files(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            upload_path = Path(tmpdir) / "product.png"
+            upload_path.write_bytes(b"fake-upload")
+            state = _adk_state()
+            tool_context = SimpleNamespace(state=state)
+            started = asyncio.run(
+                run_short_video_production(
+                    action="start",
+                    user_prompt="make a product ad",
+                    placeholder_assets=False,
+                    render_settings={"aspect_ratio": "9:16"},
+                    tool_context=tool_context,
+                )
+            )
+            state["uploaded"] = [
+                {
+                    "name": "product.png",
+                    "path": workspace_relative_path(upload_path),
+                    "description": "product reference",
+                    "source": "channel",
+                }
+            ]
+            result = asyncio.run(
+                run_short_video_production(
+                    action="add_reference_assets",
+                    production_session_id=started["production_session_id"],
+                    tool_context=tool_context,
+                )
+            )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["review_payload"]["review_type"], "asset_plan_review")
+        reference_item = next(item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets")
+        self.assertEqual(reference_item["count"], 1)
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()

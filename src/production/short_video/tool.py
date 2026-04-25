@@ -11,7 +11,7 @@ from src.production.short_video.manager import ShortVideoProductionManager
 
 
 async def run_short_video_production(
-    action: Literal["start", "status", "resume", "view"],
+    action: Literal["start", "status", "resume", "view", "add_reference_assets"],
     user_prompt: str = "",
     production_session_id: str | None = None,
     view_type: Literal["overview", "brief", "asset_plan", "timeline", "events", "artifacts"] = "overview",
@@ -24,14 +24,14 @@ async def run_short_video_production(
     """Run, inspect, resume, or view a short-video production task.
 
     Args:
-        action: Use start, status, resume, or view.
+        action: Use start, status, resume, view, or add_reference_assets.
         user_prompt: User's short-video brief when starting production.
         production_session_id: Existing production session id for status, resume, or view.
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
         input_files: Optional workspace file records to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
         render_settings: Optional aspect ratio, duration, fps, width, and height settings.
-        user_response: User decision payload for resume.
+        user_response: User decision payload for resume, or replacement details for add_reference_assets.
     """
     if tool_context is None:
         return ProductionRunResult(
@@ -73,6 +73,13 @@ async def run_short_video_production(
         result = await manager.view(
             production_session_id=production_session_id,
             view_type=view_type,
+            adk_state=state,
+        )
+    elif action == "add_reference_assets":
+        result = await manager.add_reference_assets(
+            production_session_id=production_session_id,
+            input_files=resolved_input_files,
+            user_response=user_response,
             adk_state=state,
         )
     else:

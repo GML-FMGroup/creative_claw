@@ -278,6 +278,120 @@ class ShortVideoProductionManager:
             view=_build_production_view(state, normalized_view_type),
         )
 
+    async def add_reference_assets(
+        self,
+        *,
+        production_session_id: str | None,
+        input_files: list[dict[str, Any]],
+        user_response: dict[str, Any] | None,
+        adk_state,
+    ) -> ProductionRunResult:
+        """Add or replace user reference assets in an existing production session."""
+        context = _context_from_adk_state(adk_state)
+        session_id = _resolve_requested_session_id(production_session_id, adk_state)
+        try:
+            state = self.store.load_state(
+                production_session_id=session_id,
+                adk_session_id=context["sid"],
+                owner_ref=context["owner_ref"],
+                state_type=ShortVideoProductionState,
+            )
+        except ProductionSessionNotFoundError:
+            return ProductionRunResult(
+                status="failed",
+                capability=self.capability,
+                production_session_id=session_id or "",
+                stage="not_found",
+                progress_percent=0,
+                message="Production session was not found or is not owned by this conversation.",
+                error=ProductionErrorInfo(
+                    code="production_session_not_found_or_not_owned",
+                    message="Production session was not found or is not owned by this conversation.",
+                ),
+            )
+
+        new_references = _reference_assets_from_input_files(
+            input_files=input_files,
+            turn_index=context["turn_index"],
+        )
+        if not new_references:
+            return self._result_from_state(
+                state,
+                message="No valid reference assets were provided.",
+                error=ProductionErrorInfo(
+                    code="invalid_input",
+                    message="No valid reference assets were provided.",
+                ),
+            )
+
+        response = user_response or {}
+        replace_reference_id = _replacement_reference_id(response)
+        replaced_reference_ids: list[str] = []
+        if replace_reference_id:
+            replaced_reference_ids = _mark_reference_replaced(
+                state,
+                replace_reference_id=replace_reference_id,
+                replacement_reference_id=new_references[0].reference_asset_id,
+            )
+            if not replaced_reference_ids:
+                return self._result_from_state(
+                    state,
+                    message=f"Reference asset to replace was not found: {replace_reference_id}.",
+                    error=ProductionErrorInfo(
+                        code="reference_asset_not_found",
+                        message=f"Reference asset to replace was not found: {replace_reference_id}.",
+                    ),
+                )
+
+        state.reference_assets.extend(new_references)
+        reason = "Reference assets changed; dependent production outputs need review."
+        _mark_generated_outputs_stale(state, reason=reason)
+        selected_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
+        duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
+        state.asset_plan = _build_product_ad_asset_plan(
+            user_prompt=state.brief_summary,
+            reference_assets=_valid_reference_assets(state),
+            selected_ratio=selected_ratio,
+            duration_seconds=duration_seconds,
+        )
+        state.status = "needs_user_review"
+        state.stage = "asset_plan_review"
+        state.progress_percent = max(state.progress_percent, 20)
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_asset_plan_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="reference_assets_added",
+                stage=state.stage,
+                message="Added reference assets and invalidated dependent short-video outputs.",
+                metadata={
+                    "added_reference_asset_ids": [
+                        item.reference_asset_id for item in new_references
+                    ],
+                    "replaced_reference_asset_ids": replaced_reference_ids,
+                    "impacted": [
+                        "asset_plan",
+                        "asset_manifest",
+                        "audio_manifest",
+                        "timeline",
+                        "artifacts",
+                    ],
+                },
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message=(
+                f"Added {len(new_references)} reference asset(s). "
+                "The asset plan is ready for review again."
+            ),
+        )
+
     async def resume(
         self,
         *,
@@ -891,6 +1005,54 @@ def _build_voiceover_text(brief: str) -> str:
     if len(cleaned) <= 180:
         return cleaned
     return f"{cleaned[:177].rstrip()}..."
+
+
+def _valid_reference_assets(state: ShortVideoProductionState) -> list[ReferenceAssetEntry]:
+    return [item for item in state.reference_assets if item.status == "valid"]
+
+
+def _replacement_reference_id(response: dict[str, Any]) -> str:
+    for key in ("replace_reference_asset_id", "replace_reference_id", "replaces"):
+        value = str(response.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _mark_reference_replaced(
+    state: ShortVideoProductionState,
+    *,
+    replace_reference_id: str,
+    replacement_reference_id: str,
+) -> list[str]:
+    replaced: list[str] = []
+    for reference in state.reference_assets:
+        if reference.reference_asset_id == replace_reference_id and reference.status == "valid":
+            reference.status = "replaced"
+            reference.replaced_by = replacement_reference_id
+            replaced.append(reference.reference_asset_id)
+    return replaced
+
+
+def _mark_generated_outputs_stale(
+    state: ShortVideoProductionState,
+    *,
+    reason: str,
+) -> None:
+    for asset in state.asset_manifest:
+        if asset.status == "valid":
+            asset.status = "stale"
+            asset.stale_reason = reason
+    for audio in state.audio_manifest:
+        if audio.status == "valid":
+            audio.status = "stale"
+            audio.stale_reason = reason
+    for artifact in state.artifacts:
+        if "stale" not in artifact.description.lower():
+            artifact.description = f"{artifact.description} May be stale after reference asset changes.".strip()
+    state.timeline = None
+    state.render_report = None
+    state.render_validation_report = None
 
 
 def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayload:

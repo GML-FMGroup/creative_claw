@@ -46,3 +46,14 @@ def project_final_artifacts_to_adk_state(
     state["active_production_status"] = production_state.status
     return file_records
 
+
+def project_production_pointer_to_adk_state(
+    state: MutableMapping[str, object],
+    *,
+    production_state: ProductionState,
+) -> None:
+    """Project only active production pointers into ADK session state."""
+    state["active_production_session_id"] = production_state.production_session.production_session_id
+    state["active_production_capability"] = production_state.production_session.capability
+    state["active_production_stage"] = production_state.stage
+    state["active_production_status"] = production_state.status

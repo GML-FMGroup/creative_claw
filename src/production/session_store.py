@@ -17,7 +17,10 @@ from src.production.models import (
     new_id,
     utc_now_iso,
 )
-from src.production.projection import project_final_artifacts_to_adk_state
+from src.production.projection import (
+    project_final_artifacts_to_adk_state,
+    project_production_pointer_to_adk_state,
+)
 from src.runtime.workspace import generated_session_dir, resolve_workspace_path, workspace_relative_path
 
 
@@ -115,6 +118,10 @@ class ProductionSessionStore:
         """Project final artifacts and active production pointers to ADK session state."""
         return project_final_artifacts_to_adk_state(adk_state, production_state=production_state)
 
+    def project_pointer_to_adk_state(self, adk_state, production_state: ProductionState) -> None:
+        """Project only active production pointers to ADK session state."""
+        project_production_pointer_to_adk_state(adk_state, production_state=production_state)
+
     def _load_index(self, adk_session_id: str) -> list[ProductionSessionIndexEntry]:
         path = self.index_path(adk_session_id)
         if not path.exists():
@@ -178,4 +185,3 @@ class ProductionSessionStore:
                 return entry
             break
         raise ProductionSessionNotFoundError("production_session_not_found_or_not_owned")
-

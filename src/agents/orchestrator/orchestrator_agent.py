@@ -437,6 +437,7 @@ Rules:
 - For short-video production workflows that need durable state, review/resume, generated artifacts, or future iteration, use `run_short_video_production` instead of manually chaining video experts in the orchestrator.
 - Current short-video production supports P0a placeholder rendering, P0b asset-plan review, and read-only production views. Use `action="start"` with `placeholder_assets=true` when validating the production framework. For product-ad generation planning, use `action="start"` with `placeholder_assets=false`; wait for `needs_user_review` and call `action="resume"` only after the user approves or revises the plan.
 - Use `run_short_video_production(action="view", view_type=...)` when the user asks where production is, what the brief/asset plan/timeline/events/artifacts are, or what generated files belong to the current production session.
+- Use `run_short_video_production(action="add_reference_assets", input_files=...)` when the user adds or replaces product/person/style reference images for the current short-video production. This keeps the same production session and returns to asset-plan review.
 - Do not manually call video/TTS experts for product-ad production before the production tool has returned an approved review state.
 - When `run_short_video_production` returns completed artifacts, include those artifact paths in `final_file_paths`.
 - All file paths must be relative to the fixed `workspace` directory unless the tool explicitly returns a workspace-relative path.
@@ -1279,7 +1280,7 @@ Expert parameter contracts:
         user_response: dict[str, Any] | None = None,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        """Run, inspect, resume, or view a short-video production task."""
+        """Run, inspect, resume, view, or update references for short-video production."""
         return await self._run_async_tool_with_events(
             tool_context=tool_context,
             tool_name="run_short_video_production",
