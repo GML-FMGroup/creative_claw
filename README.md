@@ -18,6 +18,7 @@ No more jumping back and forth between different tools.
 With CreativeClaw, you can keep iterating around a single idea and move from inspiration to final output in one flow.
 
 ## 📰 News
+ - 2026-04-26: Documented the current LLM/orchestrator tool surface, short-video production tool, and Seedance 2.0 / 2.0 fast video generation support.
  - 2026-04-21: Added Kling video provider integration, including text-to-video, image-to-video, multi-reference video generation, gateway probing, and updated docs.
  - 2026-04-20: Expanded Veo video generation support.
  - 2026-04-14: Added HY 3D support, merged image-to-prompt into image understanding, and introduced 5 new experts across text, video, speech, and music.
@@ -49,29 +50,31 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ### 🖼️ Image Generation
 
-- Nano Banana Pro (Gemini 3.1 Flash Image Preview)
-- Seedream 5.0
-- GPT Image 2
+- Nano Banana Pro (`gemini-3.1-flash-image-preview`)
+- Seedream 5.0 (`doubao-seedream-5-0-260128`)
+- GPT Image 2 (`gpt-image-2`)
 
 ### 🎬 Video Generation
 
-- Seedance 2.0 / Seedance 2.0 fast
-- Veo 3.1
-- Kling 3 (`multi_reference` currently uses Kling 1.6)
+- Seedance 2.0 (`doubao-seedance-2-0-260128`, default) and Seedance 2.0 fast (`doubao-seedance-2-0-fast-260128`)
+- Seedance 1.0 Pro (`doubao-seedance-1-0-pro-250528`, legacy-compatible)
+- Veo 3.1 (`veo-3.1-generate-preview`)
+- Kling 3 (`kling-v3`; `multi_reference` currently uses `kling-v1-6`)
 
 ### 📦 3D Generation
- - HY 3D 3.0
+ - HY 3D (`3.0`, `3.1`)
 
 ### 🔊 Speech Synthesis
 
-- Volcengine streaming TTS API
+- ByteDance / Volcengine streaming TTS (`seed-tts-1.0`)
 
 ### 🎵 Music Generation
 
-- MiniMax Music Generation API
+- MiniMax Music Generation API (`music-2.5`)
 
 ### 🎤 Speech Recognition
- - Volcengine
+ - Volcengine BigASR Flash (`volc.bigasr.auc_turbo`)
+ - Volcengine subtitle generation and alignment (`vc.async.default`, `volc.ata.default`)
 
 
 ## 🚀 Quick Start
@@ -124,6 +127,8 @@ Notes:
 
 - This is enough to try the default CLI chat flow.
 - Image, video, search, and some provider-specific capabilities only need extra credentials when you actually use them.
+- `VideoGenerationAgent` provider `seedance` now defaults to `doubao-seedance-2-0-260128`. For faster generation use `model_name="doubao-seedance-2-0-fast-260128"` and keep `resolution` at `720p`; legacy `model_name="doubao-seedance-1-0-pro-250528"` remains accepted.
+- For exact dialogue or native generated audio with Seedance 2.0, use `provider="seedance"`, `generate_audio=true`, and `prompt_rewrite="off"` so quoted dialogue is preserved.
 - For `VideoGenerationAgent` with `provider="kling"`, prompt and image-guided routes now default to `kling-v3`, while `mode="multi_reference"` follows the official `kling-v1-6` schema.
 - If `services.kling_api_base` or `KLING_API_BASE` is not set explicitly, the built-in Kling provider probes the official Beijing and Singapore gateways and caches the first working base.
 - Kling image-guided routes validate the documented input constraints but do not auto-resize or auto-crop input images. If preprocessing is needed, do it first with local image tools before calling `VideoGenerationAgent`.
@@ -190,6 +195,23 @@ Inside the chat, use:
 
 - `/help`
 - `/new`
+
+## 🧰 Built-in Tools and Expert Tools
+
+The main LLM orchestrator can call these tool groups directly:
+
+- **Workspace file tools**: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`.
+- **Deterministic media tools**: `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`.
+- **Runtime and web tools**: `exec_command`, `process_session`, `web_search`, `web_fetch`, `list_session_files`.
+- **Production tool**: `run_short_video_production` for durable short-video P0 flows with plan review, revision, reference asset updates, and final artifact tracking.
+- **Expert dispatch**: `invoke_agent` routes structured requests to expert agents such as `ImageGenerationAgent`, `ImageEditingAgent`, `ImageUnderstandingAgent`, `VideoGenerationAgent`, `SpeechRecognitionExpert`, `SpeechSynthesisExpert`, `MusicGenerationExpert`, and `3DGeneration`.
+
+`VideoGenerationAgent` currently exposes these provider-aware tool parameters:
+
+- Common controls: `provider`, `mode`, `prompt_rewrite`, `aspect_ratio`, `resolution`, `duration_seconds`, `negative_prompt`, `seed`, and optional `input_path` / `input_paths`.
+- `seedance`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, `reference_style`; model ids `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128`, `doubao-seedance-1-0-pro-250528`; extra controls `generate_audio` and `watermark`.
+- `veo`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, `reference_style`, `video_extension`; model id `veo-3.1-generate-preview`; extra control `person_generation`.
+- `kling`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `multi_reference`; model ids `kling-v3` and `kling-v1-6` for `multi_reference`; extra control `kling_mode` (`std` or `pro`).
 
 ## 🌐 Supported Channels
 
