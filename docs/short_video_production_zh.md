@@ -173,4 +173,24 @@ creative-claw chat feishu
 
 如果真实模型输出质量不稳定，优先调 storyboard、资产计划中的 `visual_prompt` 和原生音频指令，不要绕回“视频 + 单独 TTS 解说”的默认链路。
 
+## Prompt 调优入口
+
+短视频生产里会反复优化的 provider prompt 已经独立为 Markdown 模板，位置在：
+
+```text
+src/production/short_video/prompts/
+```
+
+当前主要模板包括：
+
+- `product_ad_visual.md`：产品广告视觉 prompt。
+- `cartoon_short_drama_visual.md`：卡通短剧视觉 prompt。
+- `social_media_visual.md`：社交媒体短片视觉 prompt。
+- `native_audio_dialogue.md`：有明确角色对白时的 Seedance 原生音频指令。
+- `native_audio_scene.md`：没有明确对白时的场景音频指令。
+- `storyboard_instruction.md`：把已确认 storyboard 注入 provider prompt 的模板。
+- `shot_segment_visual.md`：单个分段生成时的 provider prompt 包装模板。
+
+这些文件适合承载可反复调参的创意策略。状态机、provider 参数校验、文件路径处理、stale / 重生成规则仍然保留在 Python 代码里，避免 prompt 修改破坏生产流程。
+
 P0 收口状态见 [short_video_p0_completion_zh.md](short_video_p0_completion_zh.md)。

@@ -46,6 +46,7 @@ from src.production.short_video.models import (
 )
 from src.production.short_video.impact import build_revision_impact_view
 from src.production.short_video.placeholders import PlaceholderAssetFactory
+from src.production.short_video.prompt_catalog import render_prompt_template
 from src.production.short_video.providers import (
     RoutedShortVideoProviderRuntime,
     ShortVideoProviderError,
@@ -2180,13 +2181,14 @@ def _build_product_ad_visual_prompt(
         if reference_assets
         else "No product reference image is available; infer visual identity from the brief."
     )
-    return (
-        "Create a concise product advertising short video. "
-        f"Brief: {brief}. "
-        f"{reference_note} "
-        f"{storyboard_instruction}"
-        "Keep the product clear, readable, and central. Use polished lighting, simple motion, "
-        f"and social-ad pacing. {_build_native_audio_instruction(brief)}"
+    return render_prompt_template(
+        "product_ad_visual",
+        {
+            "brief": brief,
+            "reference_note": reference_note,
+            "storyboard_instruction": storyboard_instruction,
+            "native_audio_instruction": _build_native_audio_instruction(brief),
+        },
     )
 
 
@@ -2200,14 +2202,14 @@ def _build_cartoon_short_drama_visual_prompt(
         if reference_assets
         else "Infer character and style identity from the brief."
     )
-    return (
-        "Create a concise single-shot cartoon short-drama video for P0 validation. "
-        f"Brief: {brief}. "
-        f"{reference_note} "
-        f"{storyboard_instruction}"
-        "Emphasize clear character action, readable emotion, light comedic timing, "
-        f"and a simple visual beat that can later expand into multi-shot storyboards. "
-        f"{_build_native_audio_instruction(brief)}"
+    return render_prompt_template(
+        "cartoon_short_drama_visual",
+        {
+            "brief": brief,
+            "reference_note": reference_note,
+            "storyboard_instruction": storyboard_instruction,
+            "native_audio_instruction": _build_native_audio_instruction(brief),
+        },
     )
 
 
@@ -2221,13 +2223,14 @@ def _build_social_media_visual_prompt(
         if reference_assets
         else "Infer the visual identity from the brief."
     )
-    return (
-        "Create a concise single-shot social media short video for P0 validation. "
-        f"Brief: {brief}. "
-        f"{reference_note} "
-        f"{storyboard_instruction}"
-        "Use a strong opening visual hook, fast readable motion, platform-friendly framing, "
-        f"and clear subject focus suitable for short-form feeds. {_build_native_audio_instruction(brief)}"
+    return render_prompt_template(
+        "social_media_visual",
+        {
+            "brief": brief,
+            "reference_note": reference_note,
+            "storyboard_instruction": storyboard_instruction,
+            "native_audio_instruction": _build_native_audio_instruction(brief),
+        },
     )
 
 
@@ -2243,13 +2246,16 @@ def _storyboard_prompt_instruction(storyboard: ShortVideoStoryboard | None) -> s
             f"Shot {shot.sequence_index}: {shot.purpose}. Visual: {shot.visual_beat}.{dialogue}{constraints}"
         )
     global_constraints = (
-        f" Global constraints: {'; '.join(storyboard.global_constraints)}."
+        f"Global constraints: {'; '.join(storyboard.global_constraints)}."
         if storyboard.global_constraints
         else ""
     )
-    return (
-        "Follow this approved storyboard as a compact multi-beat structure inside the generated clip: "
-        f"{' '.join(shot_summaries)}.{global_constraints} "
+    return render_prompt_template(
+        "storyboard_instruction",
+        {
+            "shot_summaries": " ".join(shot_summaries),
+            "global_constraints": global_constraints,
+        },
     )
 
 
@@ -2262,16 +2268,18 @@ def _build_native_audio_instruction(brief: str) -> str:
         else "Do not add subtitles unless the brief explicitly asks for them."
     )
     if dialogue_lines:
-        return (
-            "Native audio instructions: generate synchronized character voices, sound effects, "
-            "and timing directly in the video. Spoken dialogue to generate exactly, with no "
-            f"narrator reading the task description: {'; '.join(dialogue_lines)}. "
-            f"{subtitle_note} Honor any requested voice style in the brief."
+        return render_prompt_template(
+            "native_audio_dialogue",
+            {
+                "dialogue_lines": "; ".join(dialogue_lines),
+                "subtitle_note": subtitle_note,
+            },
         )
-    return (
-        "Native audio instructions: generate synchronized audio that matches the scene, "
-        "including voices, sound effects, and music if requested. Do not read the task "
-        f"description as narration unless the brief explicitly asks for narration. {subtitle_note}"
+    return render_prompt_template(
+        "native_audio_scene",
+        {
+            "subtitle_note": subtitle_note,
+        },
     )
 
 
@@ -3062,15 +3070,19 @@ def _shot_segment_visual_prompt(
             f"Storyboard shot {shot.sequence_index}: {shot.purpose}. Visual: {shot.visual_beat}.{dialogue}{constraints}"
         )
     global_constraints = (
-        f" Global constraints: {'; '.join(storyboard.global_constraints)}."
+        f"Global constraints: {'; '.join(storyboard.global_constraints)}."
         if storyboard.global_constraints
         else ""
     )
-    return (
-        f"Generate provider segment {segment_index} for the approved short-video storyboard. "
-        f"This segment covers storyboard shots {', '.join(str(shot.sequence_index) for shot in shots)}. "
-        f"{' '.join(shot_parts)}{global_constraints} "
-        f"Keep style and continuity aligned with the full asset plan: {asset_plan.shot_plan.visual_prompt}"
+    return render_prompt_template(
+        "shot_segment_visual",
+        {
+            "segment_index": segment_index,
+            "covered_shots": ", ".join(str(shot.sequence_index) for shot in shots),
+            "shot_parts": " ".join(shot_parts),
+            "global_constraints": global_constraints,
+            "full_asset_plan_prompt": asset_plan.shot_plan.visual_prompt,
+        },
     )
 
 

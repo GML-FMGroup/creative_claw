@@ -8,7 +8,12 @@ packages = [
     { include = "src" },
     { include = "conf" },
 ]
-include = ["conf/jsons/*.json", "skills/**/*", "src/webchat/static/**/*"]
+include = [
+    "conf/jsons/*.json",
+    "skills/**/*",
+    "src/production/short_video/prompts/*.md",
+    "src/webchat/static/**/*",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
