@@ -41,6 +41,13 @@
           "rubric_content": {
             "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, scopes targeted shot_asset_plan or shot_artifact revisions to the impacted segment when possible, and does not call resume or raw generation tools until the updated storyboard, asset plan, or generated shot segment is reviewed and approved."
           }
+        },
+        {
+          "rubric_id": "short_video_preserves_explicit_provider_choice",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user explicitly asks for Seedance 2.0 fast or Veo+TTS, the agent passes the provider and model/runtime choice into run_short_video_production render_settings, keeps the normal review gates, and does not silently switch to another provider after a failure."
+          }
         }
       ]
     }

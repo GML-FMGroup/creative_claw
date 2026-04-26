@@ -20,6 +20,7 @@ from src.production.short_video.models import (
     ShortVideoShotPlan,
 )
 from src.production.short_video.providers import (
+    RoutedShortVideoProviderRuntime,
     SeedanceNativeAudioProviderRuntime,
     ShortVideoProviderError,
     VeoTtsProviderRuntime,
@@ -502,6 +503,58 @@ class ShortVideoProductionTests(unittest.TestCase):
         providers_item = next(item for item in result.review_payload.model_dump(mode="json")["items"] if item["kind"] == "providers")
         self.assertEqual(providers_item["planned_video_model_name"], "doubao-seedance-2-0-fast-260128")
         self.assertEqual(providers_item["planned_video_resolution"], "720p")
+
+    def test_manager_start_accepts_veo_tts_runtime_settings(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="make a Veo product ad with separate TTS",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={
+                "provider": "veo_tts",
+                "aspect_ratio": "1:1",
+                "duration_seconds": 8,
+            },
+            adk_state=state,
+        ))
+        result = _approve_storyboard(
+            manager,
+            production_session_id=result.production_session_id,
+            adk_state=state,
+        )
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        asset_plan = state_payload["asset_plan"]
+        self.assertEqual(asset_plan["planned_video_provider"], "veo")
+        self.assertEqual(asset_plan["planned_video_model_name"], "veo-3.1-generate-preview")
+        self.assertEqual(asset_plan["planned_video_resolution"], "720p")
+        self.assertFalse(asset_plan["planned_generate_audio"])
+        self.assertTrue(asset_plan["planned_tts"])
+        self.assertEqual(asset_plan["planned_tts_provider"], "bytedance_tts")
+        self.assertEqual(asset_plan["ratio_options"], ["9:16", "16:9"])
+        self.assertIsNone(asset_plan["selected_ratio"])
+        providers_item = next(item for item in result.review_payload.model_dump(mode="json")["items"] if item["kind"] == "providers")
+        self.assertEqual(providers_item["planned_video_provider"], "veo")
+        self.assertEqual(providers_item["provider_label"], "Veo + ByteDance TTS")
+
+    def test_manager_start_rejects_unsupported_short_video_provider(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="make a short video with Kling",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"provider": "kling", "aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stage, "failed")
+        self.assertEqual(result.error.code, "short_video_start_failed")
+        self.assertIn("Unsupported short-video provider", result.error.message)
 
     def test_cartoon_dialogue_plan_preserves_character_lines_for_native_audio(self) -> None:
         state = _adk_state()
@@ -1426,6 +1479,71 @@ class ShortVideoProductionTests(unittest.TestCase):
         )
         self.assertEqual(completed.status, "completed")
 
+    def test_manager_resume_approve_uses_explicit_veo_tts_runtime(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a Veo+TTS product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={
+                "provider": "veo_tts",
+                "aspect_ratio": "9:16",
+                "duration_seconds": 8,
+            },
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        video_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"veo-video",
+                "provider": "veo",
+                "model_name": "veo-3.1-generate-preview",
+            }
+        )
+        tts_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"tts-audio",
+                "provider": "bytedance_tts",
+                "model_name": "seed-tts-1.0",
+                "speaker": "zh_female",
+                "log_id": "log-1",
+            }
+        )
+        seedance_mock = AsyncMock()
+
+        with (
+            patch("src.production.short_video.providers.video_tools.veo_video_generation_tool", video_mock),
+            patch("src.production.short_video.providers.speech_tools.speech_synthesis_tool", tts_mock),
+            patch("src.production.short_video.providers.video_tools.seedance_video_generation_tool", seedance_mock),
+        ):
+            result = asyncio.run(manager.resume(
+                production_session_id=asset_review.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "shot_review")
+        video_mock.assert_awaited_once()
+        tts_mock.assert_awaited_once()
+        seedance_mock.assert_not_awaited()
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_plan"]["planned_video_provider"], "veo")
+        self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
+        self.assertEqual(state_payload["audio_manifest"][0]["provider"], "bytedance_tts")
+        self.assertEqual(video_mock.await_args.kwargs["duration_seconds"], 8)
+        self.assertEqual(tts_mock.await_args.kwargs["text"], state_payload["shot_asset_plans"][0]["voiceover_text"])
+
     def test_manager_resume_cancel_marks_production_cancelled(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
@@ -1807,6 +1925,45 @@ def _provider_asset_plan(selected_ratio: str = "9:16") -> ShortVideoAssetPlan:
 
 
 class ShortVideoProviderRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_routed_provider_runtime_uses_selected_provider_without_fallback(self) -> None:
+        seedance_runtime = SimpleNamespace(
+            generate_video_clip=AsyncMock(return_value="seedance-video"),
+            synthesize_voiceover=AsyncMock(return_value="seedance-audio"),
+        )
+        veo_runtime = SimpleNamespace(
+            generate_video_clip=AsyncMock(return_value="veo-video"),
+            synthesize_voiceover=AsyncMock(return_value="veo-audio"),
+        )
+        provider = RoutedShortVideoProviderRuntime(
+            seedance_runtime=seedance_runtime,
+            veo_tts_runtime=veo_runtime,
+        )
+        asset_plan = _provider_asset_plan()
+        asset_plan.planned_video_provider = "veo"
+        settings = ShortVideoRenderSettings(aspect_ratio="9:16", width=720, height=1280)
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            video_result = await provider.generate_video_clip(
+                session_root=Path(tmpdir),
+                asset_plan=asset_plan,
+                render_settings=settings,
+                reference_assets=[],
+                owner_ref=ProductionOwnerRef(sender_id="user-1"),
+            )
+            audio_result = await provider.synthesize_voiceover(
+                session_root=Path(tmpdir),
+                asset_plan=asset_plan,
+                render_settings=settings,
+                owner_ref=ProductionOwnerRef(sender_id="user-1"),
+            )
+
+        self.assertEqual(video_result, "veo-video")
+        self.assertEqual(audio_result, "veo-audio")
+        veo_runtime.generate_video_clip.assert_awaited_once()
+        veo_runtime.synthesize_voiceover.assert_awaited_once()
+        seedance_runtime.generate_video_clip.assert_not_awaited()
+        seedance_runtime.synthesize_voiceover.assert_not_awaited()
+
     async def test_seedance_native_audio_runtime_writes_video_and_reuses_native_audio(self) -> None:
         provider = SeedanceNativeAudioProviderRuntime()
         asset_plan = _provider_asset_plan()

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.agents.experts.video_generation.capabilities import (
+    VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME,
+    VIDEO_GENERATION_VEO_MODEL_NAME,
     normalize_seedance_model_name,
     normalize_seedance_video_resolution,
 )
@@ -44,7 +46,7 @@ from src.production.short_video.models import (
 from src.production.short_video.impact import build_revision_impact_view
 from src.production.short_video.placeholders import PlaceholderAssetFactory
 from src.production.short_video.providers import (
-    SeedanceNativeAudioProviderRuntime,
+    RoutedShortVideoProviderRuntime,
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
 )
@@ -81,7 +83,7 @@ class ShortVideoProductionManager:
         """Initialize the short-video production manager."""
         self.store = store or ProductionSessionStore()
         self.placeholder_factory = placeholder_factory or PlaceholderAssetFactory()
-        self.provider_runtime = provider_runtime or SeedanceNativeAudioProviderRuntime()
+        self.provider_runtime = provider_runtime or RoutedShortVideoProviderRuntime()
         self.renderer = renderer or TimelineRenderer()
         self.validator = validator or RenderValidator()
 
@@ -562,7 +564,7 @@ class ShortVideoProductionManager:
             else (state.storyboard.selected_ratio if state.storyboard is not None else state.planning_context.get("selected_ratio"))
         )
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else _planning_duration_seconds(state)
-        current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
+        current_provider, current_model_name, current_resolution = _asset_plan_provider_settings(state.asset_plan)
         video_type = (
             state.asset_plan.video_type
             if state.asset_plan is not None
@@ -573,6 +575,7 @@ class ShortVideoProductionManager:
                 "selected_ratio": selected_ratio,
                 "duration_seconds": duration_seconds,
                 "video_type": video_type,
+                "video_provider": current_provider,
                 "video_model_name": current_model_name,
                 "video_resolution": current_resolution,
             }
@@ -757,8 +760,9 @@ class ShortVideoProductionManager:
     ) -> ProductionRunResult:
         """Create a P1a storyboard and pause before asset-plan generation."""
         duration_seconds = _duration_seconds(render_settings_payload, default=8.0)
-        video_model_name = _requested_seedance_model_name(render_settings_payload)
-        video_resolution = _requested_seedance_resolution(render_settings_payload, video_model_name)
+        video_provider = _requested_short_video_provider(render_settings_payload)
+        video_model_name = _requested_video_model_name(render_settings_payload, video_provider)
+        video_resolution = _requested_video_resolution(render_settings_payload, video_provider, video_model_name)
         video_type = _requested_video_type(user_prompt, render_settings_payload)
         selected_ratio = _explicit_aspect_ratio(render_settings_payload)
         state.planning_context = {
@@ -766,6 +770,7 @@ class ShortVideoProductionManager:
             "render_settings": dict(render_settings_payload),
             "duration_seconds": duration_seconds,
             "video_type": video_type,
+            "video_provider": video_provider,
             "video_model_name": video_model_name,
             "video_resolution": video_resolution,
             "selected_ratio": selected_ratio,
@@ -829,7 +834,7 @@ class ShortVideoProductionManager:
         state.storyboard.status = "approved"
         state.planning_context["selected_ratio"] = selected_ratio
         duration_seconds = _planning_duration_seconds(state)
-        video_model_name, video_resolution = _planning_seedance_settings(state)
+        video_provider, video_model_name, video_resolution = _planning_provider_settings(state)
         video_type = _planning_video_type(state)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=state.brief_summary,
@@ -837,6 +842,7 @@ class ShortVideoProductionManager:
             selected_ratio=selected_ratio,
             duration_seconds=duration_seconds,
             video_type=video_type,
+            video_provider=video_provider,
             video_model_name=video_model_name,
             video_resolution=video_resolution,
             storyboard=state.storyboard,
@@ -932,7 +938,7 @@ class ShortVideoProductionManager:
             state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
         current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else state.planning_context.get("selected_ratio")
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else _planning_duration_seconds(state)
-        current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
+        current_provider, current_model_name, current_resolution = _asset_plan_provider_settings(state.asset_plan)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
@@ -943,6 +949,7 @@ class ShortVideoProductionManager:
                 if state.asset_plan is not None
                 else _planning_video_type(state)
             ),
+            video_provider=current_provider,
             video_model_name=current_model_name,
             video_resolution=current_resolution,
             storyboard=state.storyboard,
@@ -983,14 +990,16 @@ class ShortVideoProductionManager:
     ) -> ProductionRunResult:
         """Create the P0 short-video asset plan and pause before provider calls."""
         duration_seconds = _duration_seconds(render_settings_payload, default=8.0)
-        video_model_name = _requested_seedance_model_name(render_settings_payload)
-        video_resolution = _requested_seedance_resolution(render_settings_payload, video_model_name)
+        video_provider = _requested_short_video_provider(render_settings_payload)
+        video_model_name = _requested_video_model_name(render_settings_payload, video_provider)
+        video_resolution = _requested_video_resolution(render_settings_payload, video_provider, video_model_name)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=user_prompt,
             reference_assets=state.reference_assets,
             selected_ratio=_explicit_aspect_ratio(render_settings_payload),
             duration_seconds=duration_seconds,
             video_type=_requested_video_type(user_prompt, render_settings_payload),
+            video_provider=video_provider,
             video_model_name=video_model_name,
             video_resolution=video_resolution,
         )
@@ -1045,7 +1054,8 @@ class ShortVideoProductionManager:
             )
 
         selected_ratio = _resume_selected_ratio(user_response, state.asset_plan.selected_ratio)
-        if selected_ratio is None:
+        ratio_options = list(state.asset_plan.ratio_options or ["9:16", "16:9", "1:1"])
+        if selected_ratio is None or selected_ratio not in ratio_options:
             state.status = "needs_user_review"
             state.stage = "asset_plan_review"
             state.progress_percent = max(state.progress_percent, 20)
@@ -1057,7 +1067,7 @@ class ShortVideoProductionManager:
                 ProductionEvent(
                     event_type="ratio_required",
                     stage=state.stage,
-                    message="A video aspect ratio must be selected before provider generation.",
+                    message="A supported video aspect ratio must be selected before provider generation.",
                     metadata={"user_response": user_response},
                 )
             )
@@ -1066,7 +1076,7 @@ class ShortVideoProductionManager:
             self.store.project_to_adk_state(adk_state, state)
             return self._result_from_state(
                 state,
-                message="Please choose one aspect ratio before approving generation: 9:16, 16:9, or 1:1.",
+                message=f"Please choose one supported aspect ratio before approving generation: {', '.join(ratio_options)}.",
             )
 
         state.asset_plan.selected_ratio = selected_ratio
@@ -2028,14 +2038,22 @@ def _build_short_video_asset_plan(
     selected_ratio: str | None,
     duration_seconds: float,
     video_type: str,
+    video_provider: str = "seedance",
     video_model_name: str | None = None,
     video_resolution: str | None = None,
     storyboard: ShortVideoStoryboard | None = None,
 ) -> ShortVideoAssetPlan:
     brief = _brief_summary(user_prompt)
     normalized_video_type = _normalize_video_type(video_type) or "product_ad"
-    normalized_model_name = normalize_seedance_model_name(video_model_name)
-    normalized_resolution = normalize_seedance_video_resolution(normalized_model_name, video_resolution)
+    normalized_provider = _normalize_short_video_provider(video_provider)
+    normalized_model_name = _normalize_short_video_model_name(normalized_provider, video_model_name)
+    normalized_resolution = _normalize_short_video_resolution(
+        normalized_provider,
+        normalized_model_name,
+        video_resolution,
+    )
+    ratio_options = _ratio_options_for_provider(normalized_provider)
+    effective_selected_ratio = selected_ratio if selected_ratio in ratio_options else None
     reference_asset_ids = [item.reference_asset_id for item in reference_assets]
     shot_plan = ShortVideoShotPlan(
         duration_seconds=duration_seconds,
@@ -2045,23 +2063,30 @@ def _build_short_video_asset_plan(
     )
     return ShortVideoAssetPlan(
         video_type=normalized_video_type,  # type: ignore[arg-type]
+        planned_video_provider=normalized_provider,  # type: ignore[arg-type]
         planned_video_model_name=normalized_model_name,
         planned_video_resolution=normalized_resolution,
-        selected_ratio=selected_ratio,  # type: ignore[arg-type]
+        planned_generate_audio=normalized_provider == "seedance",
+        planned_tts=normalized_provider == "veo",
+        planned_tts_provider="bytedance_tts" if normalized_provider == "veo" else "seedance_native_audio",
+        ratio_options=ratio_options,  # type: ignore[arg-type]
+        selected_ratio=effective_selected_ratio,  # type: ignore[arg-type]
         duration_seconds=duration_seconds,
         reference_asset_ids=reference_asset_ids,
         shot_plan=shot_plan,
     )
 
 
-def _asset_plan_seedance_settings(asset_plan: ShortVideoAssetPlan | None) -> tuple[str, str]:
-    """Return existing Seedance model settings from an asset plan, or normalized defaults."""
+def _asset_plan_provider_settings(asset_plan: ShortVideoAssetPlan | None) -> tuple[str, str, str]:
+    """Return existing provider settings from an asset plan, or normalized defaults."""
     if asset_plan is None:
-        model_name = normalize_seedance_model_name(None)
-        return model_name, normalize_seedance_video_resolution(model_name, None)
-    model_name = normalize_seedance_model_name(asset_plan.planned_video_model_name)
-    resolution = normalize_seedance_video_resolution(model_name, asset_plan.planned_video_resolution)
-    return model_name, resolution
+        provider = "seedance"
+        model_name = _normalize_short_video_model_name(provider, None)
+        return provider, model_name, _normalize_short_video_resolution(provider, model_name, None)
+    provider = _normalize_short_video_provider(asset_plan.planned_video_provider)
+    model_name = _normalize_short_video_model_name(provider, asset_plan.planned_video_model_name)
+    resolution = _normalize_short_video_resolution(provider, model_name, asset_plan.planned_video_resolution)
+    return provider, model_name, resolution
 
 
 def _build_visual_prompt(
@@ -2250,22 +2275,155 @@ def _requests_no_subtitles(brief: str) -> bool:
     return any(token in normalized for token in ("不用显示字幕", "不要字幕", "无字幕", "no subtitles", "no captions"))
 
 
-def _requested_seedance_model_name(payload: dict[str, Any]) -> str:
-    """Return the requested Seedance model name from render settings."""
-    for key in ("model_name", "seedance_model_name", "video_model_name"):
-        value = str(payload.get(key, "") or "").strip()
-        if value:
-            return normalize_seedance_model_name(value)
-    return normalize_seedance_model_name(None)
+def _requested_short_video_provider(payload: dict[str, Any]) -> str:
+    """Return the explicitly requested short-video provider or the default."""
+    provider_hint = _requested_provider_hint(payload)
+    if provider_hint:
+        return _normalize_short_video_provider(provider_hint, strict=True)
+    model_hint = _requested_model_hint(payload)
+    if model_hint == VIDEO_GENERATION_VEO_MODEL_NAME:
+        return "veo"
+    return "seedance"
 
 
-def _requested_seedance_resolution(payload: dict[str, Any], model_name: str) -> str:
-    """Return the requested Seedance resolution from render settings."""
+def _requested_video_model_name(payload: dict[str, Any], provider: str) -> str:
+    """Return the provider-specific video model requested by render settings."""
+    model_hint = _requested_model_hint(payload)
+    if model_hint:
+        return _normalize_short_video_model_name(provider, model_hint, strict=True)
+    provider_hint = _requested_provider_hint(payload)
+    if provider == "seedance" and provider_hint and "fast" in provider_hint:
+        return VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME
+    return _normalize_short_video_model_name(provider, None)
+
+
+def _requested_video_resolution(payload: dict[str, Any], provider: str, model_name: str) -> str:
+    """Return the provider-specific video resolution requested by render settings."""
     for key in ("resolution", "video_resolution", "seedance_resolution"):
         value = str(payload.get(key, "") or "").strip()
         if value:
-            return normalize_seedance_video_resolution(model_name, value)
-    return normalize_seedance_video_resolution(model_name, None)
+            return _normalize_short_video_resolution(
+                provider,
+                model_name,
+                value,
+                strict=_normalize_short_video_provider(provider) == "veo",
+            )
+    return _normalize_short_video_resolution(provider, model_name, None)
+
+
+def _requested_provider_hint(payload: dict[str, Any]) -> str:
+    """Return the raw provider/runtime hint from render settings."""
+    for key in ("provider", "video_provider", "runtime", "provider_runtime"):
+        value = str(payload.get(key, "") or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _requested_model_hint(payload: dict[str, Any]) -> str:
+    """Return the raw video model hint from render settings."""
+    for key in ("model_name", "seedance_model_name", "video_model_name"):
+        value = str(payload.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_short_video_provider(value: Any, *, strict: bool = False) -> str:
+    """Normalize short-video production provider names without silent fallback."""
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_").replace("+", "_")
+    aliases = {
+        "": "seedance",
+        "seedance": "seedance",
+        "seedance2": "seedance",
+        "seedance_2": "seedance",
+        "seedance_2_0": "seedance",
+        "seedance_fast": "seedance",
+        "seedance_2_fast": "seedance",
+        "seedance_2_0_fast": "seedance",
+        "seedance_native_audio": "seedance",
+        "doubao_seedance_2_0_260128": "seedance",
+        "doubao_seedance_2_0_fast_260128": "seedance",
+        "veo": "veo",
+        "veo_tts": "veo",
+        "veotts": "veo",
+        "veo3": "veo",
+        "veo_3": "veo",
+        "veo_3_1": "veo",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if strict:
+        raise ValueError(
+            "Unsupported short-video provider. Supported providers are seedance, seedance_fast, and veo_tts."
+        )
+    return "seedance"
+
+
+def _normalize_short_video_model_name(
+    provider: str,
+    value: Any,
+    *,
+    strict: bool = False,
+) -> str:
+    """Normalize a provider-specific model name without changing provider."""
+    normalized_provider = _normalize_short_video_provider(provider)
+    if normalized_provider == "veo":
+        model_name = str(value or "").strip()
+        if not model_name:
+            return VIDEO_GENERATION_VEO_MODEL_NAME
+        if model_name == VIDEO_GENERATION_VEO_MODEL_NAME:
+            return model_name
+        if strict:
+            raise ValueError(
+                f"Unsupported Veo model for short-video production: {model_name}. "
+                f"Supported model: {VIDEO_GENERATION_VEO_MODEL_NAME}."
+            )
+        return VIDEO_GENERATION_VEO_MODEL_NAME
+    if strict:
+        model_name = str(value or "").strip()
+        if model_name and normalize_seedance_model_name(model_name) != model_name:
+            raise ValueError(
+                f"Unsupported Seedance model for short-video production: {model_name}."
+            )
+    return normalize_seedance_model_name(value)
+
+
+def _normalize_short_video_resolution(
+    provider: str,
+    model_name: str,
+    value: Any,
+    *,
+    strict: bool = False,
+) -> str:
+    """Normalize provider-specific resolution settings."""
+    normalized_provider = _normalize_short_video_provider(provider)
+    resolution = str(value or "").strip()
+    if normalized_provider == "veo":
+        if not resolution:
+            return "720p"
+        if resolution == "720p":
+            return resolution
+        if strict:
+            raise ValueError(
+                f"Unsupported Veo+TTS resolution for short-video production: {resolution}. "
+                "The current compatible runtime supports 720p only."
+            )
+        return "720p"
+    if strict and resolution:
+        normalized = normalize_seedance_video_resolution(model_name, resolution)
+        if normalized != resolution:
+            raise ValueError(
+                f"Unsupported Seedance resolution for short-video production: {resolution}."
+            )
+    return normalize_seedance_video_resolution(model_name, resolution or None)
+
+
+def _ratio_options_for_provider(provider: str) -> list[str]:
+    """Return user-selectable aspect ratios for one short-video provider."""
+    if _normalize_short_video_provider(provider) == "veo":
+        return ["9:16", "16:9"]
+    return ["9:16", "16:9", "1:1"]
 
 
 def _requested_video_type(user_prompt: str, payload: dict[str, Any]) -> str:
@@ -2313,6 +2471,32 @@ def _normalize_video_type(value: Any) -> str:
 
 def _video_type_label(video_type: str) -> str:
     return _VIDEO_TYPE_LABELS.get(_normalize_video_type(video_type), "short-video")
+
+
+def _provider_label(asset_plan: ShortVideoAssetPlan) -> str:
+    """Return a user-readable provider label for review payloads."""
+    if asset_plan.planned_video_provider == "veo":
+        return "Veo + ByteDance TTS"
+    if asset_plan.planned_video_model_name == VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME:
+        return "Seedance 2.0 fast native audio"
+    return "Seedance 2.0 native audio"
+
+
+def _provider_notes(asset_plan: ShortVideoAssetPlan) -> list[str]:
+    """Return concise provider constraints for user review."""
+    if asset_plan.planned_video_provider == "veo":
+        return [
+            "Compatible runtime: Veo generates video and ByteDance TTS generates voiceover.",
+            "Current Veo+TTS path supports 9:16 or 16:9, 720p, and 4/6/8-second provider segments.",
+            "The system will not auto-switch away from Veo if this provider fails.",
+        ]
+    notes = [
+        "Default runtime: Seedance generates synchronized video, dialogue, sound effects, and music natively.",
+        "The system will not auto-switch to another provider if Seedance fails.",
+    ]
+    if asset_plan.planned_video_model_name == VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME:
+        notes.append("Seedance 2.0 fast is kept at 720p because it does not support 1080p.")
+    return notes
 
 
 def _build_voiceover_text(brief: str) -> str:
@@ -2451,6 +2635,7 @@ def _apply_revision_to_asset_plan(
         selected_ratio=asset_plan.selected_ratio,
         duration_seconds=asset_plan.duration_seconds,
         video_type=asset_plan.video_type,
+        video_provider=asset_plan.planned_video_provider,
         video_model_name=asset_plan.planned_video_model_name,
         video_resolution=asset_plan.planned_video_resolution,
         storyboard=state.storyboard,
@@ -3187,7 +3372,10 @@ def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayloa
         "Approve this plan, revise the brief/asset plan, or cancel production."
     ]
     if asset_plan.selected_ratio is None:
-        questions.append("Choose one aspect ratio before generation: 9:16, 16:9, or 1:1.")
+        questions.append(
+            "Choose one supported aspect ratio before generation: "
+            f"{', '.join(asset_plan.ratio_options)}."
+        )
     return ReviewPayload(
         review_type="asset_plan_review",
         title=f"Review {_video_type_label(asset_plan.video_type)} asset plan",
@@ -3201,11 +3389,13 @@ def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayloa
             {
                 "kind": "providers",
                 "planned_video_provider": asset_plan.planned_video_provider,
+                "provider_label": _provider_label(asset_plan),
                 "planned_video_model_name": asset_plan.planned_video_model_name,
                 "planned_video_resolution": asset_plan.planned_video_resolution,
                 "planned_generate_audio": asset_plan.planned_generate_audio,
                 "planned_tts": asset_plan.planned_tts,
                 "planned_tts_provider": asset_plan.planned_tts_provider,
+                "provider_notes": _provider_notes(asset_plan),
             },
             {
                 "kind": "aspect_ratio",
@@ -3310,13 +3500,15 @@ def _planning_duration_seconds(state: ShortVideoProductionState) -> float:
     return value if value > 0 else 8.0
 
 
-def _planning_seedance_settings(state: ShortVideoProductionState) -> tuple[str, str]:
-    model_name = normalize_seedance_model_name(state.planning_context.get("video_model_name"))
-    resolution = normalize_seedance_video_resolution(
+def _planning_provider_settings(state: ShortVideoProductionState) -> tuple[str, str, str]:
+    provider = _normalize_short_video_provider(state.planning_context.get("video_provider"))
+    model_name = _normalize_short_video_model_name(provider, state.planning_context.get("video_model_name"))
+    resolution = _normalize_short_video_resolution(
+        provider,
         model_name,
         state.planning_context.get("video_resolution"),
     )
-    return model_name, resolution
+    return provider, model_name, resolution
 
 
 def _planning_video_type(state: ShortVideoProductionState) -> str:

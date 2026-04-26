@@ -81,6 +81,64 @@ class UnavailableShortVideoProviderRuntime:
         )
 
 
+class RoutedShortVideoProviderRuntime:
+    """Route generation to the provider explicitly selected in the asset plan."""
+
+    def __init__(
+        self,
+        *,
+        seedance_runtime: ShortVideoProviderRuntime | None = None,
+        veo_tts_runtime: ShortVideoProviderRuntime | None = None,
+    ) -> None:
+        """Initialize concrete provider runtimes without implicit fallback."""
+        self.seedance_runtime = seedance_runtime or SeedanceNativeAudioProviderRuntime()
+        self.veo_tts_runtime = veo_tts_runtime or VeoTtsProviderRuntime()
+
+    async def generate_video_clip(
+        self,
+        *,
+        session_root: Path,
+        asset_plan: ShortVideoAssetPlan,
+        render_settings: ShortVideoRenderSettings,
+        reference_assets: list[ReferenceAssetEntry],
+        owner_ref: ProductionOwnerRef,
+    ) -> AssetManifestEntry:
+        """Generate one clip with the asset plan's selected provider."""
+        return await self._runtime_for(asset_plan).generate_video_clip(
+            session_root=session_root,
+            asset_plan=asset_plan,
+            render_settings=render_settings,
+            reference_assets=reference_assets,
+            owner_ref=owner_ref,
+        )
+
+    async def synthesize_voiceover(
+        self,
+        *,
+        session_root: Path,
+        asset_plan: ShortVideoAssetPlan,
+        render_settings: ShortVideoRenderSettings,
+        owner_ref: ProductionOwnerRef,
+    ) -> AudioManifestEntry:
+        """Generate or expose audio with the asset plan's selected provider."""
+        return await self._runtime_for(asset_plan).synthesize_voiceover(
+            session_root=session_root,
+            asset_plan=asset_plan,
+            render_settings=render_settings,
+            owner_ref=owner_ref,
+        )
+
+    def _runtime_for(self, asset_plan: ShortVideoAssetPlan) -> ShortVideoProviderRuntime:
+        provider = str(asset_plan.planned_video_provider or "").strip().lower()
+        if provider == "seedance":
+            return self.seedance_runtime
+        if provider == "veo":
+            return self.veo_tts_runtime
+        raise ShortVideoProviderError(
+            f"Unsupported short-video provider runtime: {asset_plan.planned_video_provider}."
+        )
+
+
 class SeedanceNativeAudioProviderRuntime:
     """Provider runtime that uses Seedance 2.0 native audio-video generation."""
 

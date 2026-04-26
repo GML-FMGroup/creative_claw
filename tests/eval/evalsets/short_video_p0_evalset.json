@@ -1,7 +1,7 @@
 {
   "eval_set_id": "short_video_p0",
-  "name": "Short-video P1b behavior",
-  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for storyboard, asset-plan, and generated shot-segment review.",
+  "name": "Short-video P1d behavior",
+  "description": "Checks that the orchestrator routes short-video production through typed production tools, pauses for storyboard/asset-plan/shot review, and preserves explicit provider choices.",
   "eval_cases": [
     {
       "eval_id": "start_product_ad_requires_review",
@@ -116,6 +116,37 @@
         "user_id": "short_video_eval_user",
         "state": {
           "sid": "eval_short_video_seedance_fast_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_veo_tts_short_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_veo_tts_short_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "用 Veo+TTS 做一个 8 秒 9:16 产品广告短视频，画面用 Veo，中文口播用 TTS。先给我计划，确认后再生成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_veo_tts_review",
           "turn_index": 1,
           "channel": "eval",
           "chat_id": "short_video_p0",
