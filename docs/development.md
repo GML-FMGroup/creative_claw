@@ -147,7 +147,7 @@ How to fill it:
 - If you mainly use OpenAI text generation, fill `providers.openai.api_key`.
 - If you want Gemini image or VEO video support, fill `providers.gemini.api_key`.
 - If you want Anthropic text models, fill `providers.anthropic.api_key`.
-- If you want Seedream, Seedance, or Seed3D, fill `services.ark_api_key`.
+- If you want Seedream, Seedance, Seed3D, Hyper3D, or Hitem3D, fill `services.ark_api_key`.
 - If you want image grounding or segmentation, fill `services.dds_api_key`.
 - If you want SearchAgent image search, fill `services.serper_api_key`.
 - If you want the built-in `web_search` tool, fill `services.brave_api_key`.
@@ -300,7 +300,7 @@ Field notes:
 | `providers.<name>.api_version` | Provider-specific API version | Mainly Azure OpenAI |
 | `providers.<name>.extra_headers` | Extra HTTP headers | Enterprise proxy or custom gateway integration |
 | `providers.ollama.api_base` | Local Ollama endpoint | Prefilled as `http://localhost:11434/v1` by `creative-claw init` |
-| `services.ark_api_key` | Volcengine Ark key | Seedream, Seedance, and Seed3D paths |
+| `services.ark_api_key` | Volcengine Ark key | Seedream, Seedance, Seed3D, Hyper3D, and Hitem3D paths |
 | `services.dds_api_key` | DeepDataSpace key | Image grounding and image segmentation |
 | `services.serper_api_key` | Serper key | `SearchAgent` image mode |
 | `services.brave_api_key` | Brave search key | Built-in web search tool |
@@ -337,7 +337,7 @@ First-round text LLM providers:
 
 Feature-specific extra service keys:
 
-- `services.ark_api_key`: Seedream image generation, image editing, `VideoGenerationAgent` (`seedance`), and `ThreeDGenerationAgent` (`seed3d`)
+- `services.ark_api_key`: Seedream image generation, image editing, `VideoGenerationAgent` (`seedance`), and `ThreeDGenerationAgent` (`seed3d`, `hyper3d`, `hitem3d`)
 - `services.kling_access_key` and `services.kling_secret_key`: `VideoGenerationAgent` (`kling`)
 - `services.kling_api_base`: optional Kling API base override; when omitted, the provider probes the official Beijing and Singapore gateways and caches the first working base
 - `services.dds_api_key`: `ImageGroundingAgent` and `ImageSegmentationAgent`
@@ -457,6 +457,8 @@ Example `invoke_agent` payloads:
 
 - `hy3d`: default provider, Tencent Cloud Hunyuan 3D Pro, requires Tencent Cloud credentials.
 - `seed3d`: Volcengine Ark `doubao-seed3d-2-0-260328`, requires `services.ark_api_key` or `ARK_API_KEY`.
+- `hyper3d`: Volcengine Ark `hyper3d-gen2-260112`, requires `services.ark_api_key` or `ARK_API_KEY`.
+- `hitem3d`: Volcengine Ark `hitem3d-2-0-251223`, requires `services.ark_api_key` or `ARK_API_KEY`.
 
 Important `seed3d` notes:
 
@@ -464,12 +466,21 @@ Important `seed3d` notes:
 - pass exactly one workspace image through `input_path` / `input_paths`, or one remote `image_url`
 - optional controls are `file_format` (`glb|obj|usd|usdz`), `subdivision_level` (`low|medium|high`), `timeout_seconds`, and `interval_seconds`
 - returned 3D URLs are downloaded into the workspace because provider links expire
-- `hyper3d-gen2-260112` and `hitem3d-2-0-251223` are listed by Volcengine as separate 3D models, but their separate API shapes are not exposed by CreativeClaw yet
+- `hyper3d` supports English prompt-only generation or 1-5 images with optional prompt/commands; key controls include `file_format`, `mesh_mode`, `material`, `quality_override`, `subdivision_level`, `hd_texture`, and `bbox_condition`
+- `hitem3d` is image-to-3D only, requires 1-4 externally accessible `image_url` / `image_urls`, and accepts parameter commands only; key controls include `file_format`, `resolution`, `face_count`, `request_type`, and `multi_images_bit`
 
 Example `invoke_agent` payload:
 
 ```json
 {"provider":"seed3d","input_path":"inbox/cli/session_1/object.png","file_format":"glb","subdivision_level":"medium"}
+```
+
+```json
+{"provider":"hyper3d","prompt":"full-body sci-fi robot, hard-surface design","file_format":"glb","mesh_mode":"Raw","quality_override":150000}
+```
+
+```json
+{"provider":"hitem3d","image_url":"https://example.com/front.png","file_format":"glb","resolution":"1536pro","request_type":3}
 ```
 
 ## Deterministic Media Operations

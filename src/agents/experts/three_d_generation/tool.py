@@ -25,10 +25,19 @@ DEFAULT_INTERVAL_SECONDS = 8
 TERMINAL_STATUSES = {"DONE", "FAIL"}
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_SEED3D_MODEL = "doubao-seed3d-2-0-260328"
+DEFAULT_HYPER3D_MODEL = "hyper3d-gen2-260112"
+DEFAULT_HITEM3D_MODEL = "hitem3d-2-0-251223"
 DEFAULT_SEED3D_FILE_FORMAT = "glb"
+DEFAULT_HYPER3D_FILE_FORMAT = "glb"
+DEFAULT_HITEM3D_FILE_FORMAT = "obj"
 DEFAULT_SEED3D_SUBDIVISION_LEVEL = "medium"
+DEFAULT_HYPER3D_SUBDIVISION_LEVEL = "medium"
+DEFAULT_HITEM3D_RESOLUTION = "1536"
 DEFAULT_SEED3D_INTERVAL_SECONDS = 60
-SEED3D_TERMINAL_STATUSES = {"succeeded", "failed"}
+DEFAULT_HYPER3D_INTERVAL_SECONDS = 60
+DEFAULT_HITEM3D_INTERVAL_SECONDS = 60
+ARK_3D_TERMINAL_STATUSES = {"succeeded", "failed"}
+SEED3D_TERMINAL_STATUSES = ARK_3D_TERMINAL_STATUSES
 
 _GENERATE_TYPE_MAP = {
     "normal": "Normal",
@@ -42,10 +51,35 @@ _RESULT_FORMAT_MAP = {
     "fbx": "FBX",
 }
 _SEED3D_FILE_FORMATS = {"glb", "obj", "usd", "usdz"}
+_HYPER3D_FILE_FORMATS = {"glb", "obj", "usdz", "fbx", "stl"}
+_HITEM3D_FILE_FORMATS = {"obj", "glb", "stl", "fbx", "usdz"}
+_HITEM3D_FILE_FORMAT_TO_CODE = {
+    "obj": 1,
+    "glb": 2,
+    "stl": 3,
+    "fbx": 4,
+    "usdz": 5,
+}
+_HITEM3D_CODE_TO_FILE_FORMAT = {
+    str(code): file_format for file_format, code in _HITEM3D_FILE_FORMAT_TO_CODE.items()
+}
 _SEED3D_SUBDIVISION_LEVELS = {"low", "medium", "high"}
-_SEED3D_DOWNLOAD_SUFFIXES = {".glb", ".obj", ".usd", ".usdz", ".zip"}
-_SEED3D_URL_EXCLUDE_MARKERS = {"image", "preview", "thumbnail", "cover", "video"}
-_SEED3D_URL_INCLUDE_MARKERS = {"asset", "download", "file", "mesh", "model", "result", "url"}
+_HYPER3D_SUBDIVISION_LEVELS = {"low", "medium", "high"}
+_HYPER3D_MATERIALS = {
+    "pbr": "PBR",
+    "shaded": "Shaded",
+    "all": "All",
+    "none": "None",
+}
+_HYPER3D_MESH_MODES = {
+    "raw": "Raw",
+    "quad": "Quad",
+}
+_HYPER3D_ADDONS = {"highpack": "HighPack"}
+_HITEM3D_RESOLUTIONS = {"1536": "1536", "1536pro": "1536pro", "1536 pro": "1536pro"}
+_ARK_3D_DOWNLOAD_SUFFIXES = {".glb", ".obj", ".usd", ".usdz", ".stl", ".fbx", ".zip"}
+_ARK_3D_URL_EXCLUDE_MARKERS = {"image", "preview", "thumbnail", "cover", "video"}
+_ARK_3D_URL_INCLUDE_MARKERS = {"asset", "download", "file", "mesh", "model", "result", "url"}
 
 
 def normalize_generate_type(raw_value: str | None) -> str:
@@ -74,11 +108,229 @@ def normalize_seed3d_subdivision_level(raw_value: Any) -> str:
     return normalized if normalized in _SEED3D_SUBDIVISION_LEVELS else DEFAULT_SEED3D_SUBDIVISION_LEVEL
 
 
+def normalize_hyper3d_file_format(raw_value: Any) -> str:
+    """Return one supported Hyper3D output file format."""
+    normalized = str(raw_value or "").strip().lower()
+    return normalized if normalized in _HYPER3D_FILE_FORMATS else DEFAULT_HYPER3D_FILE_FORMAT
+
+
+def normalize_hyper3d_subdivision_level(raw_value: Any) -> str:
+    """Return one supported Hyper3D subdivision level."""
+    normalized = str(raw_value or "").strip().lower()
+    return normalized if normalized in _HYPER3D_SUBDIVISION_LEVELS else DEFAULT_HYPER3D_SUBDIVISION_LEVEL
+
+
+def normalize_hitem3d_file_format(raw_value: Any) -> str:
+    """Return one supported Hitem3D output file format."""
+    normalized = str(raw_value or "").strip().lower()
+    if normalized in _HITEM3D_CODE_TO_FILE_FORMAT:
+        return _HITEM3D_CODE_TO_FILE_FORMAT[normalized]
+    return normalized if normalized in _HITEM3D_FILE_FORMATS else DEFAULT_HITEM3D_FILE_FORMAT
+
+
+def normalize_hitem3d_resolution(raw_value: Any) -> str:
+    """Return one supported Hitem3D resolution value."""
+    normalized = str(raw_value or "").strip().lower().replace("_", "").replace("-", "")
+    return _HITEM3D_RESOLUTIONS.get(normalized, DEFAULT_HITEM3D_RESOLUTION)
+
+
 def _build_seed3d_parameter_text(*, subdivision_level: str, file_format: str) -> str:
     """Build the Seed3D command-style parameter text used by Ark tasks."""
     current_level = normalize_seed3d_subdivision_level(subdivision_level)
     current_format = normalize_seed3d_file_format(file_format)
     return f"--subdivisionlevel {current_level} --fileformat {current_format}"
+
+
+def _normalize_optional_int(
+    raw_value: Any,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+    name: str,
+) -> int | None:
+    """Normalize an optional integer and validate its inclusive range."""
+    if raw_value in (None, ""):
+        return None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"`{name}` must be an integer.") from exc
+    if minimum is not None and value < minimum:
+        raise ValueError(f"`{name}` must be >= {minimum}.")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"`{name}` must be <= {maximum}.")
+    return value
+
+
+def _normalize_optional_choice(
+    raw_value: Any,
+    mapping: dict[str, str],
+    *,
+    name: str,
+) -> str | None:
+    """Normalize an optional string value using a supported choices mapping."""
+    if raw_value in (None, ""):
+        return None
+    normalized = str(raw_value).strip().lower()
+    if normalized not in mapping:
+        allowed = ", ".join(mapping.values())
+        raise ValueError(f"`{name}` must be one of: {allowed}.")
+    return mapping[normalized]
+
+
+def _normalize_bbox_condition(raw_value: Any) -> list[int] | None:
+    """Normalize the Hyper3D bbox_condition command into three integers."""
+    if raw_value in (None, ""):
+        return None
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip().strip("[]")
+        values = [part.strip() for part in cleaned.split(",") if part.strip()]
+    elif isinstance(raw_value, (list, tuple)):
+        values = list(raw_value)
+    else:
+        raise ValueError("`bbox_condition` must be a list of three integers.")
+
+    if len(values) != 3:
+        raise ValueError("`bbox_condition` must contain exactly three integers.")
+    try:
+        return [int(value) for value in values]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("`bbox_condition` must contain only integers.") from exc
+
+
+def _format_ark_command_value(value: Any) -> str:
+    """Format one value for a Volcengine command-style text parameter."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(str(item) for item in value) + "]"
+    return str(value)
+
+
+def _build_ark_command_text(prompt: str | None, commands: list[tuple[str, Any]]) -> str:
+    """Build one command-style text item with an optional prompt prefix."""
+    parts: list[str] = []
+    normalized_prompt = str(prompt or "").strip()
+    if normalized_prompt:
+        if len(normalized_prompt) > 400:
+            raise ValueError("`prompt` must be no longer than 400 characters for Hyper3D.")
+        parts.append(normalized_prompt)
+
+    for name, value in commands:
+        if value in (None, ""):
+            continue
+        parts.append(f"--{name} {_format_ark_command_value(value)}")
+
+    return " ".join(parts).strip()
+
+
+def _build_hyper3d_parameter_text(
+    *,
+    prompt: str | None,
+    file_format: str,
+    subdivision_level: str | None = None,
+    material: str | None = None,
+    mesh_mode: str | None = None,
+    quality_override: int | None = None,
+    addons: str | None = None,
+    use_original_alpha: bool | None = None,
+    bbox_condition: Any = None,
+    ta_pose: bool | None = None,
+    hd_texture: bool | None = None,
+) -> str:
+    """Build the Hyper3D command-style text used by Ark tasks."""
+    current_file_format = normalize_hyper3d_file_format(file_format)
+    current_subdivision_level = (
+        normalize_hyper3d_subdivision_level(subdivision_level)
+        if subdivision_level not in (None, "")
+        else None
+    )
+    current_material = _normalize_optional_choice(
+        material,
+        _HYPER3D_MATERIALS,
+        name="material",
+    )
+    current_mesh_mode = _normalize_optional_choice(
+        mesh_mode,
+        _HYPER3D_MESH_MODES,
+        name="mesh_mode",
+    )
+    quality_minimum = 500 if current_mesh_mode == "Raw" else 1000
+    quality_maximum = 1000000 if current_mesh_mode == "Raw" else 200000
+    current_quality_override = _normalize_optional_int(
+        quality_override,
+        minimum=quality_minimum,
+        maximum=quality_maximum,
+        name="quality_override",
+    )
+    current_addons = _normalize_optional_choice(
+        addons,
+        _HYPER3D_ADDONS,
+        name="addons",
+    )
+    normalized_bbox = _normalize_bbox_condition(bbox_condition)
+
+    return _build_ark_command_text(
+        prompt,
+        [
+            ("mesh_mode", current_mesh_mode),
+            ("hd_texture", hd_texture),
+            ("material", current_material),
+            ("addons", current_addons),
+            ("quality_override", current_quality_override),
+            ("use_original_alpha", use_original_alpha),
+            ("bbox_condition", normalized_bbox),
+            ("TAPose", ta_pose),
+            ("subdivisionlevel", current_subdivision_level),
+            ("fileformat", current_file_format),
+        ],
+    )
+
+
+def _build_hitem3d_parameter_text(
+    *,
+    file_format: str,
+    resolution: str = DEFAULT_HITEM3D_RESOLUTION,
+    face_count: int | None = None,
+    request_type: int | None = None,
+    multi_images_bit: str | None = None,
+    image_count: int,
+) -> str:
+    """Build the Hitem3D command-style text used by Ark tasks."""
+    current_file_format = normalize_hitem3d_file_format(file_format)
+    current_resolution = normalize_hitem3d_resolution(resolution)
+    current_face_count = _normalize_optional_int(
+        face_count,
+        minimum=100000,
+        maximum=2000000,
+        name="face",
+    )
+    current_request_type = _normalize_optional_int(
+        request_type,
+        minimum=1,
+        maximum=3,
+        name="request_type",
+    )
+    if current_request_type not in (None, 1, 3):
+        raise ValueError("`request_type` must be 1 or 3.")
+
+    normalized_multi_images_bit = str(multi_images_bit or "").strip()
+    if normalized_multi_images_bit:
+        if len(normalized_multi_images_bit) != 4 or set(normalized_multi_images_bit) - {"0", "1"}:
+            raise ValueError("`multi_images_bit` must be a four-character bit string.")
+        if normalized_multi_images_bit.count("1") != image_count:
+            raise ValueError("`multi_images_bit` must contain one `1` per input image.")
+
+    return _build_ark_command_text(
+        None,
+        [
+            ("resolution", current_resolution),
+            ("request_type", current_request_type),
+            ("ff", _HITEM3D_FILE_FORMAT_TO_CODE[current_file_format]),
+            ("face", current_face_count),
+            ("multi_images_bit", normalized_multi_images_bit or None),
+        ],
+    )
 
 
 def coerce_bool(raw_value: Any, default: bool = False) -> bool:
@@ -338,18 +590,66 @@ def _download_result_files_sync(result_files: list[Any], download_dir: Path) -> 
     return downloaded_files
 
 
-def _submit_seed3d_task_sync(client: Any, *, model: str, content: list[dict[str, Any]]) -> str:
-    """Submit one Seed3D Ark content-generation task synchronously."""
+def _submit_ark_3d_task_sync(
+    client: Any,
+    *,
+    provider_name: str,
+    model: str,
+    content: list[dict[str, Any]],
+) -> str:
+    """Submit one Ark 3D content-generation task synchronously."""
     response = client.content_generation.tasks.create(model=model, content=content)
     task_id = str(_get_value(response, "id", "ID") or "").strip()
     if not task_id:
-        raise RuntimeError(f"Seed3D submit succeeded without task id: {_stringify_sdk_object(response)}")
+        raise RuntimeError(
+            f"{provider_name} submit succeeded without task id: {_stringify_sdk_object(response)}"
+        )
     return task_id
+
+
+def _submit_seed3d_task_sync(client: Any, *, model: str, content: list[dict[str, Any]]) -> str:
+    """Submit one Seed3D Ark content-generation task synchronously."""
+    return _submit_ark_3d_task_sync(
+        client,
+        provider_name="Seed3D",
+        model=model,
+        content=content,
+    )
+
+
+def _query_ark_3d_task_sync(client: Any, task_id: str) -> Any:
+    """Query one Ark 3D content-generation task synchronously."""
+    return client.content_generation.tasks.get(task_id=task_id)
 
 
 def _query_seed3d_task_sync(client: Any, task_id: str) -> Any:
     """Query one Seed3D Ark content-generation task synchronously."""
-    return client.content_generation.tasks.get(task_id=task_id)
+    return _query_ark_3d_task_sync(client, task_id)
+
+
+async def _poll_ark_3d_task_until_finished(
+    client: Any,
+    *,
+    task_id: str,
+    provider_name: str,
+    timeout_seconds: int,
+    interval_seconds: int,
+) -> Any:
+    """Poll Ark until one 3D generation task reaches a terminal state."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+
+    while loop.time() < deadline:
+        response = await asyncio.to_thread(_query_ark_3d_task_sync, client, task_id)
+        status = str(_get_value(response, "status", "Status") or "").strip().lower()
+        logger.info("{} task_id={} status={}", provider_name, task_id, status)
+        if status in ARK_3D_TERMINAL_STATUSES:
+            return response
+        await asyncio.sleep(interval_seconds)
+
+    raise TimeoutError(
+        f"{provider_name} polling timed out after {timeout_seconds} seconds, task_id={task_id}"
+    )
 
 
 async def _poll_seed3d_task_until_finished(
@@ -360,19 +660,12 @@ async def _poll_seed3d_task_until_finished(
     interval_seconds: int,
 ) -> Any:
     """Poll Ark until the Seed3D task reaches a terminal state."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_seconds
-
-    while loop.time() < deadline:
-        response = await asyncio.to_thread(_query_seed3d_task_sync, client, task_id)
-        status = str(_get_value(response, "status", "Status") or "").strip().lower()
-        logger.info("seed3d task_id={} status={}", task_id, status)
-        if status in SEED3D_TERMINAL_STATUSES:
-            return response
-        await asyncio.sleep(interval_seconds)
-
-    raise TimeoutError(
-        f"Seed3D polling timed out after {timeout_seconds} seconds, task_id={task_id}"
+    return await _poll_ark_3d_task_until_finished(
+        client,
+        task_id=task_id,
+        provider_name="seed3d",
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
     )
 
 
@@ -404,6 +697,115 @@ def _build_seed3d_content(
         },
         {"type": "image_url", "image_url": {"url": resolved_image_url}},
     ]
+
+
+def _normalize_image_url_items(
+    *,
+    input_paths: list[str] | None = None,
+    image_urls: list[str] | None = None,
+    allow_local_paths: bool,
+    provider_name: str,
+) -> list[str]:
+    """Normalize image URLs for Ark 3D content payloads."""
+    raw_paths: Any = input_paths or []
+    raw_urls: Any = image_urls or []
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    if isinstance(raw_urls, str):
+        raw_urls = [raw_urls]
+    normalized_paths = [str(path).strip() for path in raw_paths if str(path).strip()]
+    normalized_urls = [str(url).strip() for url in raw_urls if str(url).strip()]
+    if normalized_paths and not allow_local_paths:
+        raise ValueError(f"{provider_name} supports only externally accessible image URLs.")
+
+    resolved_urls = []
+    if allow_local_paths:
+        resolved_urls.extend(_image_file_to_data_url(path) for path in normalized_paths)
+    resolved_urls.extend(normalized_urls)
+    return resolved_urls
+
+
+def _build_hyper3d_content(
+    *,
+    prompt: str | None,
+    input_paths: list[str] | None,
+    image_urls: list[str] | None,
+    file_format: str,
+    subdivision_level: str | None = None,
+    material: str | None = None,
+    mesh_mode: str | None = None,
+    quality_override: int | None = None,
+    addons: str | None = None,
+    use_original_alpha: bool | None = None,
+    bbox_condition: Any = None,
+    ta_pose: bool | None = None,
+    hd_texture: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Build the Ark task content payload for one Hyper3D request."""
+    resolved_image_urls = _normalize_image_url_items(
+        input_paths=input_paths,
+        image_urls=image_urls,
+        allow_local_paths=True,
+        provider_name="Hyper3D",
+    )
+    if len(resolved_image_urls) > 5:
+        raise ValueError("Hyper3D supports at most 5 input images.")
+
+    text = _build_hyper3d_parameter_text(
+        prompt=prompt,
+        file_format=file_format,
+        subdivision_level=subdivision_level,
+        material=material,
+        mesh_mode=mesh_mode,
+        quality_override=quality_override,
+        addons=addons,
+        use_original_alpha=use_original_alpha,
+        bbox_condition=bbox_condition,
+        ta_pose=ta_pose,
+        hd_texture=hd_texture,
+    )
+    if not text and not resolved_image_urls:
+        raise ValueError("Hyper3D requires a prompt, an image, or image URLs.")
+
+    content: list[dict[str, Any]] = []
+    if text:
+        content.append({"type": "text", "text": text})
+    content.extend({"type": "image_url", "image_url": {"url": url}} for url in resolved_image_urls)
+    return content
+
+
+def _build_hitem3d_content(
+    *,
+    image_urls: list[str] | None,
+    file_format: str,
+    resolution: str,
+    face_count: int | None = None,
+    request_type: int | None = None,
+    multi_images_bit: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build the Ark task content payload for one Hitem3D image-to-3D request."""
+    resolved_image_urls = _normalize_image_url_items(
+        input_paths=[],
+        image_urls=image_urls,
+        allow_local_paths=False,
+        provider_name="Hitem3D",
+    )
+    if not resolved_image_urls:
+        raise ValueError("Hitem3D requires at least one externally accessible image URL.")
+    if len(resolved_image_urls) > 4:
+        raise ValueError("Hitem3D supports at most 4 input images.")
+
+    text = _build_hitem3d_parameter_text(
+        file_format=file_format,
+        resolution=resolution,
+        face_count=face_count,
+        request_type=request_type,
+        multi_images_bit=multi_images_bit,
+        image_count=len(resolved_image_urls),
+    )
+    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    content.extend({"type": "image_url", "image_url": {"url": url}} for url in resolved_image_urls)
+    return content
 
 
 def _stringify_sdk_object(value: Any) -> str:
@@ -496,21 +898,24 @@ def _is_seed3d_result_url(*, key_path: str, url: str) -> bool:
     """Return whether one URL-like field appears to point at a 3D result asset."""
     url_path = urlsplit(url).path.lower()
     suffix = Path(url_path).suffix
-    if suffix in _SEED3D_DOWNLOAD_SUFFIXES:
+    if suffix in _ARK_3D_DOWNLOAD_SUFFIXES:
         return True
 
     normalized_key_path = key_path.lower()
-    if any(marker in normalized_key_path for marker in _SEED3D_URL_EXCLUDE_MARKERS):
+    if any(marker in normalized_key_path for marker in _ARK_3D_URL_EXCLUDE_MARKERS):
         return False
-    return any(marker in normalized_key_path for marker in _SEED3D_URL_INCLUDE_MARKERS)
+    return any(marker in normalized_key_path for marker in _ARK_3D_URL_INCLUDE_MARKERS)
 
 
 def _infer_seed3d_file_type(url: str, file_format: str) -> str:
-    """Infer a compact result file type for one Seed3D URL."""
+    """Infer a compact result file type for one Ark 3D URL."""
     suffix = Path(urlsplit(url).path).suffix.lower().lstrip(".")
     if suffix and suffix != "zip":
         return suffix
-    return normalize_seed3d_file_format(file_format)
+    normalized_format = str(file_format or "").strip().lower()
+    if normalized_format in (_SEED3D_FILE_FORMATS | _HYPER3D_FILE_FORMATS | _HITEM3D_FILE_FORMATS):
+        return normalized_format
+    return DEFAULT_SEED3D_FILE_FORMAT
 
 
 def _collect_seed3d_url_records(
@@ -587,12 +992,25 @@ def _extract_seed3d_error(task_result: Any) -> str:
     return _stringify_sdk_object(task_result)
 
 
-def _infer_seed3d_download_name(url: str, file_format: str, index: int) -> str:
-    """Infer one stable local filename for a Seed3D result file."""
+def _infer_ark_3d_download_name(
+    url: str,
+    file_format: str,
+    index: int,
+    provider_prefix: str,
+) -> str:
+    """Infer one stable local filename for an Ark 3D result file."""
     suffix = Path(urlsplit(url).path).suffix
     if not suffix:
-        suffix = f".{normalize_seed3d_file_format(file_format)}"
-    return f"seed3d_result_{index}{suffix}"
+        normalized_format = str(file_format or "").strip().lower()
+        if normalized_format not in (_SEED3D_FILE_FORMATS | _HYPER3D_FILE_FORMATS | _HITEM3D_FILE_FORMATS):
+            normalized_format = DEFAULT_SEED3D_FILE_FORMAT
+        suffix = f".{normalized_format}"
+    return f"{_safe_segment(provider_prefix)}_result_{index}{suffix}"
+
+
+def _infer_seed3d_download_name(url: str, file_format: str, index: int) -> str:
+    """Infer one stable local filename for a Seed3D result file."""
+    return _infer_ark_3d_download_name(url, file_format, index, "seed3d")
 
 
 def _download_seed3d_result_files_sync(
@@ -600,8 +1018,9 @@ def _download_seed3d_result_files_sync(
     download_dir: Path,
     *,
     file_format: str,
+    provider_prefix: str = "seed3d",
 ) -> list[dict[str, Any]]:
-    """Download returned Seed3D files to the target directory."""
+    """Download returned Ark 3D files to the target directory."""
     download_dir.mkdir(parents=True, exist_ok=True)
     downloaded_files: list[dict[str, Any]] = []
 
@@ -610,7 +1029,12 @@ def _download_seed3d_result_files_sync(
         if not url:
             continue
 
-        output_path = download_dir / _infer_seed3d_download_name(url, file_format, index)
+        output_path = download_dir / _infer_ark_3d_download_name(
+            url,
+            file_format,
+            index,
+            provider_prefix,
+        )
         with requests.get(url, stream=True, timeout=120) as response:
             response.raise_for_status()
             with output_path.open("wb") as file_obj:
@@ -883,3 +1307,257 @@ async def seed3d_generate_tool(
         "download_dir": download_dir,
         "downloaded_files": downloaded_files,
     }
+
+
+async def _run_ark_3d_generation_task(
+    *,
+    provider: str,
+    display_name: str,
+    model: str,
+    content: list[dict[str, Any]],
+    file_format: str,
+    generate_type: str,
+    timeout_seconds: int,
+    interval_seconds: int,
+    session_id: str,
+    turn_index: int,
+    step: int,
+) -> dict[str, Any]:
+    """Run one full Ark 3D generation task and download its result file."""
+    task_id = ""
+
+    try:
+        client = _build_ark_client_from_env()
+        task_id = await asyncio.to_thread(
+            _submit_ark_3d_task_sync,
+            client,
+            provider_name=display_name,
+            model=model,
+            content=content,
+        )
+        task_result = await _poll_ark_3d_task_until_finished(
+            client,
+            task_id=task_id,
+            provider_name=provider,
+            timeout_seconds=int(timeout_seconds),
+            interval_seconds=int(interval_seconds),
+        )
+    except Exception as exc:
+        logger.opt(exception=exc).error(
+            "{} generation failed before completion: error_type={} error={!r}",
+            provider,
+            type(exc).__name__,
+            exc,
+        )
+        return {
+            "status": "error",
+            "message": f"{display_name} generation failed: {exc}",
+            "provider": provider,
+            "model_name": model,
+            "job_id": task_id,
+        }
+
+    status = str(_get_value(task_result, "status", "Status") or "").strip().lower()
+    if status != "succeeded":
+        return {
+            "status": "error",
+            "message": f"{display_name} task failed: {_extract_seed3d_error(task_result)}",
+            "provider": provider,
+            "model_name": model,
+            "job_id": task_id,
+        }
+
+    result_files = _extract_seed3d_result_files(task_result, file_format=file_format)
+    if not result_files:
+        return {
+            "status": "error",
+            "message": f"{display_name} task succeeded but returned no downloadable 3D result files.",
+            "provider": provider,
+            "model_name": model,
+            "job_id": task_id,
+        }
+
+    download_dir = _build_download_dir(
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+        job_id=task_id,
+    )
+    try:
+        downloaded_files = await asyncio.to_thread(
+            _download_seed3d_result_files_sync,
+            result_files,
+            download_dir,
+            file_format=file_format,
+            provider_prefix=provider,
+        )
+    except Exception as exc:
+        logger.opt(exception=exc).error(
+            "{} result download failed: error_type={} error={!r}",
+            provider,
+            type(exc).__name__,
+            exc,
+        )
+        return {
+            "status": "error",
+            "message": f"{display_name} task succeeded but result download failed: {exc}",
+            "provider": provider,
+            "model_name": model,
+            "job_id": task_id,
+        }
+
+    if not downloaded_files:
+        return {
+            "status": "error",
+            "message": f"{display_name} task succeeded but returned no downloadable result files.",
+            "provider": provider,
+            "model_name": model,
+            "job_id": task_id,
+        }
+
+    return {
+        "status": "success",
+        "message": f"{display_name} task {task_id} succeeded with {len(downloaded_files)} file(s).",
+        "provider": provider,
+        "model_name": model,
+        "job_id": task_id,
+        "generate_type": generate_type,
+        "file_format": file_format,
+        "download_dir": download_dir,
+        "downloaded_files": downloaded_files,
+    }
+
+
+async def hyper3d_generate_tool(
+    *,
+    prompt: str | None,
+    input_paths: list[str] | None = None,
+    image_urls: list[str] | None = None,
+    model: str = DEFAULT_HYPER3D_MODEL,
+    file_format: str = DEFAULT_HYPER3D_FILE_FORMAT,
+    subdivision_level: str | None = None,
+    material: str | None = None,
+    mesh_mode: str | None = None,
+    quality_override: int | None = None,
+    addons: str | None = None,
+    use_original_alpha: bool | None = None,
+    bbox_condition: Any = None,
+    ta_pose: bool | None = None,
+    hd_texture: bool | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    interval_seconds: int = DEFAULT_HYPER3D_INTERVAL_SECONDS,
+    session_id: str,
+    turn_index: int,
+    step: int,
+) -> dict[str, Any]:
+    """Run one full Hyper3D text/image-to-3D generation task through Volcengine Ark."""
+    logger.info("calling hyper3d 3d generation tool ...")
+    current_model = str(model or DEFAULT_HYPER3D_MODEL).strip() or DEFAULT_HYPER3D_MODEL
+    current_file_format = normalize_hyper3d_file_format(file_format)
+    current_subdivision_level = (
+        normalize_hyper3d_subdivision_level(subdivision_level)
+        if subdivision_level not in (None, "")
+        else ""
+    )
+
+    try:
+        content = _build_hyper3d_content(
+            prompt=prompt,
+            input_paths=input_paths,
+            image_urls=image_urls,
+            file_format=current_file_format,
+            subdivision_level=current_subdivision_level,
+            material=material,
+            mesh_mode=mesh_mode,
+            quality_override=quality_override,
+            addons=addons,
+            use_original_alpha=use_original_alpha,
+            bbox_condition=bbox_condition,
+            ta_pose=ta_pose,
+            hd_texture=hd_texture,
+        )
+    except Exception as exc:
+        logger.opt(exception=exc).error("hyper3d content validation failed")
+        return {
+            "status": "error",
+            "message": f"Hyper3D generation failed: {exc}",
+            "provider": "hyper3d",
+            "model_name": current_model,
+            "job_id": "",
+        }
+
+    generate_type = "image_to_3d" if input_paths or image_urls else "text_to_3d"
+    result = await _run_ark_3d_generation_task(
+        provider="hyper3d",
+        display_name="Hyper3D",
+        model=current_model,
+        content=content,
+        file_format=current_file_format,
+        generate_type=generate_type,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+    )
+    if result["status"] == "success":
+        result["subdivision_level"] = current_subdivision_level
+    return result
+
+
+async def hitem3d_generate_tool(
+    *,
+    image_urls: list[str] | None = None,
+    model: str = DEFAULT_HITEM3D_MODEL,
+    file_format: str = DEFAULT_HITEM3D_FILE_FORMAT,
+    resolution: str = DEFAULT_HITEM3D_RESOLUTION,
+    face_count: int | None = None,
+    request_type: int | None = None,
+    multi_images_bit: str | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    interval_seconds: int = DEFAULT_HITEM3D_INTERVAL_SECONDS,
+    session_id: str,
+    turn_index: int,
+    step: int,
+) -> dict[str, Any]:
+    """Run one full Hitem3D image-to-3D generation task through Volcengine Ark."""
+    logger.info("calling hitem3d 3d generation tool ...")
+    current_model = str(model or DEFAULT_HITEM3D_MODEL).strip() or DEFAULT_HITEM3D_MODEL
+    current_file_format = normalize_hitem3d_file_format(file_format)
+    current_resolution = normalize_hitem3d_resolution(resolution)
+
+    try:
+        content = _build_hitem3d_content(
+            image_urls=image_urls,
+            file_format=current_file_format,
+            resolution=current_resolution,
+            face_count=face_count,
+            request_type=request_type,
+            multi_images_bit=multi_images_bit,
+        )
+    except Exception as exc:
+        logger.opt(exception=exc).error("hitem3d content validation failed")
+        return {
+            "status": "error",
+            "message": f"Hitem3D generation failed: {exc}",
+            "provider": "hitem3d",
+            "model_name": current_model,
+            "job_id": "",
+        }
+
+    result = await _run_ark_3d_generation_task(
+        provider="hitem3d",
+        display_name="Hitem3D",
+        model=current_model,
+        content=content,
+        file_format=current_file_format,
+        generate_type="image_to_3d",
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
+        session_id=session_id,
+        turn_index=turn_index,
+        step=step,
+    )
+    if result["status"] == "success":
+        result["resolution"] = current_resolution
+    return result

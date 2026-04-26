@@ -169,7 +169,8 @@ class ExpertCardTests(unittest.TestCase):
                 "Provider `hy3d` remains the default",
                 "Tencent Cloud Hunyuan 3D Pro",
                 "doubao-seed3d-2-0-260328",
-                "supports at most one input image",
+                "hyper3d-gen2-260112",
+                "hitem3d-2-0-251223",
             ],
         }
 
@@ -210,6 +211,8 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("instrumental", music_agent.parameters)
         self.assertIn("Provider `hy3d` remains the default", three_d_agent.description)
         self.assertIn("provider': 'seed3d'", three_d_agent.parameters)
+        self.assertIn("provider': 'hyper3d'", three_d_agent.parameters)
+        self.assertIn("provider': 'hitem3d'", three_d_agent.parameters)
         self.assertIn("result_format", three_d_agent.parameters)
 
     def test_minimal_agent_roster_is_enriched_by_expert_cards(self) -> None:

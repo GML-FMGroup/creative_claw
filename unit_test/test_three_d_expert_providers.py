@@ -209,6 +209,180 @@ class ThreeDGenerationAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current_output["status"], "error")
         self.assertIn("provider `seed3d` requires", current_output["message"])
 
+    async def test_3d_generation_routes_hyper3d_provider(self) -> None:
+        agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "hyper3d",
+                    "prompt": "full-body sci-fi robot",
+                    "image_urls": ["https://example.com/front.png"],
+                    "file_format": "fbx",
+                    "mesh_mode": "Raw",
+                    "material": "PBR",
+                    "quality_override": 150000,
+                    "hd_texture": True,
+                },
+                "turn_index": 1,
+                "step": 1,
+                "expert_step": 1,
+            }
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_2"
+            / "hyper3d_result_1.zip"
+        )
+
+        with patch(
+            "src.agents.experts.three_d_generation.three_d_generation_agent.generation_tools.hyper3d_generate_tool",
+            new=AsyncMock(
+                return_value={
+                    "status": "success",
+                    "message": "Hyper3D task task-2 succeeded with 1 file(s).",
+                    "provider": "hyper3d",
+                    "model_name": "hyper3d-gen2-260112",
+                    "job_id": "task-2",
+                    "generate_type": "image_to_3d",
+                    "file_format": "fbx",
+                    "subdivision_level": "",
+                    "downloaded_files": [
+                        {
+                            "path": fake_output_path,
+                            "type": "fbx",
+                            "url": "https://example.com/hyper3d.zip",
+                            "preview_image_url": "",
+                        }
+                    ],
+                }
+            ),
+        ) as hyper3d_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        hyper3d_mock.assert_awaited_once_with(
+            prompt="full-body sci-fi robot",
+            input_paths=[],
+            image_urls=["https://example.com/front.png"],
+            model="hyper3d-gen2-260112",
+            file_format="fbx",
+            subdivision_level=None,
+            material="PBR",
+            mesh_mode="Raw",
+            quality_override=150000,
+            addons=None,
+            use_original_alpha=None,
+            bbox_condition=None,
+            ta_pose=None,
+            hd_texture=True,
+            timeout_seconds=900,
+            interval_seconds=60,
+            session_id="session_1",
+            turn_index=1,
+            step=1,
+        )
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["provider"], "hyper3d")
+        self.assertEqual(current_output["file_format"], "fbx")
+
+    async def test_3d_generation_routes_hitem3d_provider(self) -> None:
+        agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "hitem3d",
+                    "image_urls": ["https://example.com/front.png", "https://example.com/left.png"],
+                    "file_format": "glb",
+                    "resolution": "1536pro",
+                    "face_count": 2000000,
+                    "request_type": 3,
+                    "multi_images_bit": "1010",
+                },
+                "turn_index": 1,
+                "step": 1,
+                "expert_step": 1,
+            }
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_3"
+            / "hitem3d_result_1.zip"
+        )
+
+        with patch(
+            "src.agents.experts.three_d_generation.three_d_generation_agent.generation_tools.hitem3d_generate_tool",
+            new=AsyncMock(
+                return_value={
+                    "status": "success",
+                    "message": "Hitem3D task task-3 succeeded with 1 file(s).",
+                    "provider": "hitem3d",
+                    "model_name": "hitem3d-2-0-251223",
+                    "job_id": "task-3",
+                    "generate_type": "image_to_3d",
+                    "file_format": "glb",
+                    "resolution": "1536pro",
+                    "downloaded_files": [
+                        {
+                            "path": fake_output_path,
+                            "type": "glb",
+                            "url": "https://example.com/hitem3d.zip",
+                            "preview_image_url": "",
+                        }
+                    ],
+                }
+            ),
+        ) as hitem3d_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        hitem3d_mock.assert_awaited_once_with(
+            image_urls=["https://example.com/front.png", "https://example.com/left.png"],
+            model="hitem3d-2-0-251223",
+            file_format="glb",
+            resolution="1536pro",
+            face_count=2000000,
+            request_type=3,
+            multi_images_bit="1010",
+            timeout_seconds=900,
+            interval_seconds=60,
+            session_id="session_1",
+            turn_index=1,
+            step=1,
+        )
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["provider"], "hitem3d")
+        self.assertEqual(current_output["resolution"], "1536pro")
+
+    async def test_hitem3d_provider_requires_remote_image_url(self) -> None:
+        agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "hitem3d",
+                    "input_path": "inbox/cli/session_1/object.png",
+                },
+                "step": 0,
+            }
+        )
+
+        with patch(
+            "src.agents.experts.three_d_generation.three_d_generation_agent.generation_tools.hitem3d_generate_tool",
+            new=AsyncMock(),
+        ) as hitem3d_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        hitem3d_mock.assert_not_called()
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "error")
+        self.assertIn("externally accessible", current_output["message"])
+
 
 class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
     def test_build_client_from_env_reads_tencent_credentials_from_conf_json(self) -> None:
@@ -444,3 +618,174 @@ class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["job_id"], "task-1")
         self.assertEqual(result["downloaded_files"][0]["path"], fake_output_path)
+
+    async def test_hyper3d_generate_tool_builds_ark_task_and_downloads_result(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-2"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(create=create_mock)
+            )
+        )
+        fake_query_response = SimpleNamespace(
+            status="succeeded",
+            content=SimpleNamespace(file_url="https://example.com/hyper3d_result.zip"),
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_2"
+            / "hyper3d_result_1.zip"
+        )
+
+        with (
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_ark_client_from_env",
+                return_value=fake_client,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._poll_ark_3d_task_until_finished",
+                new=AsyncMock(return_value=fake_query_response),
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_download_dir",
+                return_value=fake_output_path.parent,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._download_seed3d_result_files_sync",
+                return_value=[
+                    {
+                        "path": fake_output_path,
+                        "type": "fbx",
+                        "url": "https://example.com/hyper3d_result.zip",
+                        "preview_image_url": "",
+                    }
+                ],
+            ) as download_mock,
+        ):
+            result = await generation_tools.hyper3d_generate_tool(
+                prompt="full-body sci-fi robot",
+                image_urls=["https://example.com/front.png"],
+                model="hyper3d-gen2-260112",
+                file_format="fbx",
+                mesh_mode="Raw",
+                material="PBR",
+                quality_override=150000,
+                hd_texture=True,
+                session_id="session_1",
+                turn_index=1,
+                step=1,
+            )
+
+        self.assertEqual(result["status"], "success")
+        create_mock.assert_called_once_with(
+            model="hyper3d-gen2-260112",
+            content=[
+                {
+                    "type": "text",
+                    "text": (
+                        "full-body sci-fi robot --mesh_mode Raw --hd_texture true "
+                        "--material PBR --quality_override 150000 --fileformat fbx"
+                    ),
+                },
+                {"type": "image_url", "image_url": {"url": "https://example.com/front.png"}},
+            ],
+        )
+        download_mock.assert_called_once_with(
+            [
+                {
+                    "url": "https://example.com/hyper3d_result.zip",
+                    "type": "fbx",
+                    "preview_image_url": "",
+                }
+            ],
+            fake_output_path.parent,
+            file_format="fbx",
+            provider_prefix="hyper3d",
+        )
+        self.assertEqual(result["job_id"], "task-2")
+
+    async def test_hitem3d_generate_tool_builds_ark_task_and_downloads_result(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-3"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(create=create_mock)
+            )
+        )
+        fake_query_response = SimpleNamespace(
+            status="succeeded",
+            content=SimpleNamespace(file_url="https://example.com/hitem3d_result.zip"),
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_3"
+            / "hitem3d_result_1.zip"
+        )
+
+        with (
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_ark_client_from_env",
+                return_value=fake_client,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._poll_ark_3d_task_until_finished",
+                new=AsyncMock(return_value=fake_query_response),
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_download_dir",
+                return_value=fake_output_path.parent,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._download_seed3d_result_files_sync",
+                return_value=[
+                    {
+                        "path": fake_output_path,
+                        "type": "glb",
+                        "url": "https://example.com/hitem3d_result.zip",
+                        "preview_image_url": "",
+                    }
+                ],
+            ) as download_mock,
+        ):
+            result = await generation_tools.hitem3d_generate_tool(
+                image_urls=["https://example.com/front.png", "https://example.com/left.png"],
+                model="hitem3d-2-0-251223",
+                file_format="glb",
+                resolution="1536pro",
+                face_count=2000000,
+                request_type=3,
+                multi_images_bit="1010",
+                session_id="session_1",
+                turn_index=1,
+                step=1,
+            )
+
+        self.assertEqual(result["status"], "success")
+        create_mock.assert_called_once_with(
+            model="hitem3d-2-0-251223",
+            content=[
+                {
+                    "type": "text",
+                    "text": "--resolution 1536pro --request_type 3 --ff 2 --face 2000000 --multi_images_bit 1010",
+                },
+                {"type": "image_url", "image_url": {"url": "https://example.com/front.png"}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/left.png"}},
+            ],
+        )
+        download_mock.assert_called_once_with(
+            [
+                {
+                    "url": "https://example.com/hitem3d_result.zip",
+                    "type": "glb",
+                    "preview_image_url": "",
+                }
+            ],
+            fake_output_path.parent,
+            file_format="glb",
+            provider_prefix="hitem3d",
+        )
+        self.assertEqual(result["job_id"], "task-3")

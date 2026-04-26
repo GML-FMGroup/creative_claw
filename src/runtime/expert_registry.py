@@ -380,27 +380,39 @@ _EXPERT_SPECS = {
             "timeout_seconds": 900,
             "interval_seconds": 8,
         },
-        required_parameters=("prompt or input_path/input_paths",),
+        required_parameters=("prompt, input_path/input_paths, or image_url/image_urls",),
         required_parameter_groups=(
             RequiredParameterGroup(
-                keys=("prompt", "input_path", "input_paths", "image_url"),
-                description="prompt, input_path/input_paths, or image_url",
+                keys=("prompt", "input_path", "input_paths", "image_url", "image_urls"),
+                description="prompt, input_path/input_paths, or image_url/image_urls",
             ),
         ),
         allowed_values={
-            "provider": ("hy3d", "seed3d"),
-            "model": ("3.0", "3.1", "doubao-seed3d-2-0-260328"),
+            "provider": ("hy3d", "seed3d", "hyper3d", "hitem3d"),
+            "model": (
+                "3.0",
+                "3.1",
+                "doubao-seed3d-2-0-260328",
+                "hyper3d-gen2-260112",
+                "hitem3d-2-0-251223",
+            ),
             "generate_type": ("normal", "lowpoly", "sketch", "geometry"),
             "result_format": ("stl", "usdz", "fbx", "glb", "obj", "usd"),
-            "file_format": ("glb", "obj", "usd", "usdz"),
+            "file_format": ("glb", "obj", "usd", "usdz", "stl", "fbx"),
             "subdivision_level": ("low", "medium", "high"),
+            "material": ("pbr", "shaded", "all", "none"),
+            "mesh_mode": ("raw", "quad"),
+            "resolution": ("1536", "1536pro"),
+            "request_type": ("1", "3"),
         },
         mirrored_output_keys=("three_d_generation_results",),
         notes=(
             "Generates 3D assets through provider-aware backends. "
             "`hy3d` uses Tencent Cloud Hunyuan 3D Pro and supports prompt-only, image-only, "
-            "and Sketch prompt-plus-image input. `seed3d` uses Volcengine Ark "
-            "doubao-seed3d-2-0-260328 and requires one input image through input_path or image_url."
+            "and Sketch prompt-plus-image input. `seed3d`, `hyper3d`, and `hitem3d` use "
+            "Volcengine Ark. `seed3d` requires exactly one image source. `hyper3d` supports "
+            "English prompt-only or 1-5 images with optional prompt/commands. `hitem3d` "
+            "requires 1-4 externally accessible image URLs and accepts parameter commands only."
         ),
     ),
 }

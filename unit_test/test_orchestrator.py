@@ -111,6 +111,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("code default model is `music-2.5`", instruction)
         self.assertIn("Provider `hy3d` remains the default", instruction)
         self.assertIn("doubao-seed3d-2-0-260328", instruction)
+        self.assertIn("hyper3d-gen2-260112", instruction)
+        self.assertIn("hitem3d-2-0-251223", instruction)
         self.assertIn("Use `task=subtitle`", instruction)
         self.assertIn("SRT/VTT", instruction)
         self.assertIn("Creative workflow routing hints", instruction)

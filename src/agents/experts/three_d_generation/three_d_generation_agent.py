@@ -45,6 +45,38 @@ class ThreeDGenerationAgent(CreativeExpert):
             input_paths = [input_paths]
         return [str(path).strip() for path in input_paths if str(path).strip()]
 
+    @staticmethod
+    def _normalize_image_urls(current_parameters: dict[str, Any]) -> list[str]:
+        """Normalize input image URLs from current parameters."""
+        urls: list[str] = []
+        for key in ("image_url", "image_urls"):
+            raw_urls = current_parameters.get(key, [])
+            if isinstance(raw_urls, str):
+                raw_urls = [raw_urls]
+            urls.extend(str(url).strip() for url in raw_urls if str(url).strip())
+        return urls
+
+    @staticmethod
+    def _optional_bool(current_parameters: dict[str, Any], *keys: str) -> bool | None:
+        """Return an optional boolean parameter from the first present key."""
+        for key in keys:
+            if key in current_parameters and current_parameters.get(key) not in (None, ""):
+                return generation_tools.coerce_bool(current_parameters.get(key))
+        return None
+
+    @staticmethod
+    def _provider_model(
+        current_parameters: dict[str, Any],
+        *,
+        provider: str,
+        default_model: str,
+    ) -> str:
+        """Return the model ID for a provider, ignoring the global hy3d default."""
+        raw_model = str(current_parameters.get("model", "") or "").strip()
+        if provider != "hy3d" and raw_model in {"", generation_tools.DEFAULT_MODEL, "3.1"}:
+            return default_model
+        return raw_model or default_model
+
     @override
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """Run the 3D generation expert with normalized session parameters."""
@@ -54,53 +86,38 @@ class ThreeDGenerationAgent(CreativeExpert):
         try:
             prompt = self._normalize_prompt(current_parameters.get("prompt", ""))
             input_paths = self._normalize_input_paths(current_parameters)
+            image_urls = self._normalize_image_urls(current_parameters)
         except ValueError as exc:
             error_text = f"{self._public_name} parameter normalization failed: {exc}"
             logger.error(error_text)
             yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
             return
 
-        if provider not in {"hy3d", "seed3d"}:
+        if provider not in {"hy3d", "seed3d", "hyper3d", "hitem3d"}:
             error_text = (
-                f"{self._public_name} supports providers `hy3d` and `seed3d` "
-                "in the current implementation."
+                f"{self._public_name} supports providers `hy3d`, `seed3d`, "
+                "`hyper3d`, and `hitem3d`."
             )
-            logger.error(error_text)
-            yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
-            return
-
-        if len(input_paths) > 1:
-            error_text = f"{self._public_name} currently supports at most one input image."
             logger.error(error_text)
             yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
             return
 
         generate_type = ""
         if provider == "seed3d":
-            image_url = str(current_parameters.get("image_url", "") or "").strip() or None
-            if input_paths and image_url:
-                error_text = f"{self._public_name} provider `seed3d` accepts only one image source."
+            if len(input_paths) + len(image_urls) != 1:
+                error_text = f"{self._public_name} provider `seed3d` requires exactly one image source."
                 logger.error(error_text)
                 yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
                 return
-            if not input_paths and not image_url:
-                error_text = (
-                    f"{self._public_name} provider `seed3d` requires `input_path`, "
-                    "`input_paths`, or `image_url`."
-                )
-                logger.error(error_text)
-                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
-                return
+            image_url = image_urls[0] if image_urls else None
 
             result = await generation_tools.seed3d_generate_tool(
                 input_path=input_paths[0] if input_paths else None,
                 image_url=image_url,
-                model=str(
-                    current_parameters.get(
-                        "model",
-                        generation_tools.DEFAULT_SEED3D_MODEL,
-                    )
-                    or generation_tools.DEFAULT_SEED3D_MODEL
+                model=self._provider_model(
+                    current_parameters,
+                    provider=provider,
+                    default_model=generation_tools.DEFAULT_SEED3D_MODEL,
                 ),
                 file_format=str(
                     current_parameters.get(
@@ -132,7 +149,135 @@ class ThreeDGenerationAgent(CreativeExpert):
                 turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
                 step=int(ctx.session.state.get("step", 0) or 0),
             )
+        elif provider == "hyper3d":
+            if len(input_paths) + len(image_urls) > 5:
+                error_text = f"{self._public_name} provider `hyper3d` supports at most 5 images."
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+
+            result = await generation_tools.hyper3d_generate_tool(
+                prompt=prompt or None,
+                input_paths=input_paths,
+                image_urls=image_urls,
+                model=self._provider_model(
+                    current_parameters,
+                    provider=provider,
+                    default_model=generation_tools.DEFAULT_HYPER3D_MODEL,
+                ),
+                file_format=str(
+                    current_parameters.get(
+                        "file_format",
+                        current_parameters.get(
+                            "result_format",
+                            generation_tools.DEFAULT_HYPER3D_FILE_FORMAT,
+                        ),
+                    )
+                    or generation_tools.DEFAULT_HYPER3D_FILE_FORMAT
+                ),
+                subdivision_level=(
+                    str(current_parameters.get("subdivision_level", "")).strip() or None
+                ),
+                material=(str(current_parameters.get("material", "")).strip() or None),
+                mesh_mode=(str(current_parameters.get("mesh_mode", "")).strip() or None),
+                quality_override=current_parameters.get(
+                    "quality_override",
+                    current_parameters.get("face_count"),
+                ),
+                addons=(str(current_parameters.get("addons", "")).strip() or None),
+                use_original_alpha=self._optional_bool(current_parameters, "use_original_alpha"),
+                bbox_condition=current_parameters.get("bbox_condition"),
+                ta_pose=self._optional_bool(current_parameters, "ta_pose", "TAPose"),
+                hd_texture=self._optional_bool(current_parameters, "hd_texture"),
+                timeout_seconds=int(
+                    current_parameters.get("timeout_seconds", generation_tools.DEFAULT_TIMEOUT_SECONDS)
+                ),
+                interval_seconds=int(
+                    current_parameters.get(
+                        "interval_seconds",
+                        generation_tools.DEFAULT_HYPER3D_INTERVAL_SECONDS,
+                    )
+                ),
+                session_id=ctx.session.id,
+                turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
+                step=int(ctx.session.state.get("step", 0) or 0),
+            )
+        elif provider == "hitem3d":
+            if prompt:
+                error_text = (
+                    f"{self._public_name} provider `hitem3d` supports parameter text only; "
+                    "do not pass a free-form prompt."
+                )
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+            if input_paths:
+                error_text = (
+                    f"{self._public_name} provider `hitem3d` requires externally accessible "
+                    "`image_url` or `image_urls`, not local input paths."
+                )
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+            if not image_urls or len(image_urls) > 4:
+                error_text = f"{self._public_name} provider `hitem3d` requires 1 to 4 image URLs."
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+
+            result = await generation_tools.hitem3d_generate_tool(
+                image_urls=image_urls,
+                model=self._provider_model(
+                    current_parameters,
+                    provider=provider,
+                    default_model=generation_tools.DEFAULT_HITEM3D_MODEL,
+                ),
+                file_format=str(
+                    current_parameters.get(
+                        "file_format",
+                        current_parameters.get(
+                            "result_format",
+                            generation_tools.DEFAULT_HITEM3D_FILE_FORMAT,
+                        ),
+                    )
+                    or generation_tools.DEFAULT_HITEM3D_FILE_FORMAT
+                ),
+                resolution=str(
+                    current_parameters.get(
+                        "resolution",
+                        generation_tools.DEFAULT_HITEM3D_RESOLUTION,
+                    )
+                    or generation_tools.DEFAULT_HITEM3D_RESOLUTION
+                ),
+                face_count=current_parameters.get("face", current_parameters.get("face_count")),
+                request_type=current_parameters.get("request_type"),
+                multi_images_bit=(
+                    str(current_parameters.get("multi_images_bit", "")).strip() or None
+                ),
+                timeout_seconds=int(
+                    current_parameters.get("timeout_seconds", generation_tools.DEFAULT_TIMEOUT_SECONDS)
+                ),
+                interval_seconds=int(
+                    current_parameters.get(
+                        "interval_seconds",
+                        generation_tools.DEFAULT_HITEM3D_INTERVAL_SECONDS,
+                    )
+                ),
+                session_id=ctx.session.id,
+                turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
+                step=int(ctx.session.state.get("step", 0) or 0),
+            )
         else:
+            if len(input_paths) > 1:
+                error_text = f"{self._public_name} provider `hy3d` supports at most one input image."
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+            if image_urls:
+                error_text = f"{self._public_name} provider `hy3d` does not support `image_url` inputs."
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
             generate_type = generation_tools.normalize_generate_type(
                 current_parameters.get("generate_type", generation_tools.DEFAULT_GENERATE_TYPE)
             )
@@ -232,6 +377,7 @@ class ThreeDGenerationAgent(CreativeExpert):
             "generate_type": result.get("generate_type", generate_type),
             "file_format": result.get("file_format", ""),
             "subdivision_level": result.get("subdivision_level", ""),
+            "resolution": result.get("resolution", ""),
             "result_files": structured_results,
         }
         logger.info(message)

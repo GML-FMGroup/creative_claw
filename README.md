@@ -66,6 +66,8 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 - HY 3D (`3.0`, `3.1`)
 - Doubao Seed3D 2.0 (`doubao-seed3d-2-0-260328`)
+- Hyper3D Gen2 (`hyper3d-gen2-260112`)
+- Hitem3D 2.0 (`hitem3d-2-0-251223`)
 
 ### 🔊 Speech Synthesis
 
@@ -220,6 +222,8 @@ The main LLM orchestrator can call these tool groups directly:
 
 - `hy3d`: default provider; supports prompt-only, image-only, and `generate_type=sketch` prompt-plus-image input.
 - `seed3d`: Volcengine Ark image-to-3D provider; requires one `input_path` / `input_paths` or `image_url`; optional controls include `file_format` (`glb|obj|usd|usdz`) and `subdivision_level` (`low|medium|high`).
+- `hyper3d`: Volcengine Ark text/image-to-3D provider; supports English prompt-only or 1-5 reference images; optional controls include `file_format`, `mesh_mode`, `material`, `quality_override`, and `hd_texture`.
+- `hitem3d`: Volcengine Ark image-to-3D provider; requires 1-4 externally accessible `image_url` / `image_urls`; optional controls include `file_format`, `resolution`, `face_count`, `request_type`, and `multi_images_bit`.
 
 ## 🌐 Supported Channels
 

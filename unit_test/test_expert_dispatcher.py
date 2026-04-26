@@ -204,6 +204,36 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["file_format"], "glb")
         self.assertEqual(parameters["subdivision_level"], "medium")
 
+    def test_normalize_invoke_agent_parameters_accepts_hyper3d(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="3DGeneration",
+            prompt=(
+                '{"provider":"hyper3d","prompt":"full-body sci-fi robot",'
+                '"file_format":"fbx","mesh_mode":"Raw","material":"PBR"}'
+            ),
+            state={},
+        )
+
+        self.assertEqual(parameters["provider"], "hyper3d")
+        self.assertNotIn("model", parameters)
+        self.assertEqual(parameters["file_format"], "fbx")
+        self.assertEqual(parameters["mesh_mode"], "Raw")
+
+    def test_normalize_invoke_agent_parameters_accepts_hitem3d(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="3DGeneration",
+            prompt=(
+                '{"provider":"hitem3d","image_urls":["https://example.com/front.png"],'
+                '"file_format":"glb","resolution":"1536pro","request_type":"3"}'
+            ),
+            state={},
+        )
+
+        self.assertEqual(parameters["provider"], "hitem3d")
+        self.assertEqual(parameters["image_urls"], ["https://example.com/front.png"])
+        self.assertEqual(parameters["file_format"], "glb")
+        self.assertEqual(parameters["resolution"], "1536pro")
+
     def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_segmentation(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
             normalize_invoke_agent_parameters(

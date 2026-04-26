@@ -13,6 +13,8 @@ This document lists the concrete model names currently used in the codebase, the
 | `doubao-seedance-2-0-fast-260128` | `VideoGenerationAgent` (`seedance` fast), short-video fast path | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `doubao-seedance-1-0-pro-250528` | `VideoGenerationAgent` (`seedance`, legacy-compatible) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `doubao-seed3d-2-0-260328` | `3DGeneration` (`seed3d`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `hyper3d-gen2-260112` | `3DGeneration` (`hyper3d`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `hitem3d-2-0-251223` | `3DGeneration` (`hitem3d`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `kling-v3` | `VideoGenerationAgent` (`kling`, default basic-route model) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | `kling-v1-6` | `VideoGenerationAgent` (`kling`, `multi_reference`) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | `DINO-XSeek-1.0` | `ImageGroundingAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
@@ -58,7 +60,7 @@ Some capabilities use service credentials rather than the general text-LLM provi
 | Search image mode | `SearchAgent` | Serper key | `services.serper_api_key` | `SERPER_API_KEY` | [Serper API Key](https://serper.dev/api-key) |
 | Built-in web search | `web_search` tool | Brave Search key | `services.brave_api_key` | `BRAVE_API_KEY` | [Brave Search API](https://brave.com/search/api/) |
 | 3D generation (`hy3d`) | `ThreeDGenerationAgent` | Tencent Cloud credentials | `services.tencentcloud_secret_id`, `services.tencentcloud_secret_key`, optional `services.tencentcloud_session_token`, optional `services.tencentcloud_region` | `TENCENTCLOUD_SECRET_ID`, `TENCENTCLOUD_SECRET_KEY`, optional `TENCENTCLOUD_SESSION_TOKEN`, optional `TENCENTCLOUD_REGION` | [Tencent Cloud API Key](https://console.cloud.tencent.com/cam/capi) |
-| 3D generation (`seed3d`) | `ThreeDGenerationAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| 3D generation (`seed3d`, `hyper3d`, `hitem3d`) | `ThreeDGenerationAgent` | Volcengine Ark key | `services.ark_api_key` | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 
 ## Notes
 
@@ -66,7 +68,7 @@ Some capabilities use service credentials rather than the general text-LLM provi
 - The text-LLM layer supports more providers than the single default example `gpt-5.4`, so this document also includes provider-level credential mapping for runtime configuration.
 - Some experts select providers dynamically. In those cases, the table records the model names that are actually invoked by the provider-specific code paths.
 - Kling now defaults to `kling-v3` for prompt and image-guided routes in the built-in provider path, while `multi_reference` follows the official `kling-v1-6` schema. When `KLING_API_BASE` is not configured explicitly, the provider probes the official Beijing and Singapore gateways and caches the first working base. Kling input images are validated against the documented file constraints, but the expert does not auto-resize or auto-crop them.
-- `3DGeneration` provider `seed3d` currently wires only `doubao-seed3d-2-0-260328`. The Volcengine page also lists Hyper3D and Hitem3D models, but their separate API shapes need to be verified before they are exposed as runnable providers.
+- `3DGeneration` now wires all three Volcengine Ark 3D model providers: `seed3d`, `hyper3d`, and `hitem3d`. They share the async content-generation task API but have provider-specific input and text-command constraints.
 - Gemini runtime accepts `GOOGLE_API_KEY` as the primary fallback environment variable and also accepts `GEMINI_API_KEY` as a compatibility alias.
 - DeepDataSpace runtime primarily uses `DDS_API_KEY`, and some code paths also accept compatibility aliases such as `DDS_TOKEN` and `DINO_XSEEK_TOKEN`.
 - For providers marked as "no dedicated fallback env var", the runtime config field still works, but `apply_env_fallbacks()` does not currently auto-import that provider from a provider-specific environment variable.
