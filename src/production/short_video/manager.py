@@ -7,6 +7,10 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+from src.agents.experts.video_generation.capabilities import (
+    normalize_seedance_model_name,
+    normalize_seedance_video_resolution,
+)
 from src.production.errors import ProductionError as ProductionRuntimeError
 from src.production.errors import ProductionSessionNotFoundError
 from src.production.models import (
@@ -42,6 +46,7 @@ from src.production.short_video.providers import (
 from src.production.short_video.renderer import TimelineRenderer
 from src.production.short_video.user_response import normalize_user_response
 from src.production.short_video.validators import RenderValidator
+from src.runtime.step_events import publish_orchestration_step_event
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
@@ -512,6 +517,7 @@ class ShortVideoProductionManager:
         )
         selected_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
+        current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
@@ -522,6 +528,8 @@ class ShortVideoProductionManager:
                 if state.asset_plan is not None
                 else "product_ad"
             ),
+            video_model_name=current_model_name,
+            video_resolution=current_resolution,
         )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
@@ -620,6 +628,7 @@ class ShortVideoProductionManager:
                 state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
             current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
             duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
+            current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
             state.asset_plan = _build_short_video_asset_plan(
                 user_prompt=state.brief_summary,
                 reference_assets=state.reference_assets,
@@ -630,6 +639,8 @@ class ShortVideoProductionManager:
                     if state.asset_plan is not None
                     else "product_ad"
                 ),
+                video_model_name=current_model_name,
+                video_resolution=current_resolution,
             )
             state.active_breakpoint = ProductionBreakpoint(
                 stage=state.stage,
@@ -684,12 +695,16 @@ class ShortVideoProductionManager:
     ) -> ProductionRunResult:
         """Create the P0 short-video asset plan and pause before provider calls."""
         duration_seconds = _duration_seconds(render_settings_payload, default=8.0)
+        video_model_name = _requested_seedance_model_name(render_settings_payload)
+        video_resolution = _requested_seedance_resolution(render_settings_payload, video_model_name)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=user_prompt,
             reference_assets=state.reference_assets,
             selected_ratio=_explicit_aspect_ratio(render_settings_payload),
             duration_seconds=duration_seconds,
             video_type=_requested_video_type(user_prompt, render_settings_payload),
+            video_model_name=video_model_name,
+            video_resolution=video_resolution,
         )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
@@ -706,6 +721,8 @@ class ShortVideoProductionManager:
                 metadata={
                     "video_type": state.asset_plan.video_type,
                     "planned_video_provider": state.asset_plan.planned_video_provider,
+                    "planned_video_model_name": state.asset_plan.planned_video_model_name,
+                    "planned_video_resolution": state.asset_plan.planned_video_resolution,
                     "planned_tts_provider": state.asset_plan.planned_tts_provider,
                     "selected_ratio": state.asset_plan.selected_ratio,
                 },
@@ -775,6 +792,15 @@ class ShortVideoProductionManager:
             state.status = "running"
             state.stage = "provider_generation"
             state.progress_percent = 45
+            _publish_short_video_progress(
+                adk_state,
+                state,
+                title="Generating Short Video",
+                detail=(
+                    "Calling the configured video provider for the approved short-video plan "
+                    f"({state.progress_percent}%)."
+                ),
+            )
             video_asset = await self.provider_runtime.generate_video_clip(
                 session_root=session_root,
                 asset_plan=state.asset_plan,
@@ -794,6 +820,12 @@ class ShortVideoProductionManager:
 
             state.stage = "audio_generation"
             state.progress_percent = 60
+            _publish_short_video_progress(
+                adk_state,
+                state,
+                title="Preparing Audio Track",
+                detail=f"Preparing the generated native audio track ({state.progress_percent}%).",
+            )
             audio_asset = await self.provider_runtime.synthesize_voiceover(
                 session_root=session_root,
                 asset_plan=state.asset_plan,
@@ -820,6 +852,12 @@ class ShortVideoProductionManager:
             final_path = _final_output_path(session_root, state.asset_plan.plan_id)
             state.stage = "rendering"
             state.progress_percent = 75
+            _publish_short_video_progress(
+                adk_state,
+                state,
+                title="Rendering Short Video",
+                detail=f"Muxing video and audio into the final MP4 ({state.progress_percent}%).",
+            )
             state.render_report = self.renderer.render(
                 timeline=state.timeline,
                 asset_manifest=state.asset_manifest,
@@ -828,6 +866,12 @@ class ShortVideoProductionManager:
             )
             state.stage = "validation"
             state.progress_percent = 90
+            _publish_short_video_progress(
+                adk_state,
+                state,
+                title="Validating Short Video",
+                detail=f"Checking the final MP4 before returning it ({state.progress_percent}%).",
+            )
             state.render_validation_report = self.validator.validate(state.render_report.output_path)
             if state.render_validation_report.status != "valid":
                 raise RuntimeError("; ".join(state.render_validation_report.issues) or "render validation failed")
@@ -850,6 +894,12 @@ class ShortVideoProductionManager:
                     message=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
                     metadata={"artifact_path": state.render_report.output_path},
                 )
+            )
+            _publish_short_video_progress(
+                adk_state,
+                state,
+                title="Short Video Completed",
+                detail=f"Final MP4 is ready ({state.progress_percent}%).",
             )
             self._save_projection_files(state)
             self.store.save_state(state)
@@ -984,6 +1034,35 @@ def _context_from_adk_state(adk_state) -> dict[str, Any]:
             sender_id=str(adk_state.get("sender_id", "") or "").strip(),
         ),
     }
+
+
+def _publish_short_video_progress(
+    adk_state,
+    state: ShortVideoProductionState,
+    *,
+    title: str,
+    detail: str,
+) -> None:
+    """Publish one best-effort realtime production progress event."""
+    session_id = str(adk_state.get("sid", "") or "").strip()
+    if not session_id:
+        return
+    publish_orchestration_step_event(
+        session_id=session_id,
+        turn_index=_normalize_turn_index(adk_state.get("turn_index")),
+        title=title,
+        detail=detail,
+        stage=state.stage,
+    )
+
+
+def _normalize_turn_index(value: Any) -> int | None:
+    """Return a positive turn index when one is available."""
+    try:
+        normalized = int(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
 
 
 def _resolve_requested_session_id(production_session_id: str | None, adk_state) -> str:
@@ -1146,9 +1225,13 @@ def _build_short_video_asset_plan(
     selected_ratio: str | None,
     duration_seconds: float,
     video_type: str,
+    video_model_name: str | None = None,
+    video_resolution: str | None = None,
 ) -> ShortVideoAssetPlan:
     brief = _brief_summary(user_prompt)
     normalized_video_type = _normalize_video_type(video_type) or "product_ad"
+    normalized_model_name = normalize_seedance_model_name(video_model_name)
+    normalized_resolution = normalize_seedance_video_resolution(normalized_model_name, video_resolution)
     reference_asset_ids = [item.reference_asset_id for item in reference_assets]
     shot_plan = ShortVideoShotPlan(
         duration_seconds=duration_seconds,
@@ -1158,11 +1241,23 @@ def _build_short_video_asset_plan(
     )
     return ShortVideoAssetPlan(
         video_type=normalized_video_type,  # type: ignore[arg-type]
+        planned_video_model_name=normalized_model_name,
+        planned_video_resolution=normalized_resolution,
         selected_ratio=selected_ratio,  # type: ignore[arg-type]
         duration_seconds=duration_seconds,
         reference_asset_ids=reference_asset_ids,
         shot_plan=shot_plan,
     )
+
+
+def _asset_plan_seedance_settings(asset_plan: ShortVideoAssetPlan | None) -> tuple[str, str]:
+    """Return existing Seedance model settings from an asset plan, or normalized defaults."""
+    if asset_plan is None:
+        model_name = normalize_seedance_model_name(None)
+        return model_name, normalize_seedance_video_resolution(model_name, None)
+    model_name = normalize_seedance_model_name(asset_plan.planned_video_model_name)
+    resolution = normalize_seedance_video_resolution(model_name, asset_plan.planned_video_resolution)
+    return model_name, resolution
 
 
 def _build_visual_prompt(
@@ -1321,6 +1416,24 @@ def _requests_no_subtitles(brief: str) -> bool:
     return any(token in normalized for token in ("不用显示字幕", "不要字幕", "无字幕", "no subtitles", "no captions"))
 
 
+def _requested_seedance_model_name(payload: dict[str, Any]) -> str:
+    """Return the requested Seedance model name from render settings."""
+    for key in ("model_name", "seedance_model_name", "video_model_name"):
+        value = str(payload.get(key, "") or "").strip()
+        if value:
+            return normalize_seedance_model_name(value)
+    return normalize_seedance_model_name(None)
+
+
+def _requested_seedance_resolution(payload: dict[str, Any], model_name: str) -> str:
+    """Return the requested Seedance resolution from render settings."""
+    for key in ("resolution", "video_resolution", "seedance_resolution"):
+        value = str(payload.get(key, "") or "").strip()
+        if value:
+            return normalize_seedance_video_resolution(model_name, value)
+    return normalize_seedance_video_resolution(model_name, None)
+
+
 def _requested_video_type(user_prompt: str, payload: dict[str, Any]) -> str:
     for key in ("video_type", "short_video_type", "production_type", "project_type"):
         normalized = _normalize_video_type(payload.get(key))
@@ -1466,6 +1579,8 @@ def _apply_revision_to_asset_plan(
         selected_ratio=asset_plan.selected_ratio,
         duration_seconds=asset_plan.duration_seconds,
         video_type=asset_plan.video_type,
+        video_model_name=asset_plan.planned_video_model_name,
+        video_resolution=asset_plan.planned_video_resolution,
     )
 
 
@@ -1561,6 +1676,9 @@ def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayloa
             {
                 "kind": "providers",
                 "planned_video_provider": asset_plan.planned_video_provider,
+                "planned_video_model_name": asset_plan.planned_video_model_name,
+                "planned_video_resolution": asset_plan.planned_video_resolution,
+                "planned_generate_audio": asset_plan.planned_generate_audio,
                 "planned_tts": asset_plan.planned_tts,
                 "planned_tts_provider": asset_plan.planned_tts_provider,
             },

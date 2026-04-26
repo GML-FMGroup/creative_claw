@@ -38,7 +38,7 @@ async def run_short_video_production(
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
         input_files: Optional workspace file records to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
-        render_settings: Optional aspect ratio, duration, fps, width, and height settings.
+        render_settings: Optional aspect ratio, duration, fps, width, height, Seedance model_name, and resolution settings.
         user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for revision actions. Plain text is accepted and treated as notes.
     """
     if tool_context is None:

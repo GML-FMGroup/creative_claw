@@ -25,6 +25,8 @@ from src.production.short_video.providers import (
     VeoTtsProviderRuntime,
 )
 from src.production.short_video.tool import run_short_video_production
+from src.runtime.step_events import configure_step_event_publisher
+from src.runtime.tool_context import route_context
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path, workspace_root
 
 
@@ -251,6 +253,9 @@ class ShortVideoProductionTests(unittest.TestCase):
         state_path = resolve_workspace_path(result.state_ref or "")
         asset_plan_payload = json.loads((state_path.parent / "asset_plan.json").read_text(encoding="utf-8"))
         self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_provider"], "seedance")
+        self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_model_name"], "doubao-seedance-2-0-260128")
+        self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_resolution"], "720p")
+        self.assertTrue(asset_plan_payload["asset_plan"]["planned_generate_audio"])
         self.assertIsNone(asset_plan_payload["asset_plan"]["selected_ratio"])
         self.assertIn("active_review", asset_plan_payload)
 
@@ -298,6 +303,30 @@ class ShortVideoProductionTests(unittest.TestCase):
                 review_items = result.review_payload.model_dump(mode="json")["items"]
                 video_type_item = next(item for item in review_items if item["kind"] == "video_type")
                 self.assertEqual(video_type_item["video_type"], expected_video_type)
+
+    def test_manager_start_accepts_seedance_fast_model_settings(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="make a faster social media short",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={
+                "aspect_ratio": "9:16",
+                "model_name": "doubao-seedance-2-0-fast-260128",
+                "resolution": "1080p",
+            },
+            adk_state=state,
+        ))
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        asset_plan = state_payload["asset_plan"]
+        self.assertEqual(asset_plan["planned_video_model_name"], "doubao-seedance-2-0-fast-260128")
+        self.assertEqual(asset_plan["planned_video_resolution"], "720p")
+        providers_item = next(item for item in result.review_payload.model_dump(mode="json")["items"] if item["kind"] == "providers")
+        self.assertEqual(providers_item["planned_video_model_name"], "doubao-seedance-2-0-fast-260128")
+        self.assertEqual(providers_item["planned_video_resolution"], "720p")
 
     def test_cartoon_dialogue_plan_preserves_character_lines_for_native_audio(self) -> None:
         state = _adk_state()
@@ -802,6 +831,44 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertTrue(seedance_mock.await_args.kwargs["generate_audio"])
         self.assertEqual(seedance_mock.await_args.kwargs["model_name"], "doubao-seedance-2-0-260128")
 
+    def test_manager_resume_approve_uses_seedance_fast_plan_settings(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a fast default-provider product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={
+                "aspect_ratio": "9:16",
+                "model_name": "doubao-seedance-2-0-fast-260128",
+                "resolution": "1080p",
+            },
+            adk_state=state,
+        ))
+        seedance_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"seedance-fast-video-with-audio",
+                "provider": "seedance",
+                "model_name": "doubao-seedance-2-0-fast-260128",
+                "generate_audio": True,
+            }
+        )
+
+        with patch("src.production.short_video.providers.video_tools.seedance_video_generation_tool", seedance_mock):
+            result = asyncio.run(manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            ))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(seedance_mock.await_args.kwargs["model_name"], "doubao-seedance-2-0-fast-260128")
+        self.assertEqual(seedance_mock.await_args.kwargs["resolution"], "720p")
+
     def test_manager_resume_cancel_marks_production_cancelled(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
@@ -1131,6 +1198,38 @@ class ShortVideoProviderRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(seedance_mock.await_args.kwargs["duration_seconds"], 8)
             self.assertTrue(seedance_mock.await_args.kwargs["generate_audio"])
 
+    async def test_seedance_native_audio_runtime_uses_asset_plan_model_settings(self) -> None:
+        provider = SeedanceNativeAudioProviderRuntime()
+        asset_plan = _provider_asset_plan()
+        asset_plan.planned_video_model_name = "doubao-seedance-2-0-fast-260128"
+        asset_plan.planned_video_resolution = "480p"
+        settings = ShortVideoRenderSettings(aspect_ratio="9:16", width=720, height=1280)
+        seedance_mock = AsyncMock(
+            return_value={
+                "status": "success",
+                "message": b"seedance-fast-video-bytes",
+                "provider": "seedance",
+                "model_name": "doubao-seedance-2-0-fast-260128",
+                "generate_audio": True,
+            }
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            with patch(
+                "src.production.short_video.providers.video_tools.seedance_video_generation_tool",
+                seedance_mock,
+            ):
+                await provider.generate_video_clip(
+                    session_root=Path(tmpdir),
+                    asset_plan=asset_plan,
+                    render_settings=settings,
+                    reference_assets=[],
+                    owner_ref=ProductionOwnerRef(sender_id="user-1"),
+                )
+
+        self.assertEqual(seedance_mock.await_args.kwargs["model_name"], "doubao-seedance-2-0-fast-260128")
+        self.assertEqual(seedance_mock.await_args.kwargs["resolution"], "480p")
+
     async def test_veo_tts_runtime_writes_provider_outputs(self) -> None:
         provider = VeoTtsProviderRuntime()
         asset_plan = _provider_asset_plan()
@@ -1215,6 +1314,48 @@ class ShortVideoProductionAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["stage"], "missing_tool_context")
+
+
+class ShortVideoProductionProgressTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self) -> None:
+        configure_step_event_publisher(None)
+
+    async def test_manager_resume_publishes_internal_progress_events(self) -> None:
+        messages = []
+
+        async def _publisher(message):
+            messages.append(message)
+
+        configure_step_event_publisher(_publisher)
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = await manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        )
+
+        with route_context("feishu", "chat-short-video"):
+            result = await manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(result.status, "completed")
+        stage_titles = [message.metadata["stage_title"] for message in messages]
+        self.assertIn("Generating Short Video", stage_titles)
+        self.assertIn("Preparing Audio Track", stage_titles)
+        self.assertIn("Rendering Short Video", stage_titles)
+        self.assertIn("Validating Short Video", stage_titles)
+        self.assertIn("Short Video Completed", stage_titles)
 
 
 @unittest.skipUnless(_HAS_FFMPEG, "ffmpeg/ffprobe not available")

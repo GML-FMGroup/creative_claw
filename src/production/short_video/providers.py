@@ -116,15 +116,17 @@ class SeedanceNativeAudioProviderRuntime:
 
         input_paths = [item.path for item in reference_assets if item.status == "valid"][:9]
         mode = "reference_asset" if input_paths else "prompt"
+        current_model_name = asset_plan.planned_video_model_name or self.model_name
+        current_resolution = asset_plan.planned_video_resolution or self.resolution
         result = await video_tools.seedance_video_generation_tool(
             asset_plan.shot_plan.visual_prompt,
             input_paths=input_paths or None,
             mode=mode,
             aspect_ratio=ratio,
-            model_name=self.model_name,
-            resolution=self.resolution,
+            model_name=current_model_name,
+            resolution=current_resolution,
             duration_seconds=duration_seconds,
-            generate_audio=True,
+            generate_audio=asset_plan.planned_generate_audio,
             watermark=False,
         )
         if result.get("status") != "success":
@@ -149,8 +151,8 @@ class SeedanceNativeAudioProviderRuntime:
             height=render_settings.height,
             derived_from=asset_plan.reference_asset_ids,
             metadata={
-                "model_name": str(result.get("model_name", "") or self.model_name),
-                "generate_audio": bool(result.get("generate_audio", True)),
+                "model_name": str(result.get("model_name", "") or current_model_name),
+                "generate_audio": bool(result.get("generate_audio", asset_plan.planned_generate_audio)),
                 "native_audio": True,
             },
         )
@@ -167,6 +169,7 @@ class SeedanceNativeAudioProviderRuntime:
         output_path = _seedance_output_path(session_root=session_root, plan_id=asset_plan.plan_id)
         if not output_path.exists():
             raise ShortVideoProviderError("Seedance native-audio video is missing before audio manifest creation.")
+        current_model_name = asset_plan.planned_video_model_name or self.model_name
         return AudioManifestEntry(
             audio_id=f"{asset_plan.plan_id}_native_audio",
             kind="voiceover",
@@ -175,8 +178,8 @@ class SeedanceNativeAudioProviderRuntime:
             provider="seedance_native_audio",
             duration_seconds=asset_plan.duration_seconds,
             metadata={
-                "model_name": self.model_name,
-                "generate_audio": True,
+                "model_name": current_model_name,
+                "generate_audio": asset_plan.planned_generate_audio,
                 "native_audio": True,
             },
         )
