@@ -2,6 +2,8 @@
 
 本文档记录当前短视频生产 P1e 的可用范围、运行方式和验收检查项。P1e 在 P0 真实生成闭环、P1a storyboard 审阅、P1b 分段确认、P1c 局部重生成、P1d 显式 provider/runtime 选择基础上，增加了基础质量报告：用户给出任务描述后，系统先返回 storyboard，再返回 provider 资产计划；用户确认资产计划后，系统生成可预览的短视频分段，等待用户确认后再继续生成后续分段或合成最终 MP4。最终成片后，系统会落盘可解释质量报告，帮助用户决定是否继续修改。
 
+如果要理解 CreativeClaw production 的通用 4 层框架，请看 [production_framework_zh.md](production_framework_zh.md)。如果要看当前短视频生成的代码级框架、状态机和模块职责，请看 [short_video_generation_framework_zh.md](short_video_generation_framework_zh.md)。
+
 ## 能力范围
 
 当前 P1e 支持三类短视频：
