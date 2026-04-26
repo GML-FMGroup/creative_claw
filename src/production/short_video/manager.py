@@ -31,6 +31,8 @@ from src.production.short_video.models import (
     ShortVideoAssetPlan,
     ShortVideoProductionState,
     ShortVideoRenderSettings,
+    ShortVideoStoryboard,
+    ShortVideoStoryboardShot,
     ShortVideoShotPlan,
     ShortVideoTimeline,
     VideoClip,
@@ -50,7 +52,7 @@ from src.runtime.step_events import publish_orchestration_step_event
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
-_VIEW_TYPES = ("overview", "brief", "asset_plan", "timeline", "events", "artifacts")
+_VIEW_TYPES = ("overview", "brief", "storyboard", "asset_plan", "timeline", "events", "artifacts")
 _VIDEO_TYPES = ("product_ad", "cartoon_short_drama", "social_media_short")
 _VIDEO_TYPE_LABELS = {
     "product_ad": "product-ad",
@@ -89,7 +91,7 @@ class ShortVideoProductionManager:
         render_settings: dict[str, Any] | None,
         adk_state,
     ) -> ProductionRunResult:
-        """Start a short-video production run or pause at the first P0 review."""
+        """Start a short-video production run or pause at the first P1a review."""
         context = _context_from_adk_state(adk_state)
         production_session = self.store.create_session(
             capability=self.capability,
@@ -118,7 +120,7 @@ class ShortVideoProductionManager:
 
         try:
             if not placeholder_assets:
-                return self._prepare_asset_plan_review(
+                return self._prepare_storyboard_review(
                     state,
                     user_prompt=user_prompt,
                     render_settings_payload=render_settings or {},
@@ -384,6 +386,43 @@ class ShortVideoProductionManager:
                     message="Revision target was not found.",
                 ),
             )
+        target_kinds = _revision_target_kinds(impact_view)
+        if state.asset_plan is None and state.storyboard is not None:
+            state.brief_summary = _append_revision_note(state.brief_summary, revision_notes)
+            state.storyboard = _build_short_video_storyboard(
+                user_prompt=state.brief_summary,
+                reference_assets=_valid_reference_assets(state),
+                selected_ratio=state.storyboard.selected_ratio or state.planning_context.get("selected_ratio"),
+                duration_seconds=_planning_duration_seconds(state),
+                video_type=_planning_video_type(state),
+            )
+            state.status = "needs_user_review"
+            state.stage = "storyboard_review"
+            state.progress_percent = 15
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_storyboard_review_payload(state),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="storyboard_revision_applied",
+                    stage=state.stage,
+                    message="Applied user revision to the short-video storyboard and paused for review.",
+                    metadata={
+                        "user_response": response,
+                        "target_kinds": sorted(target_kinds),
+                        "impact_level": impact_view.get("impact_level", ""),
+                    },
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(
+                state,
+                message="Revision was applied to the storyboard. Please review it before asset planning.",
+                view=build_revision_impact_view(state, response),
+            )
         if state.asset_plan is None:
             return self._result_from_state(
                 state,
@@ -394,8 +433,6 @@ class ShortVideoProductionManager:
                     message="No asset plan exists for this production session.",
                 ),
             )
-
-        target_kinds = _revision_target_kinds(impact_view)
         state.brief_summary = _append_revision_note(state.brief_summary, revision_notes)
         _apply_revision_to_asset_plan(
             state,
@@ -515,34 +552,47 @@ class ShortVideoProductionManager:
             reason=reason,
             artifact_notice="May be stale after reference asset changes.",
         )
-        selected_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
-        duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
+        selected_ratio = (
+            state.asset_plan.selected_ratio
+            if state.asset_plan is not None
+            else (state.storyboard.selected_ratio if state.storyboard is not None else state.planning_context.get("selected_ratio"))
+        )
+        duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else _planning_duration_seconds(state)
         current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
-        state.asset_plan = _build_short_video_asset_plan(
+        video_type = (
+            state.asset_plan.video_type
+            if state.asset_plan is not None
+            else _planning_video_type(state)
+        )
+        state.planning_context.update(
+            {
+                "selected_ratio": selected_ratio,
+                "duration_seconds": duration_seconds,
+                "video_type": video_type,
+                "video_model_name": current_model_name,
+                "video_resolution": current_resolution,
+            }
+        )
+        state.storyboard = _build_short_video_storyboard(
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
             selected_ratio=selected_ratio,
             duration_seconds=duration_seconds,
-            video_type=(
-                state.asset_plan.video_type
-                if state.asset_plan is not None
-                else "product_ad"
-            ),
-            video_model_name=current_model_name,
-            video_resolution=current_resolution,
+            video_type=video_type,
         )
+        state.asset_plan = None
         state.status = "needs_user_review"
-        state.stage = "asset_plan_review"
+        state.stage = "storyboard_review"
         state.progress_percent = max(state.progress_percent, 20)
         state.active_breakpoint = ProductionBreakpoint(
             stage=state.stage,
-            review_payload=_asset_plan_review_payload(state),
+            review_payload=_storyboard_review_payload(state),
         )
         state.production_events.append(
             ProductionEvent(
                 event_type="reference_assets_added",
                 stage=state.stage,
-                message="Added reference assets and invalidated dependent short-video outputs.",
+                message="Added reference assets and returned to storyboard review.",
                 metadata={
                     "added_reference_asset_ids": [
                         item.reference_asset_id for item in new_references
@@ -565,7 +615,7 @@ class ShortVideoProductionManager:
             state,
             message=(
                 f"Added {len(new_references)} reference asset(s). "
-                "The asset plan is ready for review again."
+                "The storyboard is ready for review again."
             ),
         )
 
@@ -623,43 +673,16 @@ class ShortVideoProductionManager:
             return self._result_from_state(state, message="Short-video production was cancelled.")
 
         if decision == "revise":
-            notes = str(response.get("notes", "") or response.get("message", "") or "").strip()
-            if notes:
-                state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
-            current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
-            duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
-            current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
-            state.asset_plan = _build_short_video_asset_plan(
-                user_prompt=state.brief_summary,
-                reference_assets=state.reference_assets,
-                selected_ratio=current_ratio,
-                duration_seconds=duration_seconds,
-                video_type=(
-                    state.asset_plan.video_type
-                    if state.asset_plan is not None
-                    else "product_ad"
-                ),
-                video_model_name=current_model_name,
-                video_resolution=current_resolution,
-            )
-            state.active_breakpoint = ProductionBreakpoint(
-                stage=state.stage,
-                review_payload=_asset_plan_review_payload(state),
-            )
-            state.production_events.append(
-                ProductionEvent(
-                    event_type="asset_plan_revision_requested",
-                    stage=state.stage,
-                    message="User requested asset-plan revision.",
-                    metadata={"user_response": response},
+            if state.active_breakpoint.stage == "storyboard_review":
+                return self._revise_storyboard_and_pause(
+                    state,
+                    user_response=response,
+                    adk_state=adk_state,
                 )
-            )
-            self._save_projection_files(state)
-            self.store.save_state(state)
-            self.store.project_to_adk_state(adk_state, state)
-            return self._result_from_state(
+            return self._revise_asset_plan_and_pause(
                 state,
-                message="Revision notes were recorded. Please approve, revise again, or cancel the updated plan.",
+                user_response=response,
+                adk_state=adk_state,
             )
 
         if decision != "approve":
@@ -679,10 +702,251 @@ class ShortVideoProductionManager:
                 message="Please respond with decision=approve, revise, or cancel.",
             )
 
-        return await self._approve_asset_plan_and_generate(
+        if state.active_breakpoint.stage == "storyboard_review":
+            return self._approve_storyboard_and_prepare_asset_plan_review(
+                state,
+                user_response=response,
+                adk_state=adk_state,
+            )
+        if state.active_breakpoint.stage == "asset_plan_review":
+            return await self._approve_asset_plan_and_generate(
+                state,
+                user_response=response,
+                adk_state=adk_state,
+            )
+
+        state.production_events.append(
+            ProductionEvent(
+                event_type="resume_stage_unsupported",
+                stage=state.stage,
+                message="Resume decision was not valid for the current production breakpoint.",
+                metadata={"user_response": response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
             state,
-            user_response=response,
-            adk_state=adk_state,
+            message=f"Current review stage cannot be approved by this action: {state.active_breakpoint.stage}.",
+        )
+
+    def _prepare_storyboard_review(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_prompt: str,
+        render_settings_payload: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Create a P1a storyboard and pause before asset-plan generation."""
+        duration_seconds = _duration_seconds(render_settings_payload, default=8.0)
+        video_model_name = _requested_seedance_model_name(render_settings_payload)
+        video_resolution = _requested_seedance_resolution(render_settings_payload, video_model_name)
+        video_type = _requested_video_type(user_prompt, render_settings_payload)
+        selected_ratio = _explicit_aspect_ratio(render_settings_payload)
+        state.planning_context = {
+            "user_prompt": user_prompt,
+            "render_settings": dict(render_settings_payload),
+            "duration_seconds": duration_seconds,
+            "video_type": video_type,
+            "video_model_name": video_model_name,
+            "video_resolution": video_resolution,
+            "selected_ratio": selected_ratio,
+        }
+        state.storyboard = _build_short_video_storyboard(
+            user_prompt=user_prompt,
+            reference_assets=state.reference_assets,
+            selected_ratio=selected_ratio,
+            duration_seconds=duration_seconds,
+            video_type=video_type,
+        )
+        state.status = "needs_user_review"
+        state.stage = "storyboard_review"
+        state.progress_percent = 15
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_storyboard_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="storyboard_review_required",
+                stage=state.stage,
+                message="Prepared a P1a short-video storyboard and paused before asset-plan generation.",
+                metadata={
+                    "storyboard_id": state.storyboard.storyboard_id,
+                    "video_type": state.storyboard.video_type,
+                    "selected_ratio": state.storyboard.selected_ratio,
+                    "shot_count": len(state.storyboard.shots),
+                },
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Please review the short-video storyboard before provider-specific asset planning.",
+        )
+
+    def _approve_storyboard_and_prepare_asset_plan_review(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Approve the storyboard and create the provider-specific asset plan review."""
+        if state.storyboard is None:
+            return self._fail_state(
+                state,
+                adk_state=adk_state,
+                code="invalid_state",
+                message="No storyboard exists for this production session.",
+            )
+
+        selected_ratio = _resume_selected_ratio(
+            user_response,
+            state.storyboard.selected_ratio or state.planning_context.get("selected_ratio"),
+        )
+        state.storyboard.selected_ratio = selected_ratio  # type: ignore[assignment]
+        state.storyboard.status = "approved"
+        state.planning_context["selected_ratio"] = selected_ratio
+        duration_seconds = _planning_duration_seconds(state)
+        video_model_name, video_resolution = _planning_seedance_settings(state)
+        video_type = _planning_video_type(state)
+        state.asset_plan = _build_short_video_asset_plan(
+            user_prompt=state.brief_summary,
+            reference_assets=_valid_reference_assets(state),
+            selected_ratio=selected_ratio,
+            duration_seconds=duration_seconds,
+            video_type=video_type,
+            video_model_name=video_model_name,
+            video_resolution=video_resolution,
+            storyboard=state.storyboard,
+        )
+        state.status = "needs_user_review"
+        state.stage = "asset_plan_review"
+        state.progress_percent = 25
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_asset_plan_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="storyboard_approved",
+                stage=state.stage,
+                message="User approved the storyboard; prepared asset-plan review before provider generation.",
+                metadata={
+                    "storyboard_id": state.storyboard.storyboard_id,
+                    "asset_plan_id": state.asset_plan.plan_id,
+                    "selected_ratio": selected_ratio,
+                },
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Storyboard approved. Please review the short-video asset plan before real generation.",
+        )
+
+    def _revise_storyboard_and_pause(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Apply storyboard revision notes and remain at storyboard review."""
+        notes = str(user_response.get("notes", "") or user_response.get("message", "") or "").strip()
+        if notes:
+            state.brief_summary = f"{state.brief_summary}\n\nStoryboard revision notes: {notes}"
+        selected_ratio = _resume_selected_ratio(
+            user_response,
+            state.storyboard.selected_ratio if state.storyboard is not None else state.planning_context.get("selected_ratio"),
+        )
+        state.planning_context["selected_ratio"] = selected_ratio
+        state.storyboard = _build_short_video_storyboard(
+            user_prompt=state.brief_summary,
+            reference_assets=_valid_reference_assets(state),
+            selected_ratio=selected_ratio,
+            duration_seconds=_planning_duration_seconds(state),
+            video_type=_planning_video_type(state),
+        )
+        state.asset_plan = None
+        state.status = "needs_user_review"
+        state.stage = "storyboard_review"
+        state.progress_percent = 15
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_storyboard_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="storyboard_revision_requested",
+                stage=state.stage,
+                message="User requested storyboard revision.",
+                metadata={"user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Storyboard revision notes were recorded. Please approve, revise again, or cancel the updated storyboard.",
+        )
+
+    def _revise_asset_plan_and_pause(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Apply asset-plan revision notes and remain at asset-plan review."""
+        notes = str(user_response.get("notes", "") or user_response.get("message", "") or "").strip()
+        if notes:
+            state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
+        current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else state.planning_context.get("selected_ratio")
+        duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else _planning_duration_seconds(state)
+        current_model_name, current_resolution = _asset_plan_seedance_settings(state.asset_plan)
+        state.asset_plan = _build_short_video_asset_plan(
+            user_prompt=state.brief_summary,
+            reference_assets=_valid_reference_assets(state),
+            selected_ratio=current_ratio,
+            duration_seconds=duration_seconds,
+            video_type=(
+                state.asset_plan.video_type
+                if state.asset_plan is not None
+                else _planning_video_type(state)
+            ),
+            video_model_name=current_model_name,
+            video_resolution=current_resolution,
+            storyboard=state.storyboard,
+        )
+        if notes:
+            state.asset_plan.shot_plan.voiceover_text = _build_voiceover_text(state.brief_summary)
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_asset_plan_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="asset_plan_revision_requested",
+                stage=state.stage,
+                message="User requested asset-plan revision.",
+                metadata={"user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Revision notes were recorded. Please approve, revise again, or cancel the updated plan.",
         )
 
     def _prepare_asset_plan_review(
@@ -993,6 +1257,30 @@ class ShortVideoProductionManager:
             f"# Short Video Brief\n\n{state.brief_summary}\n",
             encoding="utf-8",
         )
+        (root / "storyboard.json").write_text(
+            json.dumps(
+                {
+                    "storyboard": (
+                        state.storyboard.model_dump(mode="json")
+                        if state.storyboard is not None
+                        else None
+                    ),
+                    "active_review": (
+                        state.active_breakpoint.review_payload.model_dump(mode="json")
+                        if state.active_breakpoint is not None
+                        else None
+                    ),
+                    "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (root / "storyboard.md").write_text(
+            _storyboard_markdown(state),
+            encoding="utf-8",
+        )
         (root / "asset_plan.json").write_text(
             json.dumps(
                 {
@@ -1082,6 +1370,8 @@ def _build_production_view(state: ShortVideoProductionState, view_type: str) -> 
         return _overview_view(state)
     if view_type == "brief":
         return _brief_view(state)
+    if view_type == "storyboard":
+        return _storyboard_view(state)
     if view_type == "asset_plan":
         return _asset_plan_view(state)
     if view_type == "timeline":
@@ -1119,11 +1409,13 @@ def _overview_view(state: ShortVideoProductionState) -> dict[str, Any]:
             ),
             "counts": {
                 "reference_assets": len(state.reference_assets),
+                "storyboard_shots": len(state.storyboard.shots) if state.storyboard is not None else 0,
                 "asset_manifest": len(state.asset_manifest),
                 "audio_manifest": len(state.audio_manifest),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
             },
+            "has_storyboard": state.storyboard is not None,
             "has_timeline": state.timeline is not None,
             "has_render_report": state.render_report is not None,
             "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
@@ -1138,6 +1430,27 @@ def _brief_view(state: ShortVideoProductionState) -> dict[str, Any]:
         {
             "brief_summary": state.brief_summary,
             "brief_path": f"{state.production_session.root_dir}/brief.md",
+        }
+    )
+    return view
+
+
+def _storyboard_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "storyboard")
+    view.update(
+        {
+            "storyboard": (
+                state.storyboard.model_dump(mode="json")
+                if state.storyboard is not None
+                else None
+            ),
+            "active_review": (
+                state.active_breakpoint.review_payload.model_dump(mode="json")
+                if state.active_breakpoint is not None
+                else None
+            ),
+            "storyboard_path": f"{state.production_session.root_dir}/storyboard.json",
+            "storyboard_markdown_path": f"{state.production_session.root_dir}/storyboard.md",
         }
     )
     return view
@@ -1218,6 +1531,211 @@ def _brief_summary(user_prompt: str) -> str:
     return prompt or "Short-video production."
 
 
+def _build_short_video_storyboard(
+    *,
+    user_prompt: str,
+    reference_assets: list[ReferenceAssetEntry],
+    selected_ratio: str | None,
+    duration_seconds: float,
+    video_type: str,
+) -> ShortVideoStoryboard:
+    """Build a deterministic P1a storyboard from the user brief and references."""
+    brief = _brief_summary(user_prompt)
+    normalized_video_type = _normalize_video_type(video_type) or "product_ad"
+    reference_asset_ids = [item.reference_asset_id for item in reference_assets]
+    global_constraints = _storyboard_global_constraints(brief, reference_assets)
+    if normalized_video_type == "cartoon_short_drama":
+        shots = _cartoon_storyboard_shots(
+            brief=brief,
+            duration_seconds=duration_seconds,
+            reference_asset_ids=reference_asset_ids,
+        )
+        title = "Cartoon short-drama storyboard"
+    elif normalized_video_type == "social_media_short":
+        shots = _social_storyboard_shots(
+            brief=brief,
+            duration_seconds=duration_seconds,
+            reference_asset_ids=reference_asset_ids,
+        )
+        title = "Social-media short storyboard"
+    else:
+        shots = _product_ad_storyboard_shots(
+            brief=brief,
+            duration_seconds=duration_seconds,
+            reference_asset_ids=reference_asset_ids,
+        )
+        title = "Product-ad storyboard"
+
+    return ShortVideoStoryboard(
+        video_type=normalized_video_type,  # type: ignore[arg-type]
+        title=title,
+        narrative_summary=_storyboard_summary(normalized_video_type, brief),
+        target_duration_seconds=duration_seconds,
+        selected_ratio=selected_ratio,  # type: ignore[arg-type]
+        global_constraints=global_constraints,
+        reference_asset_ids=reference_asset_ids,
+        shots=shots,
+    )
+
+
+def _storyboard_global_constraints(
+    brief: str,
+    reference_assets: list[ReferenceAssetEntry],
+) -> list[str]:
+    constraints: list[str] = [
+        "Confirm storyboard before provider-specific asset planning.",
+        "Keep final provider calls behind explicit user approval.",
+    ]
+    if reference_assets:
+        constraints.append("Use uploaded reference assets as identity anchors.")
+    if _requests_no_subtitles(brief):
+        constraints.append("Do not render subtitles or on-screen captions.")
+    if _extract_dialogue_lines(brief):
+        constraints.append("Treat speaker-labelled lines as character dialogue, not narration.")
+    if any(token in brief.lower() for token in ("语音", "声音", "voice", "audio", "bgm", "音乐")):
+        constraints.append("Generate synchronized native audio that matches the requested voice style.")
+    return constraints
+
+
+def _storyboard_summary(video_type: str, brief: str) -> str:
+    label = _video_type_label(video_type)
+    return f"{label} storyboard based on the user brief: {_build_voiceover_text(brief)}"
+
+
+def _product_ad_storyboard_shots(
+    *,
+    brief: str,
+    duration_seconds: float,
+    reference_asset_ids: list[str],
+) -> list[ShortVideoStoryboardShot]:
+    durations = _split_storyboard_durations(duration_seconds, 3)
+    return [
+        ShortVideoStoryboardShot(
+            sequence_index=1,
+            duration_seconds=durations[0],
+            purpose="Hook and product reveal",
+            visual_beat="Open with a polished product hero moment that makes the product immediately recognizable.",
+            audio_notes="Short premium opening line or product sound cue.",
+            constraints=["Show the product clearly in the first beat."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=2,
+            duration_seconds=durations[1],
+            purpose="Benefit demonstration",
+            visual_beat="Show the main selling points through natural, concrete product-use imagery instead of dense text.",
+            audio_notes="Concise voiceover covering the strongest benefits from the brief.",
+            constraints=["Keep benefit language selective and readable."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=3,
+            duration_seconds=durations[2],
+            purpose="Trust close and call to action",
+            visual_beat="End on a clean product packshot or usage result with a calm purchase or follow-up cue.",
+            audio_notes="Soft closing line with brand or action cue if provided.",
+            constraints=["Do not invent unsupported claims beyond the brief."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+    ]
+
+
+def _cartoon_storyboard_shots(
+    *,
+    brief: str,
+    duration_seconds: float,
+    reference_asset_ids: list[str],
+) -> list[ShortVideoStoryboardShot]:
+    dialogue_lines = _extract_dialogue_lines(brief)
+    durations = _split_storyboard_durations(duration_seconds, 3)
+    if dialogue_lines:
+        first_dialogue = dialogue_lines[: max(1, len(dialogue_lines) // 2)]
+        second_dialogue = dialogue_lines[max(1, len(dialogue_lines) // 2):]
+    else:
+        first_dialogue = []
+        second_dialogue = []
+    return [
+        ShortVideoStoryboardShot(
+            sequence_index=1,
+            duration_seconds=durations[0],
+            purpose="Character setup and opening dialogue",
+            visual_beat="Introduce the main cartoon characters facing each other with clear expressions and readable staging.",
+            dialogue_lines=first_dialogue,
+            audio_notes="Use character voices matching the requested cute or comedic tone.",
+            constraints=["Dialogue belongs to characters, not an off-screen narrator."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=2,
+            duration_seconds=durations[1],
+            purpose="Punchline or reveal",
+            visual_beat="Hold on the characters as the misunderstanding or punchline lands.",
+            dialogue_lines=second_dialogue,
+            audio_notes="Keep timing tight and let the final line land clearly.",
+            constraints=["Preserve the user-provided joke structure."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=3,
+            duration_seconds=durations[2],
+            purpose="Reaction beat",
+            visual_beat="Add a one-second pause or mutual stare when requested, then a clear exaggerated comedic reaction.",
+            audio_notes="Use synchronized reaction sound effects and laughter if appropriate.",
+            constraints=["Keep reaction timing visible even inside one generated clip."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+    ]
+
+
+def _social_storyboard_shots(
+    *,
+    brief: str,
+    duration_seconds: float,
+    reference_asset_ids: list[str],
+) -> list[ShortVideoStoryboardShot]:
+    durations = _split_storyboard_durations(duration_seconds, 3)
+    return [
+        ShortVideoStoryboardShot(
+            sequence_index=1,
+            duration_seconds=durations[0],
+            purpose="Opening hook",
+            visual_beat="Start with the strongest surprising, useful, or visually clear moment from the brief.",
+            audio_notes="Fast hook line or attention-grabbing sound cue.",
+            constraints=["The first beat must be understandable without background context."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=2,
+            duration_seconds=durations[1],
+            purpose="Main value or contrast",
+            visual_beat="Deliver the central comparison, tutorial step, transformation, or social-media payoff.",
+            audio_notes="Keep voiceover short and platform-friendly.",
+            constraints=["Prioritize rhythm and clarity over exhaustive detail."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+        ShortVideoStoryboardShot(
+            sequence_index=3,
+            duration_seconds=durations[2],
+            purpose="CTA or memorable close",
+            visual_beat="End with a clean visual payoff and a simple action cue suitable for short-form feeds.",
+            audio_notes="Brief closing phrase or music resolve.",
+            constraints=["CTA should remain editable in later iterations."],
+            reference_asset_ids=reference_asset_ids,
+        ),
+    ]
+
+
+def _split_storyboard_durations(total_seconds: float, count: int) -> list[float]:
+    """Split a target duration into readable storyboard shot durations."""
+    if count <= 0:
+        return []
+    total = max(float(total_seconds or 0), float(count))
+    base = round(total / count, 2)
+    durations = [base for _ in range(count)]
+    durations[-1] = round(max(1.0, total - sum(durations[:-1])), 2)
+    return durations
+
+
 def _build_short_video_asset_plan(
     *,
     user_prompt: str,
@@ -1227,6 +1745,7 @@ def _build_short_video_asset_plan(
     video_type: str,
     video_model_name: str | None = None,
     video_resolution: str | None = None,
+    storyboard: ShortVideoStoryboard | None = None,
 ) -> ShortVideoAssetPlan:
     brief = _brief_summary(user_prompt)
     normalized_video_type = _normalize_video_type(video_type) or "product_ad"
@@ -1235,8 +1754,8 @@ def _build_short_video_asset_plan(
     reference_asset_ids = [item.reference_asset_id for item in reference_assets]
     shot_plan = ShortVideoShotPlan(
         duration_seconds=duration_seconds,
-        visual_prompt=_build_visual_prompt(normalized_video_type, brief, reference_assets),
-        voiceover_text=_build_voiceover_text(brief),
+        visual_prompt=_build_visual_prompt(normalized_video_type, brief, reference_assets, storyboard),
+        voiceover_text=_build_voiceover_text_from_storyboard(brief, storyboard),
         reference_asset_ids=reference_asset_ids,
     )
     return ShortVideoAssetPlan(
@@ -1264,17 +1783,20 @@ def _build_visual_prompt(
     video_type: str,
     brief: str,
     reference_assets: list[ReferenceAssetEntry],
+    storyboard: ShortVideoStoryboard | None = None,
 ) -> str:
+    storyboard_instruction = _storyboard_prompt_instruction(storyboard)
     if video_type == "cartoon_short_drama":
-        return _build_cartoon_short_drama_visual_prompt(brief, reference_assets)
+        return _build_cartoon_short_drama_visual_prompt(brief, reference_assets, storyboard_instruction)
     if video_type == "social_media_short":
-        return _build_social_media_visual_prompt(brief, reference_assets)
-    return _build_product_ad_visual_prompt(brief, reference_assets)
+        return _build_social_media_visual_prompt(brief, reference_assets, storyboard_instruction)
+    return _build_product_ad_visual_prompt(brief, reference_assets, storyboard_instruction)
 
 
 def _build_product_ad_visual_prompt(
     brief: str,
     reference_assets: list[ReferenceAssetEntry],
+    storyboard_instruction: str = "",
 ) -> str:
     reference_note = (
         "Use the provided product reference assets as identity anchors."
@@ -1285,6 +1807,7 @@ def _build_product_ad_visual_prompt(
         "Create a concise product advertising short video. "
         f"Brief: {brief}. "
         f"{reference_note} "
+        f"{storyboard_instruction}"
         "Keep the product clear, readable, and central. Use polished lighting, simple motion, "
         f"and social-ad pacing. {_build_native_audio_instruction(brief)}"
     )
@@ -1293,6 +1816,7 @@ def _build_product_ad_visual_prompt(
 def _build_cartoon_short_drama_visual_prompt(
     brief: str,
     reference_assets: list[ReferenceAssetEntry],
+    storyboard_instruction: str = "",
 ) -> str:
     reference_note = (
         "Use the provided reference assets as character, product, or style anchors."
@@ -1303,6 +1827,7 @@ def _build_cartoon_short_drama_visual_prompt(
         "Create a concise single-shot cartoon short-drama video for P0 validation. "
         f"Brief: {brief}. "
         f"{reference_note} "
+        f"{storyboard_instruction}"
         "Emphasize clear character action, readable emotion, light comedic timing, "
         f"and a simple visual beat that can later expand into multi-shot storyboards. "
         f"{_build_native_audio_instruction(brief)}"
@@ -1312,6 +1837,7 @@ def _build_cartoon_short_drama_visual_prompt(
 def _build_social_media_visual_prompt(
     brief: str,
     reference_assets: list[ReferenceAssetEntry],
+    storyboard_instruction: str = "",
 ) -> str:
     reference_note = (
         "Use the provided reference assets as identity or style anchors."
@@ -1322,8 +1848,31 @@ def _build_social_media_visual_prompt(
         "Create a concise single-shot social media short video for P0 validation. "
         f"Brief: {brief}. "
         f"{reference_note} "
+        f"{storyboard_instruction}"
         "Use a strong opening visual hook, fast readable motion, platform-friendly framing, "
         f"and clear subject focus suitable for short-form feeds. {_build_native_audio_instruction(brief)}"
+    )
+
+
+def _storyboard_prompt_instruction(storyboard: ShortVideoStoryboard | None) -> str:
+    """Return compact storyboard guidance for the provider prompt."""
+    if storyboard is None or not storyboard.shots:
+        return ""
+    shot_summaries = []
+    for shot in storyboard.shots:
+        dialogue = f" Dialogue: {'; '.join(shot.dialogue_lines)}." if shot.dialogue_lines else ""
+        constraints = f" Constraints: {'; '.join(shot.constraints)}." if shot.constraints else ""
+        shot_summaries.append(
+            f"Shot {shot.sequence_index}: {shot.purpose}. Visual: {shot.visual_beat}.{dialogue}{constraints}"
+        )
+    global_constraints = (
+        f" Global constraints: {'; '.join(storyboard.global_constraints)}."
+        if storyboard.global_constraints
+        else ""
+    )
+    return (
+        "Follow this approved storyboard as a compact multi-beat structure inside the generated clip: "
+        f"{' '.join(shot_summaries)}.{global_constraints} "
     )
 
 
@@ -1444,6 +1993,8 @@ def _requested_video_type(user_prompt: str, payload: dict[str, Any]) -> str:
 
 def _infer_video_type_from_text(text: str) -> str:
     normalized = str(text or "").strip().lower()
+    if _extract_dialogue_lines(text) or any(token in normalized for token in ("对话", "dialogue", "conversation")):
+        return "cartoon_short_drama"
     if any(token in normalized for token in ("卡通短剧", "动画短剧", "cartoon", "animated short", "short drama")):
         return "cartoon_short_drama"
     if any(token in normalized for token in ("社交媒体", "小红书", "抖音", "tiktok", "reels", "shorts", "social media")):
@@ -1484,6 +2035,31 @@ def _build_voiceover_text(brief: str) -> str:
     if len(cleaned) <= 180:
         return cleaned
     return f"{cleaned[:177].rstrip()}..."
+
+
+def _build_voiceover_text_from_storyboard(
+    brief: str,
+    storyboard: ShortVideoStoryboard | None,
+) -> str:
+    """Return concise voiceover/dialogue guidance from the approved storyboard."""
+    if storyboard is None:
+        return _build_voiceover_text(brief)
+    dialogue_lines = [
+        line
+        for shot in storyboard.shots
+        for line in shot.dialogue_lines
+        if str(line or "").strip()
+    ]
+    if dialogue_lines:
+        return " | ".join(dialogue_lines)
+    audio_notes = [
+        shot.audio_notes
+        for shot in storyboard.shots
+        if str(shot.audio_notes or "").strip()
+    ]
+    if audio_notes:
+        return _build_voiceover_text(" ".join(audio_notes))
+    return _build_voiceover_text(brief)
 
 
 def _valid_reference_assets(state: ShortVideoProductionState) -> list[ReferenceAssetEntry]:
@@ -1581,6 +2157,7 @@ def _apply_revision_to_asset_plan(
         video_type=asset_plan.video_type,
         video_model_name=asset_plan.planned_video_model_name,
         video_resolution=asset_plan.planned_video_resolution,
+        storyboard=state.storyboard,
     )
 
 
@@ -1648,6 +2225,79 @@ def _final_output_path(session_root: Path, plan_id: str) -> Path:
     return session_root / "final" / (plan_segment or new_id("asset_plan")) / "final.mp4"
 
 
+def _storyboard_review_payload(state: ShortVideoProductionState) -> ReviewPayload:
+    storyboard = state.storyboard
+    if storyboard is None:
+        return ReviewPayload(
+            review_type="storyboard_review",
+            title="Review short-video storyboard",
+            summary=state.brief_summary,
+            items=[],
+            options=_storyboard_review_options(),
+        )
+    return ReviewPayload(
+        review_type="storyboard_review",
+        title=f"Review {_video_type_label(storyboard.video_type)} storyboard",
+        summary=storyboard.narrative_summary,
+        items=[
+            {
+                "kind": "video_type",
+                "video_type": storyboard.video_type,
+                "label": _video_type_label(storyboard.video_type),
+            },
+            {
+                "kind": "storyboard",
+                "storyboard_id": storyboard.storyboard_id,
+                "target_duration_seconds": storyboard.target_duration_seconds,
+                "selected_ratio": storyboard.selected_ratio,
+                "shot_count": len(storyboard.shots),
+            },
+            {
+                "kind": "global_constraints",
+                "constraints": storyboard.global_constraints,
+            },
+            {
+                "kind": "reference_assets",
+                "reference_asset_ids": storyboard.reference_asset_ids,
+                "count": len(storyboard.reference_asset_ids),
+            },
+            {
+                "kind": "storyboard_shots",
+                "shots": [
+                    {
+                        "shot_id": shot.shot_id,
+                        "sequence_index": shot.sequence_index,
+                        "duration_seconds": shot.duration_seconds,
+                        "purpose": shot.purpose,
+                        "visual_beat": shot.visual_beat,
+                        "dialogue_lines": shot.dialogue_lines,
+                        "audio_notes": shot.audio_notes,
+                        "constraints": shot.constraints,
+                        "reference_asset_ids": shot.reference_asset_ids,
+                    }
+                    for shot in storyboard.shots
+                ],
+            },
+            {
+                "kind": "questions",
+                "questions": [
+                    "Approve this storyboard, revise the scenes/constraints, or cancel production.",
+                    "Provider-specific asset planning and real generation will not start until later approval.",
+                ],
+            },
+        ],
+        options=_storyboard_review_options(),
+    )
+
+
+def _storyboard_review_options() -> list[dict[str, str]]:
+    return [
+        {"decision": "approve", "label": "Approve storyboard"},
+        {"decision": "revise", "label": "Revise storyboard"},
+        {"decision": "cancel", "label": "Cancel production"},
+    ]
+
+
 def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayload:
     asset_plan = state.asset_plan
     if asset_plan is None:
@@ -1711,6 +2361,79 @@ def _review_options() -> list[dict[str, str]]:
         {"decision": "revise", "label": "Revise plan"},
         {"decision": "cancel", "label": "Cancel production"},
     ]
+
+
+def _storyboard_markdown(state: ShortVideoProductionState) -> str:
+    """Render a human-readable storyboard projection."""
+    storyboard = state.storyboard
+    if storyboard is None:
+        return "# Short Video Storyboard\n\nNo storyboard has been prepared yet.\n"
+    lines = [
+        "# Short Video Storyboard",
+        "",
+        f"- Storyboard ID: `{storyboard.storyboard_id}`",
+        f"- Video type: `{storyboard.video_type}`",
+        f"- Target duration: {storyboard.target_duration_seconds}s",
+        f"- Selected ratio: {storyboard.selected_ratio or 'not selected'}",
+        f"- Status: `{storyboard.status}`",
+        "",
+        "## Summary",
+        "",
+        storyboard.narrative_summary,
+        "",
+        "## Global Constraints",
+        "",
+    ]
+    if storyboard.global_constraints:
+        lines.extend(f"- {constraint}" for constraint in storyboard.global_constraints)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Shots", ""])
+    for shot in storyboard.shots:
+        lines.extend(
+            [
+                f"### Shot {shot.sequence_index}: {shot.purpose}",
+                "",
+                f"- Shot ID: `{shot.shot_id}`",
+                f"- Duration: {shot.duration_seconds}s",
+                f"- Visual beat: {shot.visual_beat}",
+                f"- Audio notes: {shot.audio_notes or 'None'}",
+                f"- Reference assets: {', '.join(shot.reference_asset_ids) if shot.reference_asset_ids else 'None'}",
+                "",
+            ]
+        )
+        if shot.dialogue_lines:
+            lines.append("Dialogue:")
+            lines.extend(f"- {line}" for line in shot.dialogue_lines)
+            lines.append("")
+        if shot.constraints:
+            lines.append("Constraints:")
+            lines.extend(f"- {constraint}" for constraint in shot.constraints)
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _planning_duration_seconds(state: ShortVideoProductionState) -> float:
+    try:
+        value = float(state.planning_context.get("duration_seconds") or 8.0)
+    except (TypeError, ValueError):
+        return 8.0
+    return value if value > 0 else 8.0
+
+
+def _planning_seedance_settings(state: ShortVideoProductionState) -> tuple[str, str]:
+    model_name = normalize_seedance_model_name(state.planning_context.get("video_model_name"))
+    resolution = normalize_seedance_video_resolution(
+        model_name,
+        state.planning_context.get("video_resolution"),
+    )
+    return model_name, resolution
+
+
+def _planning_video_type(state: ShortVideoProductionState) -> str:
+    if state.storyboard is not None:
+        return state.storyboard.video_type
+    return _normalize_video_type(state.planning_context.get("video_type")) or "product_ad"
 
 
 def _reference_assets_from_input_files(

@@ -142,6 +142,30 @@ def _available_revision_targets(state: ShortVideoProductionState) -> list[dict[s
     targets: list[dict[str, str]] = [
         {"kind": "brief", "id": "brief", "label": "Short-video brief"},
     ]
+    if state.storyboard is not None:
+        targets.append(
+            {
+                "kind": "storyboard",
+                "id": state.storyboard.storyboard_id,
+                "label": "Current storyboard",
+            }
+        )
+        targets.extend(
+            {
+                "kind": "shot",
+                "id": shot.shot_id,
+                "label": f"Storyboard shot {shot.sequence_index}: {shot.purpose}",
+            }
+            for shot in state.storyboard.shots
+        )
+        if any(shot.dialogue_lines or shot.audio_notes for shot in state.storyboard.shots):
+            targets.append(
+                {
+                    "kind": "voiceover",
+                    "id": state.storyboard.storyboard_id,
+                    "label": "Storyboard dialogue and audio notes",
+                }
+            )
     if state.asset_plan is not None:
         targets.extend(
             [
@@ -199,9 +223,20 @@ def _revision_impact_entries(
 
     target_kinds = {target.get("kind", "") for target in matched_targets}
     if not matched_targets or "production" in target_kinds:
-        target_kinds = {"brief", "asset_plan", "shot", "voiceover", "reference_asset"}
+        target_kinds = {"brief", "storyboard", "asset_plan", "shot", "voiceover", "reference_asset"}
 
     impacted: list[dict[str, Any]] = []
+    if target_kinds & {"brief", "storyboard", "shot", "voiceover", "reference_asset"}:
+        if state.storyboard is not None:
+            impacted.append(
+                {
+                    "kind": "storyboard",
+                    "id": state.storyboard.storyboard_id,
+                    "current_status": state.storyboard.status,
+                    "would_change": "rebuild_or_reapprove",
+                    "reason": "Accepted revisions are normalized into the reviewed storyboard before provider planning.",
+                }
+            )
     if target_kinds & {"brief", "asset_plan", "shot", "voiceover", "reference_asset"}:
         if state.asset_plan is not None:
             impacted.append(
@@ -232,8 +267,8 @@ def _revision_impact_entries(
             if not target_ids or reference.reference_asset_id in target_ids
         )
 
-    video_impacted = bool(target_kinds & {"brief", "asset_plan", "shot", "reference_asset"})
-    audio_impacted = bool(target_kinds & {"brief", "asset_plan", "shot", "voiceover"})
+    video_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "reference_asset"})
+    audio_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "voiceover"})
     timeline_impacted = bool(target_kinds & {"timeline"})
     artifact_impacted = bool(target_kinds & {"artifact"})
 

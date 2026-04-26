@@ -120,8 +120,37 @@ class ShortVideoShotPlan(BaseModel):
     reference_asset_ids: list[str] = Field(default_factory=list)
 
 
+class ShortVideoStoryboardShot(BaseModel):
+    """One user-reviewable storyboard shot before provider-specific planning."""
+
+    shot_id: str = Field(default_factory=lambda: new_id("storyboard_shot"))
+    sequence_index: int
+    duration_seconds: float
+    purpose: str
+    visual_beat: str
+    dialogue_lines: list[str] = Field(default_factory=list)
+    audio_notes: str = ""
+    constraints: list[str] = Field(default_factory=list)
+    reference_asset_ids: list[str] = Field(default_factory=list)
+
+
+class ShortVideoStoryboard(BaseModel):
+    """User-reviewable multi-shot storyboard for P1 short-video control."""
+
+    storyboard_id: str = Field(default_factory=lambda: new_id("storyboard"))
+    video_type: Literal["product_ad", "cartoon_short_drama", "social_media_short"] = "product_ad"
+    title: str = "Short-video storyboard"
+    narrative_summary: str = ""
+    target_duration_seconds: float = 8.0
+    selected_ratio: Literal["9:16", "16:9", "1:1"] | None = None
+    global_constraints: list[str] = Field(default_factory=list)
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    shots: list[ShortVideoStoryboardShot] = Field(default_factory=list)
+    status: Literal["draft", "approved", "stale"] = "draft"
+
+
 class ShortVideoAssetPlan(BaseModel):
-    """User-reviewable asset plan for the P0 short-video workflow."""
+    """User-reviewable asset plan for the short-video workflow."""
 
     plan_id: str = Field(default_factory=lambda: new_id("asset_plan"))
     video_type: Literal["product_ad", "cartoon_short_drama", "social_media_short"] = "product_ad"
@@ -181,6 +210,8 @@ class ShortVideoProductionState(ProductionState):
 
     brief_summary: str = ""
     reference_assets: list[ReferenceAssetEntry] = Field(default_factory=list)
+    planning_context: dict[str, Any] = Field(default_factory=dict)
+    storyboard: ShortVideoStoryboard | None = None
     asset_plan: ShortVideoAssetPlan | None = None
     asset_manifest: list[AssetManifestEntry] = Field(default_factory=list)
     audio_manifest: list[AudioManifestEntry] = Field(default_factory=list)

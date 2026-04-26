@@ -18,14 +18,14 @@
           "rubric_id": "short_video_review_before_generation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks for product-ad, cartoon short-drama, or social-media short-video generation and has not explicitly approved the asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
+            "text_property": "When the user asks for product-ad, cartoon short-drama, or social-media short-video generation and has not explicitly approved both the storyboard and asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
           }
         },
         {
           "rubric_id": "short_video_view_for_intermediate_state",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks about current short-video production state, intermediate plans, events, timeline, or artifacts, the agent uses run_short_video_production with a read-only production view action."
+            "text_property": "When the user asks about current short-video production state, storyboard, intermediate plans, events, timeline, or artifacts, the agent uses run_short_video_production with a read-only production view action."
           }
         },
         {
@@ -39,7 +39,7 @@
           "rubric_id": "short_video_apply_revision_after_confirmation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, and it does not call resume or raw generation tools until the updated plan is reviewed and approved."
+            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, and it does not call resume or raw generation tools until the updated storyboard or plan is reviewed and approved."
           }
         }
       ]

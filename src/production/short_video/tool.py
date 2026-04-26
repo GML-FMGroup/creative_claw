@@ -23,7 +23,7 @@ async def run_short_video_production(
     ],
     user_prompt: str = "",
     production_session_id: str | None = None,
-    view_type: Literal["overview", "brief", "asset_plan", "timeline", "events", "artifacts"] = "overview",
+    view_type: Literal["overview", "brief", "storyboard", "asset_plan", "timeline", "events", "artifacts"] = "overview",
     input_files: list[Any] | str | None = None,
     placeholder_assets: bool = False,
     render_settings: dict[str, Any] | None = None,
@@ -36,7 +36,7 @@ async def run_short_video_production(
         action: Use start, status, resume, view, add_reference_assets, analyze_revision_impact, or apply_revision.
         user_prompt: User's short-video brief when starting production.
         production_session_id: Existing production session id for status, resume, view, or impact analysis.
-        view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
+        view_type: Read-only view to load when action is view. Allowed values are overview, brief, storyboard, asset_plan, timeline, events, and artifacts.
         input_files: Optional workspace file records or workspace-relative path strings to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
         render_settings: Optional aspect ratio, duration, fps, width, height, Seedance model_name, and resolution settings.

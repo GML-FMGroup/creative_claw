@@ -1,7 +1,7 @@
 {
   "eval_set_id": "short_video_p0",
-  "name": "Short-video P0 behavior",
-  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for user review before real generation.",
+  "name": "Short-video P1a behavior",
+  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for storyboard or asset-plan review before real generation.",
   "eval_cases": [
     {
       "eval_id": "start_product_ad_requires_review",
@@ -185,7 +185,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "现在这个短视频任务到哪一步了？把当前 asset plan 给我看一下。"
+                "text": "现在这个短视频任务到哪一步了？把当前 storyboard 给我看一下。"
               }
             ]
           }
