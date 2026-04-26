@@ -31,6 +31,8 @@ class SpeechSynthesisExpert(CreativeExpert):
         text = str(current_parameters.get("text", "")).strip()
         ssml = str(current_parameters.get("ssml", "")).strip()
         speaker = str(current_parameters.get("speaker", "")).strip()
+        voice_type = str(current_parameters.get("voice_type", "")).strip()
+        voice_name = str(current_parameters.get("voice_name", "")).strip()
         resource_id = str(current_parameters.get("resource_id", "")).strip()
         audio_format = normalize_speech_audio_format(current_parameters.get("audio_format", "mp3"))
         sample_rate = int(current_parameters.get("sample_rate", 24000) or 24000)
@@ -49,6 +51,8 @@ class SpeechSynthesisExpert(CreativeExpert):
             text=text,
             ssml=ssml,
             speaker=speaker,
+            voice_type=voice_type,
+            voice_name=voice_name,
             resource_id=resource_id,
             audio_format=audio_format,
             sample_rate=sample_rate,
@@ -88,6 +92,7 @@ class SpeechSynthesisExpert(CreativeExpert):
         synthesis_result = {
             "output_path": output_record["path"],
             "speaker": str(result.get("speaker", "")).strip(),
+            "voice_name": str(result.get("voice_name", "")).strip(),
             "resource_id": str(result.get("model_name", "")).strip(),
             "audio_format": audio_format,
             "usage": result.get("usage", {}),

@@ -33,7 +33,7 @@ class SpeechSynthesisToolTests(unittest.IsolatedAsyncioTestCase):
             text = ""
 
             def iter_lines(self, decode_unicode=True):
-                yield json.dumps({"code": 0, "data": encoded_audio})
+                yield f"data: {json.dumps({'code': 0, 'data': encoded_audio})}"
                 yield json.dumps({"code": 0, "sentence": {"text": "hello world"}})
                 yield json.dumps({"code": 20000000, "usage": {"characters": 11}})
 
@@ -66,20 +66,85 @@ class SpeechSynthesisToolTests(unittest.IsolatedAsyncioTestCase):
             result = await speech_tool.speech_synthesis_tool(
                 user_id="user-1",
                 text="hello world",
-                speaker="demo-speaker",
+                voice_name="解说小明",
                 audio_format="mp3",
                 enable_timestamp=True,
             )
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["message"], b"audio-bytes")
-        self.assertEqual(result["speaker"], "demo-speaker")
+        self.assertEqual(result["speaker"], "zh_male_jieshuoxiaoming_uranus_bigtts")
+        self.assertEqual(result["voice_name"], "解说小明 2.0")
         self.assertEqual(result["usage"], {"characters": 11})
         self.assertEqual(result["log_id"], "log-123")
         self.assertEqual(captured_call["url"], "https://openspeech.bytedance.com/api/v3/tts/unidirectional")
         self.assertEqual(captured_call["headers"]["X-Api-App-Id"], "app-id")
+        self.assertEqual(captured_call["headers"]["X-Api-Resource-Id"], "seed-tts-2.0")
         self.assertEqual(captured_call["json"]["req_params"]["text"], "hello world")
+        self.assertEqual(
+            captured_call["json"]["req_params"]["speaker"],
+            "zh_male_jieshuoxiaoming_uranus_bigtts",
+        )
         self.assertTrue(captured_call["json"]["req_params"]["audio_params"]["enable_timestamp"])
+
+    async def test_bytedance_tts_tool_preserves_explicit_legacy_resource(self) -> None:
+        encoded_audio = base64.b64encode(b"audio-bytes").decode("utf-8")
+        captured_call: dict[str, object] = {}
+
+        class _FakeResponse:
+            status_code = 200
+            headers = {"X-Tt-Logid": "log-legacy"}
+            text = ""
+
+            def iter_lines(self, decode_unicode=True):
+                yield json.dumps({"code": 0, "data": encoded_audio})
+                yield json.dumps({"code": 20000000, "usage": {"characters": 11}})
+
+            def close(self) -> None:
+                return None
+
+        class _FakeSession:
+            def post(self, url, headers=None, json=None, stream=None, timeout=None):
+                captured_call["headers"] = headers
+                captured_call["json"] = json
+                return _FakeResponse()
+
+            def close(self) -> None:
+                return None
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "VOLCENGINE_APPID": "app-id",
+                    "VOLCENGINE_ACCESS_TOKEN": "access-token",
+                },
+                clear=False,
+            ),
+            patch("src.agents.experts.speech_synthesis.tool.requests.Session", return_value=_FakeSession()),
+        ):
+            result = await speech_tool.speech_synthesis_tool(
+                user_id="user-1",
+                text="hello world",
+                speaker="demo-speaker",
+                resource_id="seed-tts-1.0",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["speaker"], "demo-speaker")
+        self.assertEqual(captured_call["headers"]["X-Api-Resource-Id"], "seed-tts-1.0")
+        self.assertEqual(captured_call["json"]["req_params"]["speaker"], "demo-speaker")
+
+    async def test_bytedance_tts_tool_rejects_unknown_seed_tts_2_voice(self) -> None:
+        result = await speech_tool.speech_synthesis_tool(
+            user_id="user-1",
+            text="hello world",
+            speaker="demo-speaker",
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Unsupported Seed TTS 2.0 voice", result["message"])
+        self.assertIn("demo-speaker", result["message"])
 
 
 class SpeechSynthesisExpertTests(unittest.IsolatedAsyncioTestCase):

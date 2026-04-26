@@ -151,6 +151,7 @@ How to fill it:
 - If you want image grounding or segmentation, fill `services.dds_api_key`.
 - If you want SearchAgent image search, fill `services.serper_api_key`.
 - If you want the built-in `web_search` tool, fill `services.brave_api_key`.
+- If you want `SpeechSynthesisExpert` TTS, fill `services.volcengine_app_id` and `services.volcengine_access_token`. The default resource is `seed-tts-2.0`, and voices may be selected by `speaker`, `voice_type`, or `voice_name`.
 - If you want `SpeechRecognitionExpert` ASR or subtitle capabilities, fill `services.volcengine_app_id` and `services.volcengine_access_token`. The service activation entry is the [Volcengine speech console](https://console.volcengine.com/speech/app).
 - If you want Tencent Hunyuan 3D generation, fill `services.tencentcloud_secret_id` and `services.tencentcloud_secret_key`.
 - `services.tencentcloud_session_token` is optional. Most personal API-key setups can leave it empty.
@@ -166,10 +167,12 @@ Useful config sections:
 - `services.*`: extra keys for image/video/search integrations
 - `channels.*`: Telegram, Feishu, and Web channel defaults
 
-Speech recognition and subtitle service grants:
+Speech synthesis, recognition, and subtitle service grants:
 
+- `SpeechSynthesisExpert` routes text-to-speech through Volcengine streaming TTS. The default resource is `seed-tts-2.0`, default voice is Vivi 2.0 (`zh_female_vv_uranus_bigtts`), and user-provided Seed TTS 2.0 voices are validated against the official 2.0 voice list.
 - `SpeechRecognitionExpert` routes `task=asr` and `task=subtitle` through Volcengine speech services.
 - In addition to `services.volcengine_app_id` and `services.volcengine_access_token`, the current backend requires these Volcengine resource grants:
+  - `seed-tts-2.0`: required for the default TTS path
   - `volc.bigasr.auc_turbo`: required for `task=asr`
   - `vc.async.default`: required for subtitle generation from audio or video
   - `volc.ata.default`: required for subtitle timing when `subtitle_text` or `audio_text` is provided
