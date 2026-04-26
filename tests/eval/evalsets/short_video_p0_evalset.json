@@ -97,6 +97,75 @@
       }
     },
     {
+      "eval_id": "start_seedance_fast_short_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_seedance_fast_short_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "用 Seedance 2.0 fast 做一个 9:16 社交媒体短片，主题是新品咖啡上市。需要有轻快背景音乐和女生口播。先给我计划，确认后再生成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_seedance_fast_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_product_ad_with_reference_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_product_ad_with_reference_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "基于我刚上传的产品图做一个 8 秒 9:16 广告短视频，突出高级感和开箱瞬间。先给我计划，确认后再生成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_reference_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [
+            {
+              "name": "product.png",
+              "path": "input/eval_product.png",
+              "description": "product reference image",
+              "source": "channel"
+            }
+          ],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
       "eval_id": "view_active_production_plan",
       "conversation": [
         {

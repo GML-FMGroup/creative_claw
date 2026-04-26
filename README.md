@@ -55,7 +55,7 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 
 ### 🎬 Video Generation
 
-- Seedance 1.0 Pro
+- Seedance 2.0 / Seedance 2.0 fast
 - Veo 3.1
 - Kling 3 (`multi_reference` currently uses Kling 1.6)
 
@@ -268,6 +268,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 ## 📚 More Docs
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
+- [docs/short_video_production_zh.md](docs/short_video_production_zh.md): short-video P0 usage, Seedance 2.0/fast routing, and Feishu acceptance checklist
 - [docs/model_and_token_map.md](docs/model_and_token_map.md): model names, mapped experts, and token application links
 - [docs/expert_model_capability_map_zh.md](docs/expert_model_capability_map_zh.md): current expert capability boundaries, including Kling route coverage and constraints
 

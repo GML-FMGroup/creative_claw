@@ -17,7 +17,10 @@ class ShortVideoAdkEvalAssetsTests(unittest.TestCase):
         metrics = get_eval_metrics_from_config(eval_config)
 
         self.assertEqual(eval_set.eval_set_id, "short_video_p0")
-        self.assertGreaterEqual(len(eval_set.eval_cases), 5)
+        self.assertGreaterEqual(len(eval_set.eval_cases), 8)
+        eval_ids = {item.eval_id for item in eval_set.eval_cases}
+        self.assertIn("start_seedance_fast_short_requires_review", eval_ids)
+        self.assertIn("start_product_ad_with_reference_requires_review", eval_ids)
         self.assertEqual(metrics[0].metric_name, "rubric_based_tool_use_quality_v1")
         self.assertEqual(metrics[0].threshold, 0.8)
 
