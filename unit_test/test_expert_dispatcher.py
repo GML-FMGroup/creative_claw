@@ -134,11 +134,31 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
                 state={},
             )
 
-    def test_normalize_invoke_agent_parameters_rejects_resolution_for_seedance(self) -> None:
-        with self.assertRaisesRegex(ValueError, "parameter `resolution` is not supported for provider `seedance`"):
+    def test_normalize_invoke_agent_parameters_accepts_seedance_2_audio_parameters(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="VideoGenerationAgent",
+            prompt=(
+                '{"prompt":"cats talking","provider":"seedance",'
+                '"model_name":"doubao-seedance-2-0-fast-260128",'
+                '"resolution":"720p","duration_seconds":8,"generate_audio":true}'
+            ),
+            state={},
+        )
+
+        self.assertEqual(parameters["provider"], "seedance")
+        self.assertEqual(parameters["model_name"], "doubao-seedance-2-0-fast-260128")
+        self.assertEqual(parameters["resolution"], "720p")
+        self.assertEqual(parameters["duration_seconds"], 8)
+        self.assertTrue(parameters["generate_audio"])
+
+    def test_normalize_invoke_agent_parameters_rejects_1080p_for_seedance_2_fast(self) -> None:
+        with self.assertRaisesRegex(ValueError, "provider `seedance` does not support `resolution=1080p`"):
             normalize_invoke_agent_parameters(
                 agent_name="VideoGenerationAgent",
-                prompt='{"prompt":"cats","provider":"seedance","resolution":"720p"}',
+                prompt=(
+                    '{"prompt":"cats","provider":"seedance",'
+                    '"model_name":"doubao-seedance-2-0-fast-260128","resolution":"1080p"}'
+                ),
                 state={},
             )
 
@@ -151,7 +171,8 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("does not return subtitle/SRT files", summary)
         self.assertIn("['4', '6', '8']", summary)
         self.assertIn("provider `seedance`", summary)
-        self.assertIn("visual-only", summary)
+        self.assertIn("doubao-seedance-2-0-260128", summary)
+        self.assertIn("generate_audio=true", summary)
         self.assertIn("kling-v1-6", summary)
 
     def test_normalize_invoke_agent_parameters_uses_3d_generation_defaults(self) -> None:

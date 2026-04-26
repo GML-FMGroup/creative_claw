@@ -37,6 +37,7 @@ _BUILTIN_TOOL_STAGES = {
     "exec_command": "execution",
     "web_search": "research",
     "web_fetch": "research",
+    "run_short_video_production": "video_processing",
 }
 
 

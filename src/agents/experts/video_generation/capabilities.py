@@ -11,7 +11,15 @@ VIDEO_GENERATION_DEFAULT_ASPECT_RATIO = "16:9"
 VIDEO_GENERATION_PROMPT_REWRITE_VALUES = ("auto", "off")
 VIDEO_GENERATION_PERSON_GENERATION_VALUES = ("allow_all", "allow_adult")
 VIDEO_GENERATION_KLING_MODE_VALUES = ("std", "pro")
-VIDEO_GENERATION_SEEDANCE_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
+VIDEO_GENERATION_SEEDANCE_LEGACY_MODEL_NAME = "doubao-seedance-1-0-pro-250528"
+VIDEO_GENERATION_SEEDANCE_2_MODEL_NAME = "doubao-seedance-2-0-260128"
+VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME = "doubao-seedance-2-0-fast-260128"
+VIDEO_GENERATION_SEEDANCE_MODEL_NAME = VIDEO_GENERATION_SEEDANCE_2_MODEL_NAME
+VIDEO_GENERATION_SEEDANCE_MODEL_NAMES = (
+    VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
+    VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME,
+    VIDEO_GENERATION_SEEDANCE_LEGACY_MODEL_NAME,
+)
 VIDEO_GENERATION_VEO_MODEL_NAME = "veo-3.1-generate-preview"
 VIDEO_GENERATION_KLING_MODEL_NAME = "kling-v3"
 VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME = "kling-v1-6"
@@ -19,11 +27,11 @@ VIDEO_GENERATION_KLING_MULTI_REFERENCE_MODEL_NAME = "kling-v1-6"
 _VIDEO_PROVIDER_MODEL_CAPABILITIES = {
     "seedance": {
         "model_name": VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
-        "native_audio_output": "not_supported",
+        "native_audio_output": "supported",
         "subtitle_file_output": "not_supported",
         "summary": (
-            "Treat current Creative Claw Seedance output as visual-only; do not promise "
-            "synchronized audio or subtitle files."
+            "Seedance 2.0 can generate synchronized audio from prompt cues, including "
+            "dialogue, sound effects, and background music; it does not return subtitle/SRT files."
         ),
     },
     "veo": {
@@ -55,11 +63,13 @@ _VIDEO_PROVIDER_CAPABILITIES = {
             "reference_asset",
             "reference_style",
         ),
-        "aspect_ratios": ("16:9", "9:16"),
-        "resolutions": (),
-        "default_resolution": "",
-        "durations_by_mode": {},
-        "default_duration_seconds": None,
+        "aspect_ratios": ("16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"),
+        "resolutions": ("480p", "720p", "1080p"),
+        "default_resolution": "720p",
+        "durations_by_mode": {
+            "*": tuple([-1, *range(4, 16)]),
+        },
+        "default_duration_seconds": 5,
     },
     "veo": {
         "modes": (
@@ -123,6 +133,39 @@ def normalize_video_provider(raw_value: Any) -> str:
     """Return one supported video provider or the default provider."""
     value = str(raw_value or "").strip().lower()
     return value if value in VIDEO_GENERATION_PROVIDERS else VIDEO_GENERATION_DEFAULT_PROVIDER
+
+
+def normalize_seedance_model_name(raw_value: Any) -> str:
+    """Return one supported Seedance model id or the default Seedance 2.0 model."""
+    value = str(raw_value or "").strip()
+    return value if value in VIDEO_GENERATION_SEEDANCE_MODEL_NAMES else VIDEO_GENERATION_SEEDANCE_MODEL_NAME
+
+
+def seedance_model_supports_audio(model_name: str) -> bool:
+    """Return whether one Seedance model supports native generated audio."""
+    return normalize_seedance_model_name(model_name) in {
+        VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
+        VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME,
+    }
+
+
+def get_supported_seedance_resolutions(model_name: str) -> tuple[str, ...]:
+    """Return supported Seedance resolutions for one model id."""
+    normalized_model = normalize_seedance_model_name(model_name)
+    if normalized_model == VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME:
+        return ("480p", "720p")
+    return ("480p", "720p", "1080p")
+
+
+def get_supported_seedance_durations(model_name: str) -> tuple[int, ...]:
+    """Return supported integer durations for one Seedance model id."""
+    normalized_model = normalize_seedance_model_name(model_name)
+    if normalized_model in {
+        VIDEO_GENERATION_SEEDANCE_MODEL_NAME,
+        VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME,
+    }:
+        return tuple([-1, *range(4, 16)])
+    return tuple(range(2, 13))
 
 
 def get_video_generation_default_parameters() -> dict[str, Any]:
@@ -220,6 +263,26 @@ def normalize_provider_video_resolution(provider: str, raw_value: Any) -> str:
     return value if value in supported_resolutions else default_resolution
 
 
+def normalize_seedance_video_resolution(model_name: str, raw_value: Any) -> str:
+    """Return one supported Seedance resolution for the selected model."""
+    supported_resolutions = get_supported_seedance_resolutions(model_name)
+    value = str(raw_value or "").strip().lower()
+    return value if value in supported_resolutions else "720p"
+
+
+def normalize_seedance_video_duration(model_name: str, raw_value: Any) -> int:
+    """Return one supported Seedance duration for the selected model."""
+    supported_durations = get_supported_seedance_durations(model_name)
+    default_duration = 5 if seedance_model_supports_audio(model_name) else 8
+    if raw_value is None or str(raw_value).strip() == "":
+        return default_duration
+    try:
+        value = int(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return default_duration
+    return value if value in supported_durations else default_duration
+
+
 def normalize_provider_video_duration(
     provider: str,
     raw_value: Any,
@@ -277,10 +340,27 @@ def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
                 f"Allowed values: {list(get_supported_video_aspect_ratios(provider))}."
             )
 
+    seedance_model_name = normalize_seedance_model_name(parameters.get("model_name")) if provider == "seedance" else ""
+
+    if "model_name" in parameters and _has_non_empty_value(parameters.get("model_name")):
+        model_name = str(parameters.get("model_name") or "").strip()
+        if provider == "seedance":
+            if model_name not in VIDEO_GENERATION_SEEDANCE_MODEL_NAMES:
+                raise ValueError(
+                    "VideoGenerationAgent provider `seedance` does not support "
+                    f"`model_name={model_name}`. Allowed values: {list(VIDEO_GENERATION_SEEDANCE_MODEL_NAMES)}."
+                )
+        elif provider != "kling":
+            raise ValueError("VideoGenerationAgent parameter `model_name` is supported only for provider `seedance` or `kling`.")
+
     if "resolution" in parameters and parameters.get("resolution") is not None:
         resolution = str(parameters.get("resolution") or "").strip().lower()
         if resolution:
-            supported_resolutions = get_supported_video_resolutions(provider)
+            supported_resolutions = (
+                get_supported_seedance_resolutions(seedance_model_name)
+                if provider == "seedance"
+                else get_supported_video_resolutions(provider)
+            )
             if not supported_resolutions:
                 raise ValueError(
                     f"VideoGenerationAgent parameter `resolution` is not supported for provider `{provider}`."
@@ -294,7 +374,11 @@ def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
     if "duration_seconds" in parameters and parameters.get("duration_seconds") is not None:
         raw_duration = str(parameters.get("duration_seconds") or "").strip()
         if raw_duration:
-            supported_durations = get_supported_video_durations(provider, mode=mode)
+            supported_durations = (
+                get_supported_seedance_durations(seedance_model_name)
+                if provider == "seedance"
+                else get_supported_video_durations(provider, mode=mode)
+            )
             if not supported_durations:
                 raise ValueError(
                     f"VideoGenerationAgent parameter `duration_seconds` is not supported for provider `{provider}`."
@@ -309,14 +393,19 @@ def validate_video_generation_parameters(parameters: dict[str, Any]) -> None:
                     f"for mode `{mode}`. Allowed values: {[str(value) for value in supported_durations]}."
                 )
 
+    if provider == "seedance" and _has_non_empty_value(parameters.get("generate_audio")):
+        if str(parameters.get("generate_audio")).strip().lower() in {"1", "true", "yes", "y", "on"}:
+            if not seedance_model_supports_audio(seedance_model_name):
+                raise ValueError(
+                    "VideoGenerationAgent provider `seedance` supports `generate_audio=true` "
+                    "only for Seedance 2.0 or Seedance 2.0 fast."
+                )
+
     if provider != "veo" and _has_non_empty_value(parameters.get("person_generation")):
         raise ValueError("VideoGenerationAgent parameter `person_generation` is supported only for provider `veo`.")
 
     if provider != "kling" and _has_non_empty_value(parameters.get("kling_mode")):
         raise ValueError("VideoGenerationAgent parameter `kling_mode` is supported only for provider `kling`.")
-
-    if provider != "kling" and _has_non_empty_value(parameters.get("model_name")):
-        raise ValueError("VideoGenerationAgent parameter `model_name` is supported only for provider `kling`.")
 
 
 def build_video_generation_contract_notes() -> str:
@@ -329,9 +418,12 @@ def build_video_generation_contract_notes() -> str:
             "provider `seedance` "
             f"(model `{get_video_generation_model_name('seedance')}`): "
             f"modes {list(get_supported_video_modes('seedance'))}, "
-            f"aspect_ratio {list(get_supported_video_aspect_ratios('seedance'))}; "
+            f"aspect_ratio {list(get_supported_video_aspect_ratios('seedance'))}, "
+            f"resolution {list(get_supported_video_resolutions('seedance'))}, "
+            f"duration_seconds {[str(value) for value in get_supported_video_durations('seedance')]}; "
             f"{seedance_model_capabilities['summary']}; "
-            "do not pass resolution or duration_seconds."
+            f"use `model_name={VIDEO_GENERATION_SEEDANCE_2_FAST_MODEL_NAME}` for faster generation; "
+            "set `generate_audio=true` for native dialogue/audio."
         ),
         (
             "provider `veo` "
@@ -358,8 +450,8 @@ def build_video_generation_contract_notes() -> str:
         "Use prompt-only, image-guided, or video-extension generation with provider-aware parameters. "
         + " ".join(provider_blocks)
         + " Agent-only parameter `prompt_rewrite` accepts `auto` or `off` and controls local prompt rewriting. "
-        + "Parameter `resolution` applies only to `veo`; `person_generation` applies only to `veo`; "
-        + "`kling_mode` and `model_name` apply only to `kling`."
+        + "Parameter `person_generation` applies only to `veo`; "
+        + "`kling_mode` applies only to `kling`; `model_name` applies to `seedance` or `kling`."
     )
 
 
@@ -369,8 +461,9 @@ def build_video_generation_routing_notes() -> str:
         [
             (
                 "- For video with native audio, dialogue, ambience, music, or sound effects, "
-                "prefer `VideoGenerationAgent` provider `veo`; audio should be described in the "
-                "prompt rather than passed as a separate file."
+                "prefer `VideoGenerationAgent` provider `seedance` with Seedance 2.0 or Seedance 2.0 fast "
+                "and `generate_audio=true`; keep exact dialogue in quoted text and use `prompt_rewrite=off`. "
+                "Veo can also be used when the user explicitly asks for Veo."
             ),
             (
                 "- For subtitle files, captions, SRT/VTT, or transcripts, do not rely on video "
@@ -378,9 +471,9 @@ def build_video_generation_routing_notes() -> str:
                 "first, then use `SpeechRecognitionExpert`."
             ),
             (
-                "- Treat `VideoGenerationAgent` provider `seedance` as visual-only in the current "
-                f"integration (`{get_video_generation_model_name('seedance')}`); do not promise "
-                "synchronized audio or subtitle files."
+                "- `VideoGenerationAgent` provider `seedance` defaults to "
+                f"`{get_video_generation_model_name('seedance')}` and supports native generated audio "
+                "through `generate_audio=true`; it does not return structured subtitle files."
             ),
             (
                 "- Treat current `VideoGenerationAgent` provider `kling` integration as visual-only "

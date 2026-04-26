@@ -30,7 +30,8 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("SRT/VTT", content)
         self.assertIn("SpeechRecognitionExpert", content)
         self.assertIn("veo-3.1-generate-preview", content)
-        self.assertIn("doubao-seedance-1-0-pro-250528", content)
+        self.assertIn("doubao-seedance-2-0-260128", content)
+        self.assertIn("doubao-seedance-2-0-fast-260128", content)
         self.assertIn("kling-v1-6", content)
         self.assertNotIn("/Users/", content)
 
@@ -42,7 +43,7 @@ class ExpertCardTests(unittest.TestCase):
 
         self.assertEqual(card.name, "VideoGenerationAgent")
         self.assertIn("Use this expert for text-to-video", description)
-        self.assertIn("Prefer `veo`", description)
+        self.assertIn("Prefer `seedance`", description)
         self.assertIn("does not return structured subtitle files", description)
         self.assertIn("'provider': 'seedance|veo|kling'", parameters)
         self.assertIn("'mode': 'video_extension'", parameters)

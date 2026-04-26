@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,9 +35,9 @@ from src.production.short_video.models import (
 from src.production.short_video.impact import build_revision_impact_view
 from src.production.short_video.placeholders import PlaceholderAssetFactory
 from src.production.short_video.providers import (
+    SeedanceNativeAudioProviderRuntime,
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
-    VeoTtsProviderRuntime,
 )
 from src.production.short_video.renderer import TimelineRenderer
 from src.production.short_video.user_response import normalize_user_response
@@ -70,7 +71,7 @@ class ShortVideoProductionManager:
         """Initialize the short-video production manager."""
         self.store = store or ProductionSessionStore()
         self.placeholder_factory = placeholder_factory or PlaceholderAssetFactory()
-        self.provider_runtime = provider_runtime or VeoTtsProviderRuntime()
+        self.provider_runtime = provider_runtime or SeedanceNativeAudioProviderRuntime()
         self.renderer = renderer or TimelineRenderer()
         self.validator = validator or RenderValidator()
 
@@ -715,7 +716,7 @@ class ShortVideoProductionManager:
         self.store.project_to_adk_state(adk_state, state)
         return self._result_from_state(
             state,
-            message="Please review the short-video asset plan before real video and TTS generation.",
+            message="Please review the short-video asset plan before real video and native audio generation.",
         )
 
     async def _approve_asset_plan_and_generate(
@@ -791,7 +792,7 @@ class ShortVideoProductionManager:
                 )
             )
 
-            state.stage = "tts_generation"
+            state.stage = "audio_generation"
             state.progress_percent = 60
             audio_asset = await self.provider_runtime.synthesize_voiceover(
                 session_root=session_root,
@@ -802,9 +803,9 @@ class ShortVideoProductionManager:
             state.audio_manifest.append(audio_asset)
             state.production_events.append(
                 ProductionEvent(
-                    event_type="voiceover_generated",
+                    event_type="audio_track_generated",
                     stage=state.stage,
-                    message="Generated one provider-backed voiceover track.",
+                    message="Generated one provider-backed audio track.",
                     metadata={"audio_id": audio_asset.audio_id, "provider": audio_asset.provider},
                 )
             )
@@ -1190,7 +1191,7 @@ def _build_product_ad_visual_prompt(
         f"Brief: {brief}. "
         f"{reference_note} "
         "Keep the product clear, readable, and central. Use polished lighting, simple motion, "
-        "and social-ad pacing."
+        f"and social-ad pacing. {_build_native_audio_instruction(brief)}"
     )
 
 
@@ -1208,7 +1209,8 @@ def _build_cartoon_short_drama_visual_prompt(
         f"Brief: {brief}. "
         f"{reference_note} "
         "Emphasize clear character action, readable emotion, light comedic timing, "
-        "and a simple visual beat that can later expand into multi-shot storyboards."
+        f"and a simple visual beat that can later expand into multi-shot storyboards. "
+        f"{_build_native_audio_instruction(brief)}"
     )
 
 
@@ -1226,8 +1228,97 @@ def _build_social_media_visual_prompt(
         f"Brief: {brief}. "
         f"{reference_note} "
         "Use a strong opening visual hook, fast readable motion, platform-friendly framing, "
-        "and clear subject focus suitable for short-form feeds."
+        f"and clear subject focus suitable for short-form feeds. {_build_native_audio_instruction(brief)}"
     )
+
+
+def _build_native_audio_instruction(brief: str) -> str:
+    """Build Seedance-oriented audio guidance from user-provided brief text."""
+    dialogue_lines = _extract_dialogue_lines(brief)
+    subtitle_note = (
+        "Do not render subtitles or on-screen captions."
+        if _requests_no_subtitles(brief)
+        else "Do not add subtitles unless the brief explicitly asks for them."
+    )
+    if dialogue_lines:
+        return (
+            "Native audio instructions: generate synchronized character voices, sound effects, "
+            "and timing directly in the video. Spoken dialogue to generate exactly, with no "
+            f"narrator reading the task description: {'; '.join(dialogue_lines)}. "
+            f"{subtitle_note} Honor any requested voice style in the brief."
+        )
+    return (
+        "Native audio instructions: generate synchronized audio that matches the scene, "
+        "including voices, sound effects, and music if requested. Do not read the task "
+        f"description as narration unless the brief explicitly asks for narration. {subtitle_note}"
+    )
+
+
+def _extract_dialogue_lines(brief: str) -> list[str]:
+    """Return speaker-attributed dialogue lines from plain text such as `Cat A: hello`."""
+    lines: list[str] = []
+    for raw_line in str(brief or "").splitlines():
+        match = re.match(r"^\s*([^:：\n]{1,24})\s*[:：]\s*(.+?)\s*$", raw_line)
+        if not match:
+            continue
+        speaker = match.group(1).strip()
+        text = match.group(2).strip().strip('"')
+        if not speaker or not text or not _looks_like_dialogue_speaker(speaker):
+            continue
+        safe_text = text.replace('"', "'")
+        lines.append(f'{speaker} says "{safe_text}"')
+    return lines
+
+
+def _looks_like_dialogue_speaker(label: str) -> bool:
+    """Return whether a colon-prefixed label looks like a speaker rather than a field name."""
+    normalized = str(label or "").strip().lower()
+    field_labels = {
+        "品牌",
+        "产品",
+        "卖点",
+        "价格",
+        "时长",
+        "风格",
+        "语音风格",
+        "字幕",
+        "背景",
+        "场景",
+        "任务",
+        "标题",
+        "brief",
+        "style",
+        "product",
+        "brand",
+    }
+    if normalized in field_labels:
+        return False
+    speaker_markers = (
+        "角色",
+        "人物",
+        "猫",
+        "狗",
+        "男",
+        "女",
+        "旁白",
+        "主播",
+        "a",
+        "b",
+        "character",
+        "narrator",
+        "cat",
+        "dog",
+        "host",
+    )
+    if any(marker in normalized for marker in speaker_markers):
+        return True
+    return bool(re.fullmatch(r"[a-z0-9一二三四五六七八九十]{1,4}", normalized))
+
+
+def _requests_no_subtitles(brief: str) -> bool:
+    """Return whether the brief asks not to show subtitles or captions."""
+    normalized = str(brief or "").lower()
+    return any(token in normalized for token in ("不用显示字幕", "不要字幕", "无字幕", "no subtitles", "no captions"))
 
 
 def _requested_video_type(user_prompt: str, payload: dict[str, Any]) -> str:

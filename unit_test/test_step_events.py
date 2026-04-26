@@ -56,6 +56,42 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2. read_file", self.messages[1].text)
         self.assertIn("Result: Read succeeded", self.messages[1].text)
 
+    async def test_plugin_publishes_short_video_production_progress(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-short-video")
+        tool = SimpleNamespace(name="run_short_video_production")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-short-video",
+            session=SimpleNamespace(id="session-short-video", state={"turn_index": 3}),
+        )
+
+        with route_context("feishu", "chat-short-video"):
+            await plugin.before_run_callback(invocation_context=invocation)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_assets": False},
+                tool_context=tool_context,
+            )
+            await plugin.after_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_assets": False},
+                tool_context=tool_context,
+                result={
+                    "status": "needs_user_review",
+                    "capability": "short_video",
+                    "stage": "asset_plan_review",
+                    "progress_percent": 20,
+                    "message": "Please review the short-video asset plan.",
+                },
+            )
+            await plugin.after_run_callback(invocation_context=invocation)
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertEqual(self.messages[0].metadata["stage"], "video_processing")
+        self.assertEqual(self.messages[0].metadata["stage_title"], "run_short_video_production")
+        self.assertIn("Status: started", self.messages[0].text)
+        self.assertIn("stage=asset_plan_review", self.messages[1].text)
+
     async def test_plugin_ignores_unknown_tool_names(self) -> None:
         plugin = CreativeClawStepEventPlugin()
         invocation = SimpleNamespace(invocation_id="inv-2")

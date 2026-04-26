@@ -44,7 +44,7 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
                         "status": "success",
                         "message": b"video-data",
                         "provider": "seedance",
-                        "model_name": "doubao-seedance-1-0-pro-250528",
+                        "model_name": "doubao-seedance-2-0-260128",
                     }
                 ),
             ) as seedance_mock,
@@ -56,8 +56,77 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
             events = [event async for event in agent._run_async_impl(ctx)]
 
         self.assertEqual(len(events), 1)
-        seedance_mock.assert_awaited_once()
+        seedance_mock.assert_awaited_once_with(
+            "enhanced cat video",
+            input_paths=[],
+            mode="prompt",
+            aspect_ratio="16:9",
+            model_name="doubao-seedance-2-0-260128",
+            resolution="720p",
+            duration_seconds=5,
+            generate_audio=None,
+            watermark=False,
+            seed=None,
+        )
         veo_mock.assert_not_called()
+
+    async def test_video_generation_passes_seedance_2_fast_audio_parameters(self) -> None:
+        agent = VideoGenerationAgent(name="VideoGenerationAgent")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "prompt": "两只猫对话。猫A说：“你妈妈一个月赚多少钱？”猫B说：“两万五。”",
+                    "provider": "seedance",
+                    "model_name": "doubao-seedance-2-0-fast-260128",
+                    "prompt_rewrite": "off",
+                    "aspect_ratio": "9:16",
+                    "resolution": "720p",
+                    "duration_seconds": 8,
+                    "generate_audio": True,
+                    "watermark": False,
+                    "seed": -1,
+                },
+                "step": 0,
+            }
+        )
+
+        with (
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.prompt_enhancement_tool",
+                new=AsyncMock(),
+            ) as enhancement_mock,
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.save_binary_output",
+                return_value=workspace_root() / "generated" / "session_1" / "step1_video_generation_output0.mp4",
+            ),
+            patch(
+                "src.agents.experts.video_generation.video_generation_agent.video_tools.seedance_video_generation_tool",
+                new=AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "message": b"video-data",
+                        "provider": "seedance",
+                        "model_name": "doubao-seedance-2-0-fast-260128",
+                    }
+                ),
+            ) as seedance_mock,
+        ):
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        enhancement_mock.assert_not_called()
+        seedance_mock.assert_awaited_once_with(
+            "两只猫对话。猫A说：“你妈妈一个月赚多少钱？”猫B说：“两万五。”",
+            input_paths=[],
+            mode="prompt",
+            aspect_ratio="9:16",
+            model_name="doubao-seedance-2-0-fast-260128",
+            resolution="720p",
+            duration_seconds=8,
+            generate_audio=True,
+            watermark=False,
+            seed=-1,
+        )
 
     async def test_video_generation_uses_veo_when_requested(self) -> None:
         agent = VideoGenerationAgent(name="VideoGenerationAgent")
@@ -264,7 +333,7 @@ class VideoExpertProviderTests(unittest.IsolatedAsyncioTestCase):
                         "status": "success",
                         "message": b"video-data",
                         "provider": "seedance",
-                        "model_name": "doubao-seedance-1-0-pro-250528",
+                        "model_name": "doubao-seedance-2-0-260128",
                     }
                 ),
             ),
@@ -318,9 +387,57 @@ class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             create_mock.call_args.kwargs,
             {
-                "model": "doubao-seedance-1-0-pro-250528",
+                "model": "doubao-seedance-2-0-260128",
                 "content": [{"type": "text", "text": "draw a cat video"}],
                 "ratio": "9:16",
+                "resolution": "720p",
+                "duration": 5,
+                "watermark": False,
+                "generate_audio": True,
+            },
+        )
+
+    async def test_seedance_tool_passes_2_fast_audio_parameters(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))
+        get_mock = MagicMock(return_value=SimpleNamespace(status="failed", error="mock error"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(
+                    create=create_mock,
+                    get=get_mock,
+                )
+            )
+        )
+        fake_module = SimpleNamespace(Ark=MagicMock(return_value=fake_client))
+
+        with (
+            patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False),
+            patch.dict(sys.modules, {"volcenginesdkarkruntime": fake_module}),
+        ):
+            result = await video_tools.seedance_video_generation_tool(
+                "两只猫对话。猫A说：“你好。”猫B说：“你好呀。”",
+                aspect_ratio="9:16",
+                model_name="doubao-seedance-2-0-fast-260128",
+                resolution="720p",
+                duration_seconds=8,
+                generate_audio=True,
+                watermark=False,
+                seed=-1,
+            )
+
+        self.assertEqual(result["status"], "error")
+        create_mock.assert_called_once()
+        self.assertEqual(
+            create_mock.call_args.kwargs,
+            {
+                "model": "doubao-seedance-2-0-fast-260128",
+                "content": [{"type": "text", "text": "两只猫对话。猫A说：“你好。”猫B说：“你好呀。”"}],
+                "ratio": "9:16",
+                "resolution": "720p",
+                "duration": 8,
+                "watermark": False,
+                "generate_audio": True,
+                "seed": -1,
             },
         )
 

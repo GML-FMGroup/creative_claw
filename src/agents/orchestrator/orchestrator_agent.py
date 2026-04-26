@@ -457,7 +457,8 @@ Rules:
 - `input_name` is legacy and should not be used unless compatibility fallback is absolutely required.
 - When using `ImageGenerationAgent`, you may pass optional `provider`, `aspect_ratio`, and `resolution`.
 - When using `ImageEditingAgent`, you may pass optional `provider`.
-- When using `VideoGenerationAgent`, you may pass optional `prompt_rewrite`, `provider`, `mode`, `aspect_ratio`, `resolution`, `duration_seconds`, `negative_prompt`, `person_generation`, `seed`, `model_name`, and `kling_mode`.
+- When using `VideoGenerationAgent`, you may pass optional `prompt_rewrite`, `provider`, `mode`, `aspect_ratio`, `resolution`, `duration_seconds`, `generate_audio`, `watermark`, `negative_prompt`, `person_generation`, `seed`, `model_name`, and `kling_mode`.
+- For exact dialogue or native generated audio with Seedance 2.0, set `provider="seedance"`, `generate_audio=true`, and `prompt_rewrite="off"` so quoted dialogue is preserved.
 {video_generation_routing_notes}
 - For provider `veo`, mode `video_extension` accepts one workspace video via `input_path` or `input_paths`.
 - For provider `kling`, use only `prompt`, `first_frame`, `first_frame_and_last_frame`, or `multi_reference`. `multi_reference` expects 2-4 workspace images through `input_paths`. If Kling input images do not meet the documented limits, inspect them with `image_info` and decide whether to preprocess them with `image_resize` or other local image tools first. The Kling expert does not auto-resize or auto-crop inputs. Do not route Kling calls to `reference_asset`, `reference_style`, or `video_extension`.

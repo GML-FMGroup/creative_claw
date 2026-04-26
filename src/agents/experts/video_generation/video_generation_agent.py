@@ -17,6 +17,9 @@ from src.agents.experts.video_generation.capabilities import (
     normalize_provider_video_duration,
     normalize_provider_video_mode,
     normalize_provider_video_resolution,
+    normalize_seedance_model_name,
+    normalize_seedance_video_duration,
+    normalize_seedance_video_resolution,
     normalize_video_prompt_rewrite,
     normalize_video_provider,
 )
@@ -53,6 +56,21 @@ async def _prepare_prompts(
     return normalized_prompts
 
 
+def _parse_optional_bool(value) -> bool | None:
+    """Return a bool for explicit values and None when the parameter is absent."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_bool(value, *, default: bool = False) -> bool:
+    """Return a bool for flexible user-provided values."""
+    parsed = _parse_optional_bool(value)
+    return default if parsed is None else parsed
+
+
 class VideoGenerationAgent(CreativeExpert):
     """Generate one or more videos from prompt, image, or video-guided inputs."""
 
@@ -74,6 +92,7 @@ class VideoGenerationAgent(CreativeExpert):
 
         provider = normalize_video_provider(current_parameters.get("provider"))
         mode = normalize_provider_video_mode(provider, current_parameters.get("mode", "prompt"))
+        seedance_model_name = normalize_seedance_model_name(current_parameters.get("model_name"))
         if provider == "kling":
             aspect_ratio = normalize_provider_video_aspect_ratio(
                 provider,
@@ -88,6 +107,19 @@ class VideoGenerationAgent(CreativeExpert):
                 )
                 or get_default_video_duration(provider)
                 or 5
+            )
+        elif provider == "seedance":
+            aspect_ratio = normalize_provider_video_aspect_ratio(
+                provider,
+                current_parameters.get("aspect_ratio", "16:9"),
+            )
+            resolution = normalize_seedance_video_resolution(
+                seedance_model_name,
+                current_parameters.get("resolution", ""),
+            )
+            duration_seconds = normalize_seedance_video_duration(
+                seedance_model_name,
+                current_parameters.get("duration_seconds"),
             )
         else:
             aspect_ratio = normalize_provider_video_aspect_ratio(
@@ -110,6 +142,8 @@ class VideoGenerationAgent(CreativeExpert):
         negative_prompt = str(current_parameters.get("negative_prompt", "") or "").strip()
         kling_model_name = str(current_parameters.get("model_name", "") or "").strip()
         kling_mode = video_tools.normalize_kling_mode(current_parameters.get("kling_mode", "std"))
+        seedance_generate_audio = _parse_optional_bool(current_parameters.get("generate_audio"))
+        seedance_watermark = _parse_bool(current_parameters.get("watermark"), default=False)
 
         if not any(prompt_list) and not input_paths:
             error_text = f"Missing parameters provided to {self.name}, must include prompt or input_path/input_paths."
@@ -130,7 +164,11 @@ class VideoGenerationAgent(CreativeExpert):
             person_generation = video_tools.normalize_person_generation(
                 current_parameters.get("person_generation")
             )
-            seed = video_tools.normalize_video_seed(current_parameters.get("seed"))
+            seed = (
+                video_tools.normalize_seedance_seed(current_parameters.get("seed"))
+                if provider == "seedance"
+                else video_tools.normalize_video_seed(current_parameters.get("seed"))
+            )
             video_tools._validate_mode_input_paths(mode, input_paths)
         except ValueError as exc:
             error_text = f"{self.name} got invalid parameters: {exc}"
@@ -181,6 +219,12 @@ class VideoGenerationAgent(CreativeExpert):
                     input_paths=input_paths,
                     mode=mode,
                     aspect_ratio=aspect_ratio,
+                    model_name=seedance_model_name,
+                    resolution=resolution,
+                    duration_seconds=duration_seconds,
+                    generate_audio=seedance_generate_audio,
+                    watermark=seedance_watermark,
+                    seed=seed,
                 )
                 for prompt in normalized_prompts
             ]

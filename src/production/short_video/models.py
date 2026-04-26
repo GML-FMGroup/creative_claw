@@ -125,9 +125,9 @@ class ShortVideoAssetPlan(BaseModel):
 
     plan_id: str = Field(default_factory=lambda: new_id("asset_plan"))
     video_type: Literal["product_ad", "cartoon_short_drama", "social_media_short"] = "product_ad"
-    planned_video_provider: Literal["veo"] = "veo"
-    planned_tts: bool = True
-    planned_tts_provider: str = "speech_synthesis"
+    planned_video_provider: Literal["seedance", "veo"] = "seedance"
+    planned_tts: bool = False
+    planned_tts_provider: str = "seedance_native_audio"
     ratio_options: list[Literal["9:16", "16:9", "1:1"]] = Field(
         default_factory=lambda: ["9:16", "16:9", "1:1"]
     )
