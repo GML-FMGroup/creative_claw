@@ -121,7 +121,7 @@ class ShortVideoShotPlan(BaseModel):
 
 
 class ShortVideoAssetPlan(BaseModel):
-    """User-reviewable asset plan for the first P0b product-ad workflow."""
+    """User-reviewable asset plan for the P0 short-video workflow."""
 
     plan_id: str = Field(default_factory=lambda: new_id("asset_plan"))
     video_type: Literal["product_ad", "cartoon_short_drama", "social_media_short"] = "product_ad"

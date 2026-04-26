@@ -128,11 +128,11 @@ class _FakeProviderRuntime:
         reference_assets,
         owner_ref,
     ) -> AssetManifestEntry:
-        video_path = session_root / "assets" / "veo_clip.mp4"
+        video_path = session_root / "assets" / f"{asset_plan.plan_id}_veo_clip.mp4"
         video_path.parent.mkdir(parents=True, exist_ok=True)
         video_path.write_bytes(b"fake-veo-video")
         return AssetManifestEntry(
-            asset_id="asset_veo_1",
+            asset_id=f"{asset_plan.plan_id}_video",
             kind="video",
             path=workspace_relative_path(video_path),
             source="expert",
@@ -152,11 +152,11 @@ class _FakeProviderRuntime:
         render_settings: ShortVideoRenderSettings,
         owner_ref,
     ) -> AudioManifestEntry:
-        audio_path = session_root / "audio" / "voiceover.mp3"
+        audio_path = session_root / "audio" / f"{asset_plan.plan_id}_voiceover.mp3"
         audio_path.parent.mkdir(parents=True, exist_ok=True)
         audio_path.write_bytes(b"fake-tts-audio")
         return AudioManifestEntry(
-            audio_id="audio_tts_1",
+            audio_id=f"{asset_plan.plan_id}_voiceover",
             kind="voiceover",
             path=workspace_relative_path(audio_path),
             source="expert",
@@ -249,6 +249,51 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_provider"], "veo")
         self.assertIsNone(asset_plan_payload["asset_plan"]["selected_ratio"])
         self.assertIn("active_review", asset_plan_payload)
+
+    def test_manager_start_classifies_cartoon_and_social_video_types(self) -> None:
+        manager = ShortVideoProductionManager()
+        cases = [
+            (
+                "帮我做一个 20 秒卡通短剧，主题是程序员被 AI 助手拯救",
+                "cartoon_short_drama",
+                "cartoon short-drama",
+                {"aspect_ratio": "9:16"},
+            ),
+            (
+                "做一个适合小红书发布的社交媒体短片，开头要有强钩子",
+                "social_media_short",
+                "social media short",
+                {"aspect_ratio": "9:16"},
+            ),
+            (
+                "帮我做一支 15 秒短视频，先给计划",
+                "social_media_short",
+                "social media short",
+                {"aspect_ratio": "9:16", "project_type": "social_media_short"},
+            ),
+        ]
+
+        for prompt, expected_video_type, prompt_marker, render_settings in cases:
+            with self.subTest(expected_video_type=expected_video_type):
+                state = _adk_state()
+                state["sid"] = f"session_{expected_video_type}"
+
+                result = asyncio.run(manager.start(
+                    user_prompt=prompt,
+                    input_files=[],
+                    placeholder_assets=False,
+                    render_settings=render_settings,
+                    adk_state=state,
+                ))
+
+                self.assertEqual(result.status, "needs_user_review")
+                state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+                asset_plan = state_payload["asset_plan"]
+                self.assertEqual(asset_plan["video_type"], expected_video_type)
+                self.assertIn(prompt_marker, asset_plan["shot_plan"]["visual_prompt"])
+                review_items = result.review_payload.model_dump(mode="json")["items"]
+                video_type_item = next(item for item in review_items if item["kind"] == "video_type")
+                self.assertEqual(video_type_item["video_type"], expected_video_type)
 
     def test_manager_view_returns_asset_plan_without_mutating_adk_state(self) -> None:
         state = _adk_state()
@@ -503,6 +548,66 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state_payload["audio_manifest"][0]["status"], "stale")
         self.assertIsNone(state_payload["timeline"])
         self.assertIn("stale", state_payload["artifacts"][0]["description"].lower())
+
+    def test_manager_apply_revision_then_approve_regenerates_version_safe_output(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        first_completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+        first_path = first_completed.artifacts[0].path
+        first_payload = json.loads(resolve_workspace_path(first_completed.state_ref or "").read_text(encoding="utf-8"))
+        first_plan_id = first_payload["asset_plan"]["plan_id"]
+        first_video_id = first_payload["asset_manifest"][0]["asset_id"]
+        first_audio_id = first_payload["audio_manifest"][0]["audio_id"]
+
+        applied = asyncio.run(manager.apply_revision(
+            production_session_id=first_completed.production_session_id,
+            user_response={
+                "targets": [{"kind": "voiceover"}],
+                "notes": "Make the voiceover warmer.",
+            },
+            adk_state=state,
+        ))
+        applied_payload = json.loads(resolve_workspace_path(applied.state_ref or "").read_text(encoding="utf-8"))
+        second_plan_id = applied_payload["asset_plan"]["plan_id"]
+
+        second_completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+
+        self.assertEqual(second_completed.status, "completed")
+        self.assertNotEqual(second_plan_id, first_plan_id)
+        self.assertNotEqual(second_completed.artifacts[0].path, first_path)
+        self.assertEqual(state["final_file_paths"], [second_completed.artifacts[0].path])
+        self.assertEqual(len(state["files_history"]), 2)
+        state_payload = json.loads(resolve_workspace_path(second_completed.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_plan"]["plan_id"], second_plan_id)
+        old_video = next(item for item in state_payload["asset_manifest"] if item["asset_id"] == first_video_id)
+        old_audio = next(item for item in state_payload["audio_manifest"] if item["audio_id"] == first_audio_id)
+        self.assertEqual(old_video["status"], "stale")
+        self.assertEqual(old_audio["status"], "stale")
+        latest_video = state_payload["asset_manifest"][-1]
+        latest_audio = state_payload["audio_manifest"][-1]
+        self.assertEqual(latest_video["status"], "valid")
+        self.assertEqual(latest_audio["status"], "valid")
+        self.assertEqual(state_payload["timeline"]["video_tracks"][0]["clips"][0]["asset_id"], latest_video["asset_id"])
+        self.assertEqual(state_payload["timeline"]["audio_tracks"][0]["clips"][0]["audio_id"], latest_audio["audio_id"])
 
     def test_manager_apply_revision_rejects_unmatched_target_without_mutation(self) -> None:
         state = _adk_state()

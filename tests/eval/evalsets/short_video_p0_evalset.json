@@ -35,6 +35,68 @@
       }
     },
     {
+      "eval_id": "start_cartoon_short_drama_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_cartoon_short_drama_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请帮我做一个 20 秒卡通短剧短视频，主题是程序员被 AI 助手拯救。先给我生产计划，不要直接生成真实视频。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_cartoon_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_social_media_short_requires_review",
+      "conversation": [
+        {
+          "invocation_id": "start_social_media_short_requires_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "做一个适合小红书发布的社交媒体短片，开头要有强钩子。先返回计划和比例选择，不要直接生成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_social_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
       "eval_id": "view_active_production_plan",
       "conversation": [
         {

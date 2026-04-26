@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 from src.production.errors import ProductionError as ProductionRuntimeError
@@ -44,6 +45,12 @@ from src.runtime.workspace import resolve_workspace_path, workspace_relative_pat
 
 
 _VIEW_TYPES = ("overview", "brief", "asset_plan", "timeline", "events", "artifacts")
+_VIDEO_TYPES = ("product_ad", "cartoon_short_drama", "social_media_short")
+_VIDEO_TYPE_LABELS = {
+    "product_ad": "product-ad",
+    "cartoon_short_drama": "cartoon short-drama",
+    "social_media_short": "social-media short",
+}
 
 
 class ShortVideoProductionManager:
@@ -76,7 +83,7 @@ class ShortVideoProductionManager:
         render_settings: dict[str, Any] | None,
         adk_state,
     ) -> ProductionRunResult:
-        """Start a short-video production run or pause at the first P0b review."""
+        """Start a short-video production run or pause at the first P0 review."""
         context = _context_from_adk_state(adk_state)
         production_session = self.store.create_session(
             capability=self.capability,
@@ -504,11 +511,16 @@ class ShortVideoProductionManager:
         )
         selected_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
-        state.asset_plan = _build_product_ad_asset_plan(
+        state.asset_plan = _build_short_video_asset_plan(
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
             selected_ratio=selected_ratio,
             duration_seconds=duration_seconds,
+            video_type=(
+                state.asset_plan.video_type
+                if state.asset_plan is not None
+                else "product_ad"
+            ),
         )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
@@ -607,11 +619,16 @@ class ShortVideoProductionManager:
                 state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
             current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
             duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
-            state.asset_plan = _build_product_ad_asset_plan(
+            state.asset_plan = _build_short_video_asset_plan(
                 user_prompt=state.brief_summary,
                 reference_assets=state.reference_assets,
                 selected_ratio=current_ratio,
                 duration_seconds=duration_seconds,
+                video_type=(
+                    state.asset_plan.video_type
+                    if state.asset_plan is not None
+                    else "product_ad"
+                ),
             )
             state.active_breakpoint = ProductionBreakpoint(
                 stage=state.stage,
@@ -664,13 +681,14 @@ class ShortVideoProductionManager:
         render_settings_payload: dict[str, Any],
         adk_state,
     ) -> ProductionRunResult:
-        """Create the P0b product-ad asset plan and pause before provider calls."""
+        """Create the P0 short-video asset plan and pause before provider calls."""
         duration_seconds = _duration_seconds(render_settings_payload, default=8.0)
-        state.asset_plan = _build_product_ad_asset_plan(
+        state.asset_plan = _build_short_video_asset_plan(
             user_prompt=user_prompt,
             reference_assets=state.reference_assets,
             selected_ratio=_explicit_aspect_ratio(render_settings_payload),
             duration_seconds=duration_seconds,
+            video_type=_requested_video_type(user_prompt, render_settings_payload),
         )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
@@ -683,8 +701,9 @@ class ShortVideoProductionManager:
             ProductionEvent(
                 event_type="asset_plan_review_required",
                 stage=state.stage,
-                message="Prepared a P0b product-ad asset plan and paused before provider generation.",
+                message="Prepared a P0 short-video asset plan and paused before provider generation.",
                 metadata={
+                    "video_type": state.asset_plan.video_type,
                     "planned_video_provider": state.asset_plan.planned_video_provider,
                     "planned_tts_provider": state.asset_plan.planned_tts_provider,
                     "selected_ratio": state.asset_plan.selected_ratio,
@@ -696,7 +715,7 @@ class ShortVideoProductionManager:
         self.store.project_to_adk_state(adk_state, state)
         return self._result_from_state(
             state,
-            message="Please review the product-ad asset plan before real video and TTS generation.",
+            message="Please review the short-video asset plan before real video and TTS generation.",
         )
 
     async def _approve_asset_plan_and_generate(
@@ -706,7 +725,7 @@ class ShortVideoProductionManager:
         user_response: dict[str, Any],
         adk_state,
     ) -> ProductionRunResult:
-        """Generate media from an approved P0b asset plan."""
+        """Generate media from an approved P0 short-video asset plan."""
         if state.asset_plan is None:
             return self._fail_state(
                 state,
@@ -748,6 +767,10 @@ class ShortVideoProductionManager:
         duration_seconds = state.asset_plan.duration_seconds
 
         try:
+            _mark_existing_generated_media_superseded(
+                state,
+                reason="New approved generation supersedes previous generated outputs.",
+            )
             state.status = "running"
             state.stage = "provider_generation"
             state.progress_percent = 45
@@ -793,7 +816,7 @@ class ShortVideoProductionManager:
                 render_settings=settings,
                 duration_seconds=duration_seconds,
             )
-            final_path = session_root / "final" / "final.mp4"
+            final_path = _final_output_path(session_root, state.asset_plan.plan_id)
             state.stage = "rendering"
             state.progress_percent = 75
             state.render_report = self.renderer.render(
@@ -815,7 +838,7 @@ class ShortVideoProductionManager:
                 WorkspaceFileRef(
                     name="final.mp4",
                     path=state.render_report.output_path,
-                    description="P0b product-ad short-video render.",
+                    description=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video render.",
                     source=self.capability,
                 )
             ]
@@ -823,7 +846,7 @@ class ShortVideoProductionManager:
                 ProductionEvent(
                     event_type="production_completed",
                     stage=state.stage,
-                    message="P0b product-ad short-video render completed.",
+                    message=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
                     metadata={"artifact_path": state.render_report.output_path},
                 )
             )
@@ -832,7 +855,7 @@ class ShortVideoProductionManager:
             self.store.project_to_adk_state(adk_state, state)
             return self._result_from_state(
                 state,
-                message="P0b product-ad short-video production completed.",
+                message=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
             )
         except ShortVideoProviderError as exc:
             return self._fail_state(
@@ -1115,27 +1138,42 @@ def _brief_summary(user_prompt: str) -> str:
     return prompt or "Short-video production."
 
 
-def _build_product_ad_asset_plan(
+def _build_short_video_asset_plan(
     *,
     user_prompt: str,
     reference_assets: list[ReferenceAssetEntry],
     selected_ratio: str | None,
     duration_seconds: float,
+    video_type: str,
 ) -> ShortVideoAssetPlan:
     brief = _brief_summary(user_prompt)
+    normalized_video_type = _normalize_video_type(video_type) or "product_ad"
     reference_asset_ids = [item.reference_asset_id for item in reference_assets]
     shot_plan = ShortVideoShotPlan(
         duration_seconds=duration_seconds,
-        visual_prompt=_build_product_ad_visual_prompt(brief, reference_assets),
+        visual_prompt=_build_visual_prompt(normalized_video_type, brief, reference_assets),
         voiceover_text=_build_voiceover_text(brief),
         reference_asset_ids=reference_asset_ids,
     )
     return ShortVideoAssetPlan(
+        video_type=normalized_video_type,  # type: ignore[arg-type]
         selected_ratio=selected_ratio,  # type: ignore[arg-type]
         duration_seconds=duration_seconds,
         reference_asset_ids=reference_asset_ids,
         shot_plan=shot_plan,
     )
+
+
+def _build_visual_prompt(
+    video_type: str,
+    brief: str,
+    reference_assets: list[ReferenceAssetEntry],
+) -> str:
+    if video_type == "cartoon_short_drama":
+        return _build_cartoon_short_drama_visual_prompt(brief, reference_assets)
+    if video_type == "social_media_short":
+        return _build_social_media_visual_prompt(brief, reference_assets)
+    return _build_product_ad_visual_prompt(brief, reference_assets)
 
 
 def _build_product_ad_visual_prompt(
@@ -1154,6 +1192,87 @@ def _build_product_ad_visual_prompt(
         "Keep the product clear, readable, and central. Use polished lighting, simple motion, "
         "and social-ad pacing."
     )
+
+
+def _build_cartoon_short_drama_visual_prompt(
+    brief: str,
+    reference_assets: list[ReferenceAssetEntry],
+) -> str:
+    reference_note = (
+        "Use the provided reference assets as character, product, or style anchors."
+        if reference_assets
+        else "Infer character and style identity from the brief."
+    )
+    return (
+        "Create a concise single-shot cartoon short-drama video for P0 validation. "
+        f"Brief: {brief}. "
+        f"{reference_note} "
+        "Emphasize clear character action, readable emotion, light comedic timing, "
+        "and a simple visual beat that can later expand into multi-shot storyboards."
+    )
+
+
+def _build_social_media_visual_prompt(
+    brief: str,
+    reference_assets: list[ReferenceAssetEntry],
+) -> str:
+    reference_note = (
+        "Use the provided reference assets as identity or style anchors."
+        if reference_assets
+        else "Infer the visual identity from the brief."
+    )
+    return (
+        "Create a concise single-shot social media short video for P0 validation. "
+        f"Brief: {brief}. "
+        f"{reference_note} "
+        "Use a strong opening visual hook, fast readable motion, platform-friendly framing, "
+        "and clear subject focus suitable for short-form feeds."
+    )
+
+
+def _requested_video_type(user_prompt: str, payload: dict[str, Any]) -> str:
+    for key in ("video_type", "short_video_type", "production_type", "project_type"):
+        normalized = _normalize_video_type(payload.get(key))
+        if normalized:
+            return normalized
+    return _infer_video_type_from_text(user_prompt)
+
+
+def _infer_video_type_from_text(text: str) -> str:
+    normalized = str(text or "").strip().lower()
+    if any(token in normalized for token in ("卡通短剧", "动画短剧", "cartoon", "animated short", "short drama")):
+        return "cartoon_short_drama"
+    if any(token in normalized for token in ("社交媒体", "小红书", "抖音", "tiktok", "reels", "shorts", "social media")):
+        return "social_media_short"
+    return "product_ad"
+
+
+def _normalize_video_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "product": "product_ad",
+        "product_ad": "product_ad",
+        "product_ads": "product_ad",
+        "ad": "product_ad",
+        "advertising": "product_ad",
+        "cartoon": "cartoon_short_drama",
+        "cartoon_drama": "cartoon_short_drama",
+        "cartoon_short": "cartoon_short_drama",
+        "cartoon_short_drama": "cartoon_short_drama",
+        "animated_short": "cartoon_short_drama",
+        "short_drama": "cartoon_short_drama",
+        "social": "social_media_short",
+        "social_short": "social_media_short",
+        "social_media": "social_media_short",
+        "social_media_short": "social_media_short",
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    return normalized if normalized in _VIDEO_TYPES else ""
+
+
+def _video_type_label(video_type: str) -> str:
+    return _VIDEO_TYPE_LABELS.get(_normalize_video_type(video_type), "short-video")
 
 
 def _build_voiceover_text(brief: str) -> str:
@@ -1245,15 +1364,17 @@ def _apply_revision_to_asset_plan(
         return
 
     if target_kinds <= {"voiceover"}:
+        asset_plan.plan_id = new_id("asset_plan")
         asset_plan.shot_plan.voiceover_text = notes
         asset_plan.status = "draft"
         return
 
-    state.asset_plan = _build_product_ad_asset_plan(
+    state.asset_plan = _build_short_video_asset_plan(
         user_prompt=state.brief_summary,
         reference_assets=_valid_reference_assets(state),
         selected_ratio=asset_plan.selected_ratio,
         duration_seconds=asset_plan.duration_seconds,
+        video_type=asset_plan.video_type,
     )
 
 
@@ -1293,6 +1414,34 @@ def _mark_revision_outputs_stale(
                 ).strip()
 
 
+def _mark_existing_generated_media_superseded(
+    state: ShortVideoProductionState,
+    *,
+    reason: str,
+) -> None:
+    """Mark previous generated media stale before writing a new approved render."""
+    for asset in state.asset_manifest:
+        if asset.source in {"expert", "cache"} and asset.status == "valid":
+            asset.status = "stale"
+            asset.stale_reason = reason
+    for audio in state.audio_manifest:
+        if audio.source in {"expert", "cache"} and audio.status == "valid":
+            audio.status = "stale"
+            audio.stale_reason = reason
+    state.timeline = None
+    state.render_report = None
+    state.render_validation_report = None
+
+
+def _final_output_path(session_root: Path, plan_id: str) -> Path:
+    """Return a version-safe final MP4 path for one approved asset plan."""
+    plan_segment = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in plan_id
+    )
+    return session_root / "final" / (plan_segment or new_id("asset_plan")) / "final.mp4"
+
+
 def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayload:
     asset_plan = state.asset_plan
     if asset_plan is None:
@@ -1310,9 +1459,14 @@ def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayloa
         questions.append("Choose one aspect ratio before generation: 9:16, 16:9, or 1:1.")
     return ReviewPayload(
         review_type="asset_plan_review",
-        title="Review product-ad asset plan",
+        title=f"Review {_video_type_label(asset_plan.video_type)} asset plan",
         summary=state.brief_summary,
         items=[
+            {
+                "kind": "video_type",
+                "video_type": asset_plan.video_type,
+                "label": _video_type_label(asset_plan.video_type),
+            },
             {
                 "kind": "providers",
                 "planned_video_provider": asset_plan.planned_video_provider,

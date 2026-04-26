@@ -18,7 +18,7 @@
           "rubric_id": "short_video_review_before_generation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks for product-ad short-video generation and has not explicitly approved the asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
+            "text_property": "When the user asks for product-ad, cartoon short-drama, or social-media short-video generation and has not explicitly approved the asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
           }
         },
         {
