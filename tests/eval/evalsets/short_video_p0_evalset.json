@@ -1,7 +1,7 @@
 {
   "eval_set_id": "short_video_p0",
-  "name": "Short-video P1a behavior",
-  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for storyboard or asset-plan review before real generation.",
+  "name": "Short-video P1b behavior",
+  "description": "Checks that the orchestrator routes short-video production through typed production tools and pauses for storyboard, asset-plan, and generated shot-segment review.",
   "eval_cases": [
     {
       "eval_id": "start_product_ad_requires_review",

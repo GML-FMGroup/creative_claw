@@ -2,7 +2,7 @@
 
 This directory contains ADK eval assets for CreativeClaw agent behavior.
 
-Run the short-video P1a eval manually with live model credentials:
+Run the short-video P1b eval manually with live model credentials:
 
 ```bash
 .venv/bin/adk eval tests/eval/creative_claw_orchestrator \

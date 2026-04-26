@@ -188,6 +188,22 @@ def _available_revision_targets(state: ShortVideoProductionState) -> list[dict[s
         )
     targets.extend(
         {
+            "kind": "shot_asset_plan",
+            "id": plan.shot_asset_plan_id,
+            "label": f"Provider segment {plan.segment_index}",
+        }
+        for plan in state.shot_asset_plans
+    )
+    targets.extend(
+        {
+            "kind": "shot_artifact",
+            "id": artifact.shot_artifact_id,
+            "label": f"Generated segment {artifact.segment_index}",
+        }
+        for artifact in state.shot_artifacts
+    )
+    targets.extend(
+        {
             "kind": "reference_asset",
             "id": reference.reference_asset_id,
             "label": str(reference.metadata.get("name", "") or reference.role),
@@ -223,7 +239,16 @@ def _revision_impact_entries(
 
     target_kinds = {target.get("kind", "") for target in matched_targets}
     if not matched_targets or "production" in target_kinds:
-        target_kinds = {"brief", "storyboard", "asset_plan", "shot", "voiceover", "reference_asset"}
+        target_kinds = {
+            "brief",
+            "storyboard",
+            "asset_plan",
+            "shot",
+            "voiceover",
+            "reference_asset",
+            "shot_asset_plan",
+            "shot_artifact",
+        }
 
     impacted: list[dict[str, Any]] = []
     if target_kinds & {"brief", "storyboard", "shot", "voiceover", "reference_asset"}:
@@ -237,7 +262,7 @@ def _revision_impact_entries(
                     "reason": "Accepted revisions are normalized into the reviewed storyboard before provider planning.",
                 }
             )
-    if target_kinds & {"brief", "asset_plan", "shot", "voiceover", "reference_asset"}:
+    if target_kinds & {"brief", "asset_plan", "shot", "voiceover", "reference_asset", "shot_asset_plan"}:
         if state.asset_plan is not None:
             impacted.append(
                 {
@@ -248,6 +273,17 @@ def _revision_impact_entries(
                     "reason": "Accepted revisions are normalized back into the reviewed asset plan.",
                 }
             )
+    if target_kinds & {"brief", "storyboard", "asset_plan", "shot", "voiceover", "reference_asset", "shot_asset_plan"}:
+        impacted.extend(
+            {
+                "kind": "shot_asset_plan",
+                "id": plan.shot_asset_plan_id,
+                "current_status": plan.status,
+                "would_change": "rebuild_or_reapprove",
+                "reason": "Provider segment plans are derived from the storyboard and asset plan.",
+            }
+            for plan in state.shot_asset_plans
+        )
     if target_kinds & {"reference_asset"}:
         target_ids = {
             target.get("id", "")
@@ -267,8 +303,25 @@ def _revision_impact_entries(
             if not target_ids or reference.reference_asset_id in target_ids
         )
 
-    video_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "reference_asset"})
-    audio_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "voiceover"})
+    shot_artifact_impacted = bool(
+        target_kinds
+        & {"brief", "storyboard", "asset_plan", "shot", "voiceover", "reference_asset", "shot_asset_plan", "shot_artifact"}
+    )
+    if shot_artifact_impacted:
+        impacted.extend(
+            {
+                "kind": "shot_artifact",
+                "id": artifact.shot_artifact_id,
+                "current_status": artifact.status,
+                "would_change": "mark_stale_before_regeneration",
+                "path": artifact.preview_path,
+                "reason": "Generated segment previews depend on provider segment plans and generated media.",
+            }
+            for artifact in state.shot_artifacts
+        )
+
+    video_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "reference_asset", "shot_asset_plan", "shot_artifact"})
+    audio_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "voiceover", "shot_asset_plan", "shot_artifact"})
     timeline_impacted = bool(target_kinds & {"timeline"})
     artifact_impacted = bool(target_kinds & {"artifact"})
 

@@ -26,8 +26,16 @@ class TimelineRenderer:
         audio_manifest: list[AudioManifestEntry],
         output_path: Path,
     ) -> RenderReport:
-        """Render a single-clip timeline using the referenced valid video and audio assets."""
-        video_clip = _require_single_video_clip(timeline)
+        """Render a timeline using referenced valid video and audio assets."""
+        video_clips = _require_video_clips(timeline)
+        if len(video_clips) > 1:
+            return _render_concat_video_clips(
+                timeline=timeline,
+                asset_manifest=asset_manifest,
+                output_path=output_path,
+            )
+
+        video_clip = video_clips[0]
         audio_clip = _require_single_audio_clip(timeline)
         video_asset = _find_valid_video_asset(asset_manifest, video_clip.asset_id)
         audio_asset = _find_valid_audio_asset(audio_manifest, audio_clip.audio_id)
@@ -69,6 +77,64 @@ class TimelineRenderer:
             audio_codec=str(audio_stream.get("codec_name", "")).strip() if audio_stream else "",
             command_summary="ffmpeg mux video and audio to timeline duration",
         )
+
+
+def _render_concat_video_clips(
+    *,
+    timeline: ShortVideoTimeline,
+    asset_manifest: list[AssetManifestEntry],
+    output_path: Path,
+) -> RenderReport:
+    """Render a multi-clip timeline by concatenating self-contained video segments."""
+    video_clips = _require_video_clips(timeline)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    concat_path = output_path.parent / f"{output_path.stem}_concat.txt"
+    concat_lines = []
+    for clip in video_clips:
+        asset = _find_valid_video_asset(asset_manifest, clip.asset_id)
+        resolved = str(resolve_workspace_path(asset.path)).replace("'", "'\\''")
+        concat_lines.append(f"file '{resolved}'")
+    concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_path),
+        "-t",
+        str(timeline.duration_seconds),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_media_command(command, timeout=240)
+    metadata = _probe_media(output_path)
+    video_stream = _find_stream(metadata, "video")
+    audio_stream = _find_stream(metadata, "audio")
+    return RenderReport(
+        output_path=workspace_relative_path(output_path),
+        duration_seconds=_duration_seconds(metadata),
+        width=_safe_int(video_stream.get("width")) if video_stream else None,
+        height=_safe_int(video_stream.get("height")) if video_stream else None,
+        video_codec=str(video_stream.get("codec_name", "")).strip() if video_stream else "",
+        audio_codec=str(audio_stream.get("codec_name", "")).strip() if audio_stream else "",
+        command_summary="ffmpeg concat shot segment videos and re-encode",
+    )
+
+
+def _require_video_clips(timeline: ShortVideoTimeline):
+    if len(timeline.video_tracks) != 1 or not timeline.video_tracks[0].clips:
+        raise ValueError("Short-video renderer requires exactly one video track with at least one clip.")
+    return timeline.video_tracks[0].clips
 
 
 def _require_single_video_clip(timeline: ShortVideoTimeline):

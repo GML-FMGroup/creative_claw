@@ -18,7 +18,7 @@
           "rubric_id": "short_video_review_before_generation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks for product-ad, cartoon short-drama, or social-media short-video generation and has not explicitly approved both the storyboard and asset plan, the agent does not call raw video or TTS generation tools before the production tool returns a user review state."
+            "text_property": "When the user asks for product-ad, cartoon short-drama, or social-media short-video generation, the agent gates the flow through storyboard_review and asset_plan_review before any real provider generation, and after asset-plan approval it waits at shot_review before final delivery."
           }
         },
         {
@@ -39,7 +39,7 @@
           "rubric_id": "short_video_apply_revision_after_confirmation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, and it does not call resume or raw generation tools until the updated storyboard or plan is reviewed and approved."
+            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, and it does not call resume or raw generation tools until the updated storyboard, asset plan, or generated shot segment is reviewed and approved."
           }
         }
       ]

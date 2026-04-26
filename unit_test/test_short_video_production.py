@@ -195,12 +195,47 @@ def _approve_asset_plan(
     adk_state: dict,
     selected_ratio: str | None = None,
 ):
+    result = _approve_asset_plan_to_shot_review(
+        manager,
+        production_session_id=production_session_id,
+        adk_state=adk_state,
+        selected_ratio=selected_ratio,
+    )
+    while result.stage == "shot_review":
+        result = _approve_shot_review(
+            manager,
+            production_session_id=production_session_id,
+            adk_state=adk_state,
+        )
+    return result
+
+
+def _approve_asset_plan_to_shot_review(
+    manager: ShortVideoProductionManager,
+    *,
+    production_session_id: str,
+    adk_state: dict,
+    selected_ratio: str | None = None,
+):
     response = {"decision": "approve"}
     if selected_ratio is not None:
         response["selected_ratio"] = selected_ratio
     return asyncio.run(manager.resume(
         production_session_id=production_session_id,
         user_response=response,
+        adk_state=adk_state,
+    ))
+
+
+def _approve_shot_review(
+    manager: ShortVideoProductionManager,
+    *,
+    production_session_id: str,
+    adk_state: dict,
+):
+    return asyncio.run(manager.resume(
+        production_session_id=production_session_id,
+        user_response={"decision": "approve"},
         adk_state=adk_state,
     ))
 
@@ -229,12 +264,47 @@ async def _approve_asset_plan_async(
     adk_state: dict,
     selected_ratio: str | None = None,
 ):
+    result = await _approve_asset_plan_to_shot_review_async(
+        manager,
+        production_session_id=production_session_id,
+        adk_state=adk_state,
+        selected_ratio=selected_ratio,
+    )
+    while result.stage == "shot_review":
+        result = await _approve_shot_review_async(
+            manager,
+            production_session_id=production_session_id,
+            adk_state=adk_state,
+        )
+    return result
+
+
+async def _approve_asset_plan_to_shot_review_async(
+    manager: ShortVideoProductionManager,
+    *,
+    production_session_id: str,
+    adk_state: dict,
+    selected_ratio: str | None = None,
+):
     response = {"decision": "approve"}
     if selected_ratio is not None:
         response["selected_ratio"] = selected_ratio
     return await manager.resume(
         production_session_id=production_session_id,
         user_response=response,
+        adk_state=adk_state,
+    )
+
+
+async def _approve_shot_review_async(
+    manager: ShortVideoProductionManager,
+    *,
+    production_session_id: str,
+    adk_state: dict,
+):
+    return await manager.resume(
+        production_session_id=production_session_id,
+        user_response={"decision": "approve"},
         adk_state=adk_state,
     )
 
@@ -351,6 +421,12 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(asset_plan_payload["asset_plan"]["planned_video_resolution"], "720p")
         self.assertTrue(asset_plan_payload["asset_plan"]["planned_generate_audio"])
         self.assertIsNone(asset_plan_payload["asset_plan"]["selected_ratio"])
+        self.assertGreaterEqual(len(asset_plan_payload["shot_asset_plans"]), 1)
+        shot_plan_item = next(
+            item for item in result.review_payload.model_dump(mode="json")["items"]
+            if item["kind"] == "shot_asset_plans"
+        )
+        self.assertGreaterEqual(shot_plan_item["count"], 1)
         self.assertIn("active_review", asset_plan_payload)
 
     def test_manager_start_classifies_cartoon_and_social_video_types(self) -> None:
@@ -595,19 +671,74 @@ class ShortVideoProductionTests(unittest.TestCase):
             selected_ratio="9:16",
         )
 
-        result = asyncio.run(manager.resume(
+        shot_review = asyncio.run(manager.resume(
             production_session_id=asset_review.production_session_id,
             user_response={"decision": "approve"},
             adk_state=state,
         ))
 
+        self.assertEqual(shot_review.status, "needs_user_review")
+        self.assertEqual(shot_review.stage, "shot_review")
+        self.assertEqual(shot_review.review_payload.review_type, "shot_review")
+        self.assertEqual(len(shot_review.artifacts), 1)
+        shot_payload = json.loads(resolve_workspace_path(shot_review.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(shot_payload["asset_plan"]["selected_ratio"], "9:16")
+        self.assertEqual(shot_payload["shot_artifacts"][0]["status"], "generated")
+        self.assertEqual(shot_payload["asset_manifest"][0]["provider"], "veo")
+        self.assertEqual(shot_payload["audio_manifest"][0]["provider"], "mock_tts")
+
+        result = _approve_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.stage, "completed")
         self.assertEqual(state["final_file_paths"], [result.artifacts[0].path])
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
-        self.assertEqual(state_payload["asset_plan"]["selected_ratio"], "9:16")
-        self.assertEqual(state_payload["asset_manifest"][0]["provider"], "veo")
-        self.assertEqual(state_payload["audio_manifest"][0]["provider"], "mock_tts")
+        self.assertEqual(state_payload["shot_artifacts"][0]["status"], "approved")
+
+    def test_manager_resume_revise_shot_review_returns_to_asset_plan_review(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a clean product ad for a smart mug",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        shot_review = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        self.assertEqual(shot_review.stage, "shot_review")
+
+        result = asyncio.run(manager.resume(
+            production_session_id=shot_review.production_session_id,
+            user_response={"decision": "revise", "notes": "Keep the product larger in frame."},
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertEqual(result.review_payload.review_type, "asset_plan_review")
+        self.assertEqual(state["final_file_paths"], [])
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_plan"]["status"], "draft")
+        self.assertEqual(state_payload["shot_artifacts"][0]["status"], "stale")
+        self.assertEqual(state_payload["shot_asset_plans"][0]["status"], "stale")
+        self.assertIn("Keep the product larger in frame.", state_payload["brief_summary"])
 
     def test_manager_resume_defaults_to_active_session_after_misc_work(self) -> None:
         state = _adk_state()
@@ -631,14 +762,23 @@ class ShortVideoProductionTests(unittest.TestCase):
         state["generated"].append({"name": "notes.txt", "path": "generated/misc/notes.txt"})
         state["uploaded"].append({"name": "unrelated.png", "path": "input/unrelated.png"})
 
-        result = asyncio.run(manager.resume(
+        shot_review = asyncio.run(manager.resume(
             production_session_id=None,
             user_response={"decision": "approve"},
             adk_state=state,
         ))
 
         self.assertEqual(asset_review.stage, "asset_plan_review")
-        self.assertEqual(result.production_session_id, started.production_session_id)
+        self.assertEqual(shot_review.production_session_id, started.production_session_id)
+        self.assertEqual(shot_review.status, "needs_user_review")
+        self.assertEqual(shot_review.stage, "shot_review")
+
+        result = asyncio.run(manager.resume(
+            production_session_id=None,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+
         self.assertEqual(result.status, "completed")
         self.assertEqual(state["active_production_session_id"], started.production_session_id)
         self.assertEqual(state["uploaded"][0]["name"], "unrelated.png")
@@ -793,17 +933,25 @@ class ShortVideoProductionTests(unittest.TestCase):
         applied_payload = json.loads(resolve_workspace_path(applied.state_ref or "").read_text(encoding="utf-8"))
         second_plan_id = applied_payload["asset_plan"]["plan_id"]
 
-        second_completed = asyncio.run(manager.resume(
+        second_shot_review = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
             user_response={"decision": "approve"},
             adk_state=state,
         ))
+        self.assertEqual(second_shot_review.status, "needs_user_review")
+        self.assertEqual(second_shot_review.stage, "shot_review")
+
+        second_completed = _approve_shot_review(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
 
         self.assertEqual(second_completed.status, "completed")
         self.assertNotEqual(second_plan_id, first_plan_id)
         self.assertNotEqual(second_completed.artifacts[0].path, first_path)
         self.assertEqual(state["final_file_paths"], [second_completed.artifacts[0].path])
-        self.assertEqual(len(state["files_history"]), 2)
+        self.assertEqual(len(state["files_history"]), 4)
         state_payload = json.loads(resolve_workspace_path(second_completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(state_payload["asset_plan"]["plan_id"], second_plan_id)
         old_video = next(item for item in state_payload["asset_manifest"] if item["asset_id"] == first_video_id)
@@ -1005,7 +1153,8 @@ class ShortVideoProductionTests(unittest.TestCase):
                 adk_state=state,
             ))
 
-        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "shot_review")
         seedance_mock.assert_awaited_once()
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(state_payload["asset_manifest"][0]["provider"], "seedance")
@@ -1013,6 +1162,13 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertTrue(state_payload["audio_manifest"][0]["metadata"]["native_audio"])
         self.assertTrue(seedance_mock.await_args.kwargs["generate_audio"])
         self.assertEqual(seedance_mock.await_args.kwargs["model_name"], "doubao-seedance-2-0-260128")
+
+        completed = _approve_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        self.assertEqual(completed.status, "completed")
 
     def test_manager_resume_approve_uses_seedance_fast_plan_settings(self) -> None:
         state = _adk_state()
@@ -1053,9 +1209,17 @@ class ShortVideoProductionTests(unittest.TestCase):
                 adk_state=state,
             ))
 
-        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "shot_review")
         self.assertEqual(seedance_mock.await_args.kwargs["model_name"], "doubao-seedance-2-0-fast-260128")
         self.assertEqual(seedance_mock.await_args.kwargs["resolution"], "720p")
+
+        completed = _approve_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        self.assertEqual(completed.status, "completed")
 
     def test_manager_resume_cancel_marks_production_cancelled(self) -> None:
         state = _adk_state()
@@ -1150,6 +1314,15 @@ class ShortVideoProductionTests(unittest.TestCase):
             adk_state=state,
         ))
         self.assertEqual(result.stage, "asset_plan_review")
+
+        result = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response="可以",
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "shot_review")
 
         result = asyncio.run(manager.resume(
             production_session_id=started.production_session_id,
@@ -1631,13 +1804,21 @@ class ShortVideoProductionProgressTests(unittest.IsolatedAsyncioTestCase):
                 adk_state=state,
             )
             await asyncio.sleep(0)
+            completed = await manager.resume(
+                production_session_id=asset_review.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+            await asyncio.sleep(0)
 
-        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "shot_review")
+        self.assertEqual(completed.status, "completed")
         stage_titles = [message.metadata["stage_title"] for message in messages]
-        self.assertIn("Generating Short Video", stage_titles)
-        self.assertIn("Preparing Audio Track", stage_titles)
-        self.assertIn("Rendering Short Video", stage_titles)
-        self.assertIn("Validating Short Video", stage_titles)
+        self.assertIn("Generating Shot Segment", stage_titles)
+        self.assertIn("Preparing Segment Audio", stage_titles)
+        self.assertIn("Shot Segment Ready", stage_titles)
+        self.assertIn("Rendering Final Short Video", stage_titles)
         self.assertIn("Short Video Completed", stage_titles)
 
 

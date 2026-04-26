@@ -25,12 +25,15 @@ from src.production.models import (
 )
 from src.production.session_store import ProductionSessionStore
 from src.production.short_video.models import (
+    AssetManifestEntry,
     AudioClip,
     AudioTrack,
     ReferenceAssetEntry,
     ShortVideoAssetPlan,
     ShortVideoProductionState,
     ShortVideoRenderSettings,
+    ShortVideoShotArtifact,
+    ShortVideoShotAssetPlan,
     ShortVideoStoryboard,
     ShortVideoStoryboardShot,
     ShortVideoShotPlan,
@@ -679,6 +682,12 @@ class ShortVideoProductionManager:
                     user_response=response,
                     adk_state=adk_state,
                 )
+            if state.active_breakpoint.stage == "shot_review":
+                return self._revise_shot_segment_and_return_to_asset_plan_review(
+                    state,
+                    user_response=response,
+                    adk_state=adk_state,
+                )
             return self._revise_asset_plan_and_pause(
                 state,
                 user_response=response,
@@ -710,6 +719,12 @@ class ShortVideoProductionManager:
             )
         if state.active_breakpoint.stage == "asset_plan_review":
             return await self._approve_asset_plan_and_generate(
+                state,
+                user_response=response,
+                adk_state=adk_state,
+            )
+        if state.active_breakpoint.stage == "shot_review":
+            return await self._approve_shot_segment_and_continue(
                 state,
                 user_response=response,
                 adk_state=adk_state,
@@ -825,6 +840,10 @@ class ShortVideoProductionManager:
             video_resolution=video_resolution,
             storyboard=state.storyboard,
         )
+        state.shot_asset_plans = _build_shot_asset_plans(
+            storyboard=state.storyboard,
+            asset_plan=state.asset_plan,
+        )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
         state.progress_percent = 25
@@ -929,6 +948,10 @@ class ShortVideoProductionManager:
         )
         if notes:
             state.asset_plan.shot_plan.voiceover_text = _build_voiceover_text(state.brief_summary)
+        state.shot_asset_plans = _build_shot_asset_plans(
+            storyboard=state.storyboard,
+            asset_plan=state.asset_plan,
+        )
         state.active_breakpoint = ProductionBreakpoint(
             stage=state.stage,
             review_payload=_asset_plan_review_payload(state),
@@ -970,6 +993,10 @@ class ShortVideoProductionManager:
             video_model_name=video_model_name,
             video_resolution=video_resolution,
         )
+        state.shot_asset_plans = _build_shot_asset_plans(
+            storyboard=state.storyboard,
+            asset_plan=state.asset_plan,
+        )
         state.status = "needs_user_review"
         state.stage = "asset_plan_review"
         state.progress_percent = 20
@@ -1007,7 +1034,7 @@ class ShortVideoProductionManager:
         user_response: dict[str, Any],
         adk_state,
     ) -> ProductionRunResult:
-        """Generate media from an approved P0 short-video asset plan."""
+        """Generate the first P1b shot segment from an approved asset plan."""
         if state.asset_plan is None:
             return self._fail_state(
                 state,
@@ -1044,135 +1071,267 @@ class ShortVideoProductionManager:
         state.asset_plan.selected_ratio = selected_ratio
         state.asset_plan.status = "approved"
         state.active_breakpoint = None
-        session_root = self.store.session_root(state.production_session)
-        settings = _normalize_render_settings({"aspect_ratio": selected_ratio})
-        duration_seconds = state.asset_plan.duration_seconds
+        state.shot_asset_plans = _build_shot_asset_plans(
+            storyboard=state.storyboard,
+            asset_plan=state.asset_plan,
+        )
+        _mark_existing_generated_media_superseded(
+            state,
+            reason="New approved generation supersedes previous generated outputs.",
+        )
+        _mark_existing_shot_outputs_stale(
+            state,
+            reason="New approved shot plan supersedes previous shot previews.",
+        )
+        return await self._generate_next_shot_segment_and_pause(
+            state,
+            adk_state=adk_state,
+            message_prefix="Approved the asset plan.",
+        )
 
-        try:
-            _mark_existing_generated_media_superseded(
+    async def _approve_shot_segment_and_continue(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Approve the current generated shot segment and continue or finalize."""
+        artifact = _current_review_shot_artifact(state)
+        if artifact is None:
+            return self._fail_state(
                 state,
-                reason="New approved generation supersedes previous generated outputs.",
+                adk_state=adk_state,
+                code="invalid_state",
+                message="No generated shot segment is waiting for review.",
             )
+
+        artifact.status = "approved"
+        segment_plan = _shot_asset_plan_by_id(state, artifact.shot_asset_plan_id)
+        if segment_plan is not None:
+            segment_plan.status = "reviewed"
+        state.production_events.append(
+            ProductionEvent(
+                event_type="shot_segment_approved",
+                stage=state.stage,
+                message="User approved the generated shot segment.",
+                metadata={
+                    "shot_artifact_id": artifact.shot_artifact_id,
+                    "shot_asset_plan_id": artifact.shot_asset_plan_id,
+                    "user_response": user_response,
+                },
+            )
+        )
+
+        if _next_pending_shot_asset_plan(state) is not None:
+            return await self._generate_next_shot_segment_and_pause(
+                state,
+                adk_state=adk_state,
+                message_prefix="Approved the previous shot segment.",
+            )
+        return self._finalize_approved_shot_segments(state, adk_state=adk_state)
+
+    def _revise_shot_segment_and_return_to_asset_plan_review(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Record shot review notes and return to gated asset-plan review."""
+        notes = _revision_notes_from_response(user_response)
+        if notes:
+            state.brief_summary = _append_revision_note(state.brief_summary, notes)
+
+        artifact = _current_review_shot_artifact(state)
+        if artifact is not None:
+            artifact.status = "stale"
+            segment_plan = _shot_asset_plan_by_id(state, artifact.shot_asset_plan_id)
+            if segment_plan is not None:
+                segment_plan.status = "stale"
+        _mark_generated_outputs_stale(
+            state,
+            reason="Shot review revision requested before continuing generation.",
+            artifact_notice="Stale after shot review revision.",
+        )
+        if state.asset_plan is not None:
+            state.asset_plan.status = "draft"
+        state.artifacts = []
+        state.status = "needs_user_review"
+        state.stage = "asset_plan_review"
+        state.progress_percent = max(state.progress_percent, 25)
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_asset_plan_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="shot_segment_revision_requested",
+                stage=state.stage,
+                message="User requested changes after reviewing a generated shot segment.",
+                metadata={"user_response": user_response},
+            )
+        )
+        adk_state["final_file_paths"] = []
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Shot revision notes were recorded. Please review the updated plan before regenerating.",
+        )
+
+    async def _generate_next_shot_segment_and_pause(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        adk_state,
+        message_prefix: str,
+    ) -> ProductionRunResult:
+        """Generate one pending shot segment and pause for user review."""
+        if state.asset_plan is None:
+            return self._fail_state(
+                state,
+                adk_state=adk_state,
+                code="invalid_state",
+                message="No approved asset plan exists for shot generation.",
+            )
+        segment_plan = _next_pending_shot_asset_plan(state)
+        if segment_plan is None:
+            return self._finalize_approved_shot_segments(state, adk_state=adk_state)
+
+        session_root = self.store.session_root(state.production_session)
+        settings = _normalize_render_settings({"aspect_ratio": segment_plan.selected_ratio or "16:9"})
+        segment_asset_plan = _asset_plan_for_shot_segment(state.asset_plan, segment_plan)
+        try:
+            segment_plan.status = "generating"
             state.status = "running"
             state.stage = "provider_generation"
-            state.progress_percent = 45
+            state.progress_percent = _segment_progress(segment_plan, state.shot_asset_plans, base=35)
             _publish_short_video_progress(
                 adk_state,
                 state,
-                title="Generating Short Video",
+                title="Generating Shot Segment",
                 detail=(
-                    "Calling the configured video provider for the approved short-video plan "
+                    f"Generating segment {segment_plan.segment_index} of {len(state.shot_asset_plans)} "
                     f"({state.progress_percent}%)."
                 ),
             )
             video_asset = await self.provider_runtime.generate_video_clip(
                 session_root=session_root,
-                asset_plan=state.asset_plan,
+                asset_plan=segment_asset_plan,
                 render_settings=settings,
                 reference_assets=state.reference_assets,
                 owner_ref=state.production_session.owner_ref,
             )
             state.asset_manifest.append(video_asset)
-            state.production_events.append(
-                ProductionEvent(
-                    event_type="video_clip_generated",
-                    stage=state.stage,
-                    message="Generated one provider-backed video clip.",
-                    metadata={"asset_id": video_asset.asset_id, "provider": video_asset.provider},
-                )
-            )
 
             state.stage = "audio_generation"
-            state.progress_percent = 60
+            state.progress_percent = _segment_progress(segment_plan, state.shot_asset_plans, base=50)
             _publish_short_video_progress(
                 adk_state,
                 state,
-                title="Preparing Audio Track",
-                detail=f"Preparing the generated native audio track ({state.progress_percent}%).",
+                title="Preparing Segment Audio",
+                detail=(
+                    f"Preparing audio for segment {segment_plan.segment_index} "
+                    f"({state.progress_percent}%)."
+                ),
             )
             audio_asset = await self.provider_runtime.synthesize_voiceover(
                 session_root=session_root,
-                asset_plan=state.asset_plan,
+                asset_plan=segment_asset_plan,
                 render_settings=settings,
                 owner_ref=state.production_session.owner_ref,
             )
             state.audio_manifest.append(audio_asset)
-            state.production_events.append(
-                ProductionEvent(
-                    event_type="audio_track_generated",
-                    stage=state.stage,
-                    message="Generated one provider-backed audio track.",
-                    metadata={"audio_id": audio_asset.audio_id, "provider": audio_asset.provider},
-                )
-            )
 
-            state.timeline = _build_single_clip_timeline(
+            preview_timeline = _build_single_clip_timeline(
                 asset_id=video_asset.asset_id,
                 audio_id=audio_asset.audio_id,
                 audio_kind="voiceover",
                 render_settings=settings,
-                duration_seconds=duration_seconds,
+                duration_seconds=segment_plan.duration_seconds,
             )
-            final_path = _final_output_path(session_root, state.asset_plan.plan_id)
-            state.stage = "rendering"
-            state.progress_percent = 75
-            _publish_short_video_progress(
-                adk_state,
-                state,
-                title="Rendering Short Video",
-                detail=f"Muxing video and audio into the final MP4 ({state.progress_percent}%).",
-            )
-            state.render_report = self.renderer.render(
-                timeline=state.timeline,
+            preview_path = _shot_preview_output_path(session_root, segment_plan.shot_asset_plan_id)
+            state.stage = "shot_preview_rendering"
+            state.progress_percent = _segment_progress(segment_plan, state.shot_asset_plans, base=60)
+            preview_report = self.renderer.render(
+                timeline=preview_timeline,
                 asset_manifest=state.asset_manifest,
                 audio_manifest=state.audio_manifest,
-                output_path=final_path,
+                output_path=preview_path,
             )
-            state.stage = "validation"
-            state.progress_percent = 90
-            _publish_short_video_progress(
-                adk_state,
-                state,
-                title="Validating Short Video",
-                detail=f"Checking the final MP4 before returning it ({state.progress_percent}%).",
-            )
-            state.render_validation_report = self.validator.validate(state.render_report.output_path)
-            if state.render_validation_report.status != "valid":
-                raise RuntimeError("; ".join(state.render_validation_report.issues) or "render validation failed")
+            preview_validation = self.validator.validate(preview_report.output_path)
+            if preview_validation.status != "valid":
+                raise RuntimeError("; ".join(preview_validation.issues) or "shot preview validation failed")
 
-            state.status = "completed"
-            state.stage = "completed"
-            state.progress_percent = 100
+            segment_plan.status = "generated"
+            shot_artifact = ShortVideoShotArtifact(
+                shot_asset_plan_id=segment_plan.shot_asset_plan_id,
+                segment_index=segment_plan.segment_index,
+                storyboard_shot_ids=segment_plan.storyboard_shot_ids,
+                video_asset_id=video_asset.asset_id,
+                audio_id=audio_asset.audio_id,
+                preview_path=preview_report.output_path,
+                metadata={
+                    "storyboard_sequence_indexes": segment_plan.storyboard_sequence_indexes,
+                    "render_report": preview_report.model_dump(mode="json"),
+                    "validation_report": preview_validation.model_dump(mode="json"),
+                },
+            )
+            state.shot_artifacts.append(shot_artifact)
+            state.timeline = preview_timeline
+            state.status = "needs_user_review"
+            state.stage = "shot_review"
+            state.progress_percent = _segment_progress(segment_plan, state.shot_asset_plans, base=70)
             state.artifacts = [
                 WorkspaceFileRef(
-                    name="final.mp4",
-                    path=state.render_report.output_path,
-                    description=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video render.",
+                    name=f"shot_segment_{segment_plan.segment_index}_preview.mp4",
+                    path=preview_report.output_path,
+                    description=(
+                        "P1b shot segment preview. Approve it to continue generation; "
+                        "it is not the final deliverable yet."
+                    ),
                     source=self.capability,
                 )
             ]
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_shot_review_payload(state, shot_artifact),
+            )
             state.production_events.append(
                 ProductionEvent(
-                    event_type="production_completed",
+                    event_type="shot_review_required",
                     stage=state.stage,
-                    message=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
-                    metadata={"artifact_path": state.render_report.output_path},
+                    message="Generated one shot segment preview and paused for user review.",
+                    metadata={
+                        "shot_artifact_id": shot_artifact.shot_artifact_id,
+                        "shot_asset_plan_id": segment_plan.shot_asset_plan_id,
+                        "preview_path": shot_artifact.preview_path,
+                    },
                 )
             )
             _publish_short_video_progress(
                 adk_state,
                 state,
-                title="Short Video Completed",
-                detail=f"Final MP4 is ready ({state.progress_percent}%).",
+                title="Shot Segment Ready",
+                detail=(
+                    f"Segment {segment_plan.segment_index} is ready for review "
+                    f"({state.progress_percent}%)."
+                ),
             )
             self._save_projection_files(state)
             self.store.save_state(state)
             self.store.project_to_adk_state(adk_state, state)
             return self._result_from_state(
                 state,
-                message=f"P0 {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
+                message=(
+                    f"{message_prefix} Generated shot segment {segment_plan.segment_index} "
+                    "and paused for review before continuing."
+                ),
             )
         except ShortVideoProviderError as exc:
+            segment_plan.status = "failed"
             return self._fail_state(
                 state,
                 adk_state=adk_state,
@@ -1181,12 +1340,115 @@ class ShortVideoProductionManager:
                 provider=state.asset_plan.planned_video_provider,
             )
         except Exception as exc:
+            segment_plan.status = "failed"
             return self._fail_state(
                 state,
                 adk_state=adk_state,
-                code="short_video_p0b_failed",
+                code="short_video_p1b_segment_failed",
                 message=f"{type(exc).__name__}: {exc}",
             )
+
+    def _finalize_approved_shot_segments(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        adk_state,
+    ) -> ProductionRunResult:
+        """Render a final video from all approved shot segment previews."""
+        if state.asset_plan is None:
+            return self._fail_state(
+                state,
+                adk_state=adk_state,
+                code="invalid_state",
+                message="No approved asset plan exists for final rendering.",
+            )
+        approved_artifacts = _approved_shot_artifacts_in_plan_order(state)
+        if not approved_artifacts:
+            return self._fail_state(
+                state,
+                adk_state=adk_state,
+                code="invalid_state",
+                message="No approved shot segments are available for final rendering.",
+            )
+
+        session_root = self.store.session_root(state.production_session)
+        settings = _normalize_render_settings({"aspect_ratio": state.asset_plan.selected_ratio or "16:9"})
+        _ensure_preview_assets_for_final_concat(
+            state,
+            approved_artifacts=approved_artifacts,
+            render_settings=settings,
+        )
+        state.timeline = _build_multi_clip_timeline(
+            shot_artifacts=approved_artifacts,
+            shot_asset_plans=state.shot_asset_plans,
+            render_settings=settings,
+        )
+        final_path = _final_output_path(session_root, state.asset_plan.plan_id)
+        state.status = "running"
+        state.stage = "rendering"
+        state.progress_percent = 88
+        _publish_short_video_progress(
+            adk_state,
+            state,
+            title="Rendering Final Short Video",
+            detail=f"Rendering the approved shot segments into the final MP4 ({state.progress_percent}%).",
+        )
+        try:
+            state.render_report = self.renderer.render(
+                timeline=state.timeline,
+                asset_manifest=state.asset_manifest,
+                audio_manifest=state.audio_manifest,
+                output_path=final_path,
+            )
+            state.stage = "validation"
+            state.progress_percent = 95
+            state.render_validation_report = self.validator.validate(state.render_report.output_path)
+            if state.render_validation_report.status != "valid":
+                raise RuntimeError("; ".join(state.render_validation_report.issues) or "render validation failed")
+        except Exception as exc:
+            return self._fail_state(
+                state,
+                adk_state=adk_state,
+                code="short_video_p1b_final_render_failed",
+                message=f"{type(exc).__name__}: {exc}",
+            )
+
+        state.status = "completed"
+        state.stage = "completed"
+        state.progress_percent = 100
+        state.active_breakpoint = None
+        state.artifacts = [
+            WorkspaceFileRef(
+                name="final.mp4",
+                path=state.render_report.output_path,
+                description=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video render.",
+                source=self.capability,
+            )
+        ]
+        state.production_events.append(
+            ProductionEvent(
+                event_type="production_completed",
+                stage=state.stage,
+                message=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
+                metadata={
+                    "artifact_path": state.render_report.output_path,
+                    "shot_segments": len(approved_artifacts),
+                },
+            )
+        )
+        _publish_short_video_progress(
+            adk_state,
+            state,
+            title="Short Video Completed",
+            detail=f"Final MP4 is ready ({state.progress_percent}%).",
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
+        )
 
     def _fail_state(
         self,
@@ -1295,6 +1557,8 @@ class ShortVideoProductionManager:
                         else None
                     ),
                     "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
+                    "shot_asset_plans": [item.model_dump(mode="json") for item in state.shot_asset_plans],
+                    "shot_artifacts": [item.model_dump(mode="json") for item in state.shot_artifacts],
                     "asset_manifest": [item.model_dump(mode="json") for item in state.asset_manifest],
                     "audio_manifest": [item.model_dump(mode="json") for item in state.audio_manifest],
                 },
@@ -1410,6 +1674,8 @@ def _overview_view(state: ShortVideoProductionState) -> dict[str, Any]:
             "counts": {
                 "reference_assets": len(state.reference_assets),
                 "storyboard_shots": len(state.storyboard.shots) if state.storyboard is not None else 0,
+                "shot_asset_plans": len(state.shot_asset_plans),
+                "shot_artifacts": len(state.shot_artifacts),
                 "asset_manifest": len(state.asset_manifest),
                 "audio_manifest": len(state.audio_manifest),
                 "artifacts": len(state.artifacts),
@@ -1465,6 +1731,8 @@ def _asset_plan_view(state: ShortVideoProductionState) -> dict[str, Any]:
                 if state.asset_plan is not None
                 else None
             ),
+            "shot_asset_plans": [item.model_dump(mode="json") for item in state.shot_asset_plans],
+            "shot_artifacts": [item.model_dump(mode="json") for item in state.shot_artifacts],
             "active_review": (
                 state.active_breakpoint.review_payload.model_dump(mode="json")
                 if state.active_breakpoint is not None
@@ -1518,6 +1786,7 @@ def _artifacts_view(state: ShortVideoProductionState) -> dict[str, Any]:
     view.update(
         {
             "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+            "shot_artifacts": [item.model_dump(mode="json") for item in state.shot_artifacts],
             "asset_manifest": [item.model_dump(mode="json") for item in state.asset_manifest],
             "audio_manifest": [item.model_dump(mode="json") for item in state.audio_manifest],
             "final_dir": f"{state.production_session.root_dir}/final",
@@ -2159,6 +2428,10 @@ def _apply_revision_to_asset_plan(
         video_resolution=asset_plan.planned_video_resolution,
         storyboard=state.storyboard,
     )
+    state.shot_asset_plans = _build_shot_asset_plans(
+        storyboard=state.storyboard,
+        asset_plan=state.asset_plan,
+    )
 
 
 def _mark_revision_outputs_stale(
@@ -2185,7 +2458,16 @@ def _mark_revision_outputs_stale(
             if audio.status == "valid":
                 audio.status = "stale"
                 audio.stale_reason = reason
-    if impacted_kinds & {"timeline", "video_asset", "audio_asset"}:
+    if "shot_asset_plan" in impacted_kinds:
+        for plan in state.shot_asset_plans:
+            if plan.status in {"approved", "generating", "generated", "reviewed"}:
+                plan.status = "stale"
+    if "shot_artifact" in impacted_kinds:
+        for artifact in state.shot_artifacts:
+            if artifact.status in {"generated", "approved"}:
+                artifact.status = "stale"
+                artifact.metadata["stale_reason"] = reason
+    if impacted_kinds & {"timeline", "video_asset", "audio_asset", "shot_artifact"}:
         state.timeline = None
         state.render_report = None
         state.render_validation_report = None
@@ -2216,6 +2498,347 @@ def _mark_existing_generated_media_superseded(
     state.render_validation_report = None
 
 
+def _mark_existing_shot_outputs_stale(
+    state: ShortVideoProductionState,
+    *,
+    reason: str,
+) -> None:
+    """Mark previous shot-level plans and previews stale before a new run."""
+    for plan in state.shot_asset_plans:
+        if plan.status in {"generated", "reviewed"}:
+            plan.status = "stale"
+    for artifact in state.shot_artifacts:
+        if artifact.status in {"generated", "approved"}:
+            artifact.status = "stale"
+            artifact.metadata["stale_reason"] = reason
+    state.shot_artifacts = []
+
+
+def _build_shot_asset_plans(
+    *,
+    storyboard: ShortVideoStoryboard | None,
+    asset_plan: ShortVideoAssetPlan,
+) -> list[ShortVideoShotAssetPlan]:
+    """Build provider-executable shot segments from a storyboard and asset plan."""
+    if storyboard is None or not storyboard.shots:
+        return [
+            ShortVideoShotAssetPlan(
+                segment_index=1,
+                storyboard_shot_ids=[],
+                storyboard_sequence_indexes=[],
+                duration_seconds=_provider_segment_duration(asset_plan.duration_seconds),
+                visual_prompt=asset_plan.shot_plan.visual_prompt,
+                voiceover_text=asset_plan.shot_plan.voiceover_text,
+                reference_asset_ids=asset_plan.reference_asset_ids,
+                planned_video_provider=asset_plan.planned_video_provider,
+                planned_video_model_name=asset_plan.planned_video_model_name,
+                planned_video_resolution=asset_plan.planned_video_resolution,
+                planned_generate_audio=asset_plan.planned_generate_audio,
+                selected_ratio=asset_plan.selected_ratio,
+                status="approved" if asset_plan.status == "approved" else "draft",
+            )
+        ]
+
+    shot_groups = _group_storyboard_shots_for_provider(storyboard)
+    return [
+        _shot_asset_plan_from_group(
+            asset_plan=asset_plan,
+            storyboard=storyboard,
+            segment_index=index,
+            shots=shots,
+        )
+        for index, shots in enumerate(shot_groups, start=1)
+    ]
+
+
+def _group_storyboard_shots_for_provider(
+    storyboard: ShortVideoStoryboard,
+) -> list[list[ShortVideoStoryboardShot]]:
+    """Group storyboard shots into provider-valid segments for Seedance constraints."""
+    shots = list(storyboard.shots)
+    if not shots:
+        return []
+    if storyboard.target_duration_seconds <= 10:
+        return [shots]
+
+    groups: list[list[ShortVideoStoryboardShot]] = []
+    current: list[ShortVideoStoryboardShot] = []
+    current_duration = 0.0
+    for index, shot in enumerate(shots):
+        shot_duration = max(1.0, float(shot.duration_seconds or 1.0))
+        if current and current_duration + shot_duration > 15:
+            groups.append(current)
+            current = []
+            current_duration = 0.0
+        current.append(shot)
+        current_duration += shot_duration
+        remaining_duration = sum(
+            max(1.0, float(item.duration_seconds or 1.0))
+            for item in shots[index + 1:]
+        )
+        if current_duration >= 4 and (remaining_duration == 0 or remaining_duration >= 4):
+            groups.append(current)
+            current = []
+            current_duration = 0.0
+    if current:
+        if groups and sum(float(item.duration_seconds or 1.0) for item in current) < 4:
+            groups[-1].extend(current)
+        else:
+            groups.append(current)
+    return groups
+
+
+def _shot_asset_plan_from_group(
+    *,
+    asset_plan: ShortVideoAssetPlan,
+    storyboard: ShortVideoStoryboard,
+    segment_index: int,
+    shots: list[ShortVideoStoryboardShot],
+) -> ShortVideoShotAssetPlan:
+    """Build one segment-level plan from one storyboard shot group."""
+    duration_seconds = _provider_segment_duration(sum(float(shot.duration_seconds or 1.0) for shot in shots))
+    visual_prompt = _shot_segment_visual_prompt(asset_plan, storyboard, segment_index, shots)
+    voiceover_text = _shot_segment_voiceover_text(asset_plan, shots)
+    return ShortVideoShotAssetPlan(
+        segment_index=segment_index,
+        storyboard_shot_ids=[shot.shot_id for shot in shots],
+        storyboard_sequence_indexes=[shot.sequence_index for shot in shots],
+        duration_seconds=duration_seconds,
+        visual_prompt=visual_prompt,
+        voiceover_text=voiceover_text,
+        reference_asset_ids=asset_plan.reference_asset_ids,
+        planned_video_provider=asset_plan.planned_video_provider,
+        planned_video_model_name=asset_plan.planned_video_model_name,
+        planned_video_resolution=asset_plan.planned_video_resolution,
+        planned_generate_audio=asset_plan.planned_generate_audio,
+        selected_ratio=asset_plan.selected_ratio,
+        status="approved" if asset_plan.status == "approved" else "draft",
+    )
+
+
+def _provider_segment_duration(duration_seconds: float) -> float:
+    """Return an integer Seedance-compatible segment duration."""
+    try:
+        value = float(duration_seconds)
+    except (TypeError, ValueError):
+        value = 4.0
+    rounded = int(value)
+    if value > rounded:
+        rounded += 1
+    return float(min(15, max(4, rounded)))
+
+
+def _shot_segment_visual_prompt(
+    asset_plan: ShortVideoAssetPlan,
+    storyboard: ShortVideoStoryboard,
+    segment_index: int,
+    shots: list[ShortVideoStoryboardShot],
+) -> str:
+    """Return a compact provider prompt for one shot segment."""
+    shot_parts = []
+    for shot in shots:
+        dialogue = f" Dialogue: {'; '.join(shot.dialogue_lines)}." if shot.dialogue_lines else ""
+        constraints = f" Constraints: {'; '.join(shot.constraints)}." if shot.constraints else ""
+        shot_parts.append(
+            f"Storyboard shot {shot.sequence_index}: {shot.purpose}. Visual: {shot.visual_beat}.{dialogue}{constraints}"
+        )
+    global_constraints = (
+        f" Global constraints: {'; '.join(storyboard.global_constraints)}."
+        if storyboard.global_constraints
+        else ""
+    )
+    return (
+        f"Generate provider segment {segment_index} for the approved short-video storyboard. "
+        f"This segment covers storyboard shots {', '.join(str(shot.sequence_index) for shot in shots)}. "
+        f"{' '.join(shot_parts)}{global_constraints} "
+        f"Keep style and continuity aligned with the full asset plan: {asset_plan.shot_plan.visual_prompt}"
+    )
+
+
+def _shot_segment_voiceover_text(
+    asset_plan: ShortVideoAssetPlan,
+    shots: list[ShortVideoStoryboardShot],
+) -> str:
+    """Return dialogue or audio guidance scoped to one shot segment."""
+    dialogue = [line for shot in shots for line in shot.dialogue_lines if str(line or "").strip()]
+    if dialogue:
+        return " | ".join(dialogue)
+    audio_notes = [shot.audio_notes for shot in shots if str(shot.audio_notes or "").strip()]
+    if audio_notes:
+        return _build_voiceover_text(" ".join(audio_notes))
+    return asset_plan.shot_plan.voiceover_text
+
+
+def _asset_plan_for_shot_segment(
+    asset_plan: ShortVideoAssetPlan,
+    segment_plan: ShortVideoShotAssetPlan,
+) -> ShortVideoAssetPlan:
+    """Convert a segment plan into the existing provider runtime asset-plan shape."""
+    return ShortVideoAssetPlan(
+        plan_id=segment_plan.shot_asset_plan_id,
+        video_type=asset_plan.video_type,
+        planned_video_provider=segment_plan.planned_video_provider,
+        planned_video_model_name=segment_plan.planned_video_model_name,
+        planned_video_resolution=segment_plan.planned_video_resolution,
+        planned_generate_audio=segment_plan.planned_generate_audio,
+        planned_tts=asset_plan.planned_tts,
+        planned_tts_provider=asset_plan.planned_tts_provider,
+        ratio_options=asset_plan.ratio_options,
+        selected_ratio=segment_plan.selected_ratio,
+        duration_seconds=segment_plan.duration_seconds,
+        reference_asset_ids=segment_plan.reference_asset_ids,
+        shot_plan=ShortVideoShotPlan(
+            shot_id=segment_plan.shot_asset_plan_id,
+            duration_seconds=segment_plan.duration_seconds,
+            visual_prompt=segment_plan.visual_prompt,
+            voiceover_text=segment_plan.voiceover_text,
+            reference_asset_ids=segment_plan.reference_asset_ids,
+        ),
+        status="approved",
+    )
+
+
+def _next_pending_shot_asset_plan(
+    state: ShortVideoProductionState,
+) -> ShortVideoShotAssetPlan | None:
+    """Return the next provider segment that still needs generation."""
+    for plan in sorted(state.shot_asset_plans, key=lambda item: item.segment_index):
+        if plan.status in {"draft", "approved"}:
+            return plan
+    return None
+
+
+def _shot_asset_plan_by_id(
+    state: ShortVideoProductionState,
+    shot_asset_plan_id: str,
+) -> ShortVideoShotAssetPlan | None:
+    """Return a shot asset plan by id."""
+    for plan in state.shot_asset_plans:
+        if plan.shot_asset_plan_id == shot_asset_plan_id:
+            return plan
+    return None
+
+
+def _current_review_shot_artifact(
+    state: ShortVideoProductionState,
+) -> ShortVideoShotArtifact | None:
+    """Return the latest generated shot artifact waiting for review."""
+    for artifact in reversed(state.shot_artifacts):
+        if artifact.status == "generated":
+            return artifact
+    return None
+
+
+def _approved_shot_artifacts_in_plan_order(
+    state: ShortVideoProductionState,
+) -> list[ShortVideoShotArtifact]:
+    """Return approved shot artifacts sorted by their segment plan order."""
+    approved: list[ShortVideoShotArtifact] = []
+    for plan in sorted(state.shot_asset_plans, key=lambda item: item.segment_index):
+        candidates = [
+            artifact
+            for artifact in state.shot_artifacts
+            if artifact.shot_asset_plan_id == plan.shot_asset_plan_id and artifact.status == "approved"
+        ]
+        if candidates:
+            approved.append(candidates[-1])
+    return approved
+
+
+def _segment_progress(
+    segment_plan: ShortVideoShotAssetPlan,
+    plans: list[ShortVideoShotAssetPlan],
+    *,
+    base: int,
+) -> int:
+    """Return coarse progress for the active segment."""
+    total = max(1, len(plans))
+    segment_offset = int(((segment_plan.segment_index - 1) / total) * 40)
+    return min(95, max(0, base + segment_offset))
+
+
+def _shot_preview_output_path(session_root: Path, shot_asset_plan_id: str) -> Path:
+    """Return the preview MP4 path for one generated shot segment."""
+    safe_id = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in shot_asset_plan_id)
+    return session_root / "renders" / f"{safe_id}_preview.mp4"
+
+
+def _ensure_preview_assets_for_final_concat(
+    state: ShortVideoProductionState,
+    *,
+    approved_artifacts: list[ShortVideoShotArtifact],
+    render_settings: ShortVideoRenderSettings,
+) -> None:
+    """Register reviewed segment previews as self-contained video concat assets."""
+    existing_ids = {asset.asset_id for asset in state.asset_manifest}
+    for artifact in approved_artifacts:
+        preview_asset_id = f"{artifact.shot_artifact_id}_preview_video"
+        artifact.metadata["preview_video_asset_id"] = preview_asset_id
+        if preview_asset_id in existing_ids:
+            continue
+        state.asset_manifest.append(
+            AssetManifestEntry(
+                asset_id=preview_asset_id,
+                kind="video",
+                path=artifact.preview_path,
+                source="cache",
+                provider="timeline_renderer",
+                status="valid",
+                depends_on=[artifact.video_asset_id, artifact.audio_id],
+                duration_seconds=None,
+                width=render_settings.width,
+                height=render_settings.height,
+                metadata={
+                    "self_contained_preview": True,
+                    "shot_artifact_id": artifact.shot_artifact_id,
+                    "shot_asset_plan_id": artifact.shot_asset_plan_id,
+                },
+            )
+        )
+        existing_ids.add(preview_asset_id)
+
+
+def _build_multi_clip_timeline(
+    *,
+    shot_artifacts: list[ShortVideoShotArtifact],
+    shot_asset_plans: list[ShortVideoShotAssetPlan],
+    render_settings: ShortVideoRenderSettings,
+) -> ShortVideoTimeline:
+    """Build a timeline from approved shot segment artifacts."""
+    plan_by_id = {plan.shot_asset_plan_id: plan for plan in shot_asset_plans}
+    video_clips: list[VideoClip] = []
+    audio_clips: list[AudioClip] = []
+    start_seconds = 0.0
+    for artifact in shot_artifacts:
+        plan = plan_by_id.get(artifact.shot_asset_plan_id)
+        duration = float(plan.duration_seconds if plan is not None else 4.0)
+        video_asset_id = str(artifact.metadata.get("preview_video_asset_id") or artifact.video_asset_id)
+        video_clips.append(
+            VideoClip(
+                clip_id=f"clip_segment_{artifact.segment_index}_video",
+                asset_id=video_asset_id,
+                start_seconds=start_seconds,
+                duration_seconds=duration,
+            )
+        )
+        audio_clips.append(
+            AudioClip(
+                clip_id=f"clip_segment_{artifact.segment_index}_audio",
+                audio_id=artifact.audio_id,
+                start_seconds=start_seconds,
+                duration_seconds=duration,
+            )
+        )
+        start_seconds += duration
+    return ShortVideoTimeline(
+        timeline_id=new_id("timeline"),
+        duration_seconds=round(start_seconds, 2),
+        render_settings=render_settings,
+        video_tracks=[VideoTrack(track_id="video_main", clips=video_clips)],
+        audio_tracks=[AudioTrack(track_id="audio_main", kind="voiceover", clips=audio_clips)],
+    )
+
+
 def _final_output_path(session_root: Path, plan_id: str) -> Path:
     """Return a version-safe final MP4 path for one approved asset plan."""
     plan_segment = "".join(
@@ -2223,6 +2846,60 @@ def _final_output_path(session_root: Path, plan_id: str) -> Path:
         for char in plan_id
     )
     return session_root / "final" / (plan_segment or new_id("asset_plan")) / "final.mp4"
+
+
+def _shot_review_payload(
+    state: ShortVideoProductionState,
+    shot_artifact: ShortVideoShotArtifact,
+) -> ReviewPayload:
+    """Build a review payload for one generated shot segment preview."""
+    segment_plan = _shot_asset_plan_by_id(state, shot_artifact.shot_asset_plan_id)
+    total_segments = len(state.shot_asset_plans)
+    sequence_indexes = (
+        segment_plan.storyboard_sequence_indexes
+        if segment_plan is not None
+        else []
+    )
+    return ReviewPayload(
+        review_type="shot_review",
+        title=f"Review generated shot segment {shot_artifact.segment_index}",
+        summary=(
+            "A provider-generated shot segment is ready. Approve it to continue; "
+            "revise it to return to the gated plan review before regeneration."
+        ),
+        items=[
+            {
+                "kind": "shot_segment",
+                "shot_artifact_id": shot_artifact.shot_artifact_id,
+                "shot_asset_plan_id": shot_artifact.shot_asset_plan_id,
+                "segment_index": shot_artifact.segment_index,
+                "total_segments": total_segments,
+                "storyboard_sequence_indexes": sequence_indexes,
+                "storyboard_shot_ids": shot_artifact.storyboard_shot_ids,
+                "duration_seconds": segment_plan.duration_seconds if segment_plan is not None else None,
+                "status": shot_artifact.status,
+            },
+            {
+                "kind": "preview_artifact",
+                "path": shot_artifact.preview_path,
+                "video_asset_id": shot_artifact.video_asset_id,
+                "audio_id": shot_artifact.audio_id,
+            },
+            {
+                "kind": "questions",
+                "questions": [
+                    "Approve this generated segment to continue.",
+                    "Revise this generated segment if motion, dialogue, product visibility, or style is wrong.",
+                    "Cancel production if the direction is no longer useful.",
+                ],
+            },
+        ],
+        options=[
+            {"decision": "approve", "label": "Approve segment and continue"},
+            {"decision": "revise", "label": "Revise segment before continuing"},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
 
 
 def _storyboard_review_payload(state: ShortVideoProductionState) -> ReviewPayload:
@@ -2348,6 +3025,20 @@ def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayloa
                 "duration_seconds": asset_plan.shot_plan.duration_seconds,
                 "visual_prompt": asset_plan.shot_plan.visual_prompt,
                 "voiceover_text": asset_plan.shot_plan.voiceover_text,
+            },
+            {
+                "kind": "shot_asset_plans",
+                "count": len(state.shot_asset_plans),
+                "segments": [
+                    {
+                        "shot_asset_plan_id": item.shot_asset_plan_id,
+                        "segment_index": item.segment_index,
+                        "storyboard_sequence_indexes": item.storyboard_sequence_indexes,
+                        "duration_seconds": item.duration_seconds,
+                        "status": item.status,
+                    }
+                    for item in state.shot_asset_plans
+                ],
             },
             {"kind": "questions", "questions": questions},
         ],

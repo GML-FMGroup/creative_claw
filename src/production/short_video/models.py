@@ -170,6 +170,39 @@ class ShortVideoAssetPlan(BaseModel):
     status: Literal["draft", "approved", "stale"] = "draft"
 
 
+class ShortVideoShotAssetPlan(BaseModel):
+    """Provider-executable shot segment derived from the approved storyboard."""
+
+    shot_asset_plan_id: str = Field(default_factory=lambda: new_id("shot_asset_plan"))
+    segment_index: int
+    storyboard_shot_ids: list[str] = Field(default_factory=list)
+    storyboard_sequence_indexes: list[int] = Field(default_factory=list)
+    duration_seconds: float
+    visual_prompt: str
+    voiceover_text: str
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    planned_video_provider: Literal["seedance", "veo"] = "seedance"
+    planned_video_model_name: str = "doubao-seedance-2-0-260128"
+    planned_video_resolution: str = "720p"
+    planned_generate_audio: bool = True
+    selected_ratio: Literal["9:16", "16:9", "1:1"] | None = None
+    status: Literal["draft", "approved", "generating", "generated", "reviewed", "stale", "failed"] = "draft"
+
+
+class ShortVideoShotArtifact(BaseModel):
+    """Generated preview artifact for one shot segment."""
+
+    shot_artifact_id: str = Field(default_factory=lambda: new_id("shot_artifact"))
+    shot_asset_plan_id: str
+    segment_index: int
+    storyboard_shot_ids: list[str] = Field(default_factory=list)
+    video_asset_id: str
+    audio_id: str
+    preview_path: str
+    status: Literal["generated", "approved", "stale", "failed"] = "generated"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ShortVideoTimeline(BaseModel):
     """Mechanical render plan consumed by the short-video timeline renderer."""
 
@@ -213,6 +246,8 @@ class ShortVideoProductionState(ProductionState):
     planning_context: dict[str, Any] = Field(default_factory=dict)
     storyboard: ShortVideoStoryboard | None = None
     asset_plan: ShortVideoAssetPlan | None = None
+    shot_asset_plans: list[ShortVideoShotAssetPlan] = Field(default_factory=list)
+    shot_artifacts: list[ShortVideoShotArtifact] = Field(default_factory=list)
     asset_manifest: list[AssetManifestEntry] = Field(default_factory=list)
     audio_manifest: list[AudioManifestEntry] = Field(default_factory=list)
     timeline: ShortVideoTimeline | None = None
