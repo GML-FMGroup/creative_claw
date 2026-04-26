@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from conf.schema import CreativeClawConfig
 from conf.app_config import save_app_config, get_config_path
@@ -114,6 +114,100 @@ class ThreeDGenerationAgentTests(unittest.IsolatedAsyncioTestCase):
         current_output = events[0].actions.state_delta["current_output"]
         self.assertEqual(current_output["status"], "error")
         self.assertIn("generate_type=sketch", current_output["message"])
+
+    async def test_3d_generation_routes_seed3d_provider(self) -> None:
+        agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "seed3d",
+                    "input_path": "inbox/cli/session_1/object.png",
+                    "file_format": "usdz",
+                    "subdivision_level": "high",
+                },
+                "turn_index": 1,
+                "step": 1,
+                "expert_step": 1,
+            }
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_1"
+            / "seed3d_result_1.usdz"
+        )
+
+        with patch(
+            "src.agents.experts.three_d_generation.three_d_generation_agent.generation_tools.seed3d_generate_tool",
+            new=AsyncMock(
+                return_value={
+                    "status": "success",
+                    "message": "Seed3D task task-1 succeeded with 1 file(s).",
+                    "provider": "seed3d",
+                    "model_name": "doubao-seed3d-2-0-260328",
+                    "job_id": "task-1",
+                    "generate_type": "image_to_3d",
+                    "file_format": "usdz",
+                    "subdivision_level": "high",
+                    "downloaded_files": [
+                        {
+                            "path": fake_output_path,
+                            "type": "usdz",
+                            "url": "https://example.com/seed3d.usdz",
+                            "preview_image_url": "",
+                        }
+                    ],
+                }
+            ),
+        ) as seed3d_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        seed3d_mock.assert_awaited_once_with(
+            input_path="inbox/cli/session_1/object.png",
+            image_url=None,
+            model="doubao-seed3d-2-0-260328",
+            file_format="usdz",
+            subdivision_level="high",
+            timeout_seconds=900,
+            interval_seconds=60,
+            session_id="session_1",
+            turn_index=1,
+            step=1,
+        )
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["provider"], "seed3d")
+        self.assertEqual(current_output["file_format"], "usdz")
+        self.assertEqual(
+            current_output["output_files"][0]["path"],
+            "generated/session_1/turn_1/turn1_step1_3d_generation_task_1/seed3d_result_1.usdz",
+        )
+
+    async def test_seed3d_provider_requires_one_image_source(self) -> None:
+        agent = ThreeDGenerationAgent(name="ThreeDGenerationAgent", public_name="3DGeneration")
+        ctx = _build_ctx(
+            {
+                "current_parameters": {
+                    "provider": "seed3d",
+                    "prompt": "make a 3D toy",
+                },
+                "step": 0,
+            }
+        )
+
+        with patch(
+            "src.agents.experts.three_d_generation.three_d_generation_agent.generation_tools.seed3d_generate_tool",
+            new=AsyncMock(),
+        ) as seed3d_mock:
+            events = [event async for event in agent._run_async_impl(ctx)]
+
+        self.assertEqual(len(events), 1)
+        seed3d_mock.assert_not_called()
+        current_output = events[0].actions.state_delta["current_output"]
+        self.assertEqual(current_output["status"], "error")
+        self.assertIn("provider `seed3d` requires", current_output["message"])
 
 
 class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
@@ -265,4 +359,88 @@ class ThreeDGenerationToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["job_id"], "job-1")
+        self.assertEqual(result["downloaded_files"][0]["path"], fake_output_path)
+
+    async def test_seed3d_generate_tool_builds_ark_task_and_downloads_result(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(create=create_mock)
+            )
+        )
+        fake_query_response = SimpleNamespace(
+            status="succeeded",
+            content=SimpleNamespace(
+                model_url="https://example.com/seed3d_result.usdz",
+                preview_image_url="https://example.com/preview.png",
+            ),
+        )
+        fake_output_path = (
+            workspace_root()
+            / "generated"
+            / "session_1"
+            / "turn_1"
+            / "turn1_step1_3d_generation_task_1"
+            / "seed3d_result_1.usdz"
+        )
+
+        with (
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_ark_client_from_env",
+                return_value=fake_client,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._image_file_to_data_url",
+                return_value="data:image/png;base64,abc",
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._poll_seed3d_task_until_finished",
+                new=AsyncMock(return_value=fake_query_response),
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._build_download_dir",
+                return_value=fake_output_path.parent,
+            ),
+            patch(
+                "src.agents.experts.three_d_generation.tool._download_seed3d_result_files_sync",
+                return_value=[
+                    {
+                        "path": fake_output_path,
+                        "type": "usdz",
+                        "url": "https://example.com/seed3d_result.usdz",
+                        "preview_image_url": "",
+                    }
+                ],
+            ) as download_mock,
+        ):
+            result = await generation_tools.seed3d_generate_tool(
+                input_path="inbox/cli/session_1/object.png",
+                model="doubao-seed3d-2-0-260328",
+                file_format="usdz",
+                subdivision_level="high",
+                session_id="session_1",
+                turn_index=1,
+                step=1,
+            )
+
+        self.assertEqual(result["status"], "success")
+        create_mock.assert_called_once_with(
+            model="doubao-seed3d-2-0-260328",
+            content=[
+                {"type": "text", "text": "--subdivisionlevel high --fileformat usdz"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        )
+        download_mock.assert_called_once_with(
+            [
+                {
+                    "url": "https://example.com/seed3d_result.usdz",
+                    "type": "usdz",
+                    "preview_image_url": "",
+                }
+            ],
+            fake_output_path.parent,
+            file_format="usdz",
+        )
+        self.assertEqual(result["job_id"], "task-1")
         self.assertEqual(result["downloaded_files"][0]["path"], fake_output_path)

@@ -63,7 +63,9 @@ The following diagram shows the high-level architecture of CreativeClaw, includi
 - Kling 3 (`kling-v3`; `multi_reference` currently uses `kling-v1-6`)
 
 ### 📦 3D Generation
- - HY 3D (`3.0`, `3.1`)
+
+- HY 3D (`3.0`, `3.1`)
+- Doubao Seed3D 2.0 (`doubao-seed3d-2-0-260328`)
 
 ### 🔊 Speech Synthesis
 
@@ -213,6 +215,11 @@ The main LLM orchestrator can call these tool groups directly:
 - `seedance`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, `reference_style`; model ids `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128`, `doubao-seedance-1-0-pro-250528`; extra controls `generate_audio` and `watermark`.
 - `veo`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `reference_asset`, `reference_style`, `video_extension`; model id `veo-3.1-generate-preview`; extra control `person_generation`.
 - `kling`: modes `prompt`, `first_frame`, `first_frame_and_last_frame`, `multi_reference`; model ids `kling-v3` and `kling-v1-6` for `multi_reference`; extra control `kling_mode` (`std` or `pro`).
+
+`3DGeneration` currently exposes these provider-aware tool parameters:
+
+- `hy3d`: default provider; supports prompt-only, image-only, and `generate_type=sketch` prompt-plus-image input.
+- `seed3d`: Volcengine Ark image-to-3D provider; requires one `input_path` / `input_paths` or `image_url`; optional controls include `file_format` (`glb|obj|usd|usdz`) and `subdivision_level` (`low|medium|high`).
 
 ## 🌐 Supported Channels
 

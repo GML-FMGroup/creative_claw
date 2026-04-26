@@ -230,7 +230,7 @@ _EXPERT_SPECS = {
         agent_factory=lambda: VideoGenerationAgent(name="VideoGenerationAgent"),
         default_prompt_key="prompt",
         default_parameters=get_video_generation_default_parameters(),
-        required_parameters=("prompt or input_path/input_paths",),
+        required_parameters=("prompt, input_path/input_paths, or image_url",),
         required_parameter_groups=(
             RequiredParameterGroup(
                 keys=("prompt", "input_path", "input_paths"),
@@ -383,20 +383,24 @@ _EXPERT_SPECS = {
         required_parameters=("prompt or input_path/input_paths",),
         required_parameter_groups=(
             RequiredParameterGroup(
-                keys=("prompt", "input_path", "input_paths"),
-                description="prompt or input_path/input_paths",
+                keys=("prompt", "input_path", "input_paths", "image_url"),
+                description="prompt, input_path/input_paths, or image_url",
             ),
         ),
         allowed_values={
-            "provider": ("hy3d",),
-            "model": ("3.0", "3.1"),
+            "provider": ("hy3d", "seed3d"),
+            "model": ("3.0", "3.1", "doubao-seed3d-2-0-260328"),
             "generate_type": ("normal", "lowpoly", "sketch", "geometry"),
-            "result_format": ("stl", "usdz", "fbx"),
+            "result_format": ("stl", "usdz", "fbx", "glb", "obj", "usd"),
+            "file_format": ("glb", "obj", "usd", "usdz"),
+            "subdivision_level": ("low", "medium", "high"),
         },
         mirrored_output_keys=("three_d_generation_results",),
         notes=(
-            "Generates 3D assets through Tencent Cloud Hunyuan 3D Pro. "
-            "V1 supports prompt-only, image-only, and Sketch prompt-plus-image input."
+            "Generates 3D assets through provider-aware backends. "
+            "`hy3d` uses Tencent Cloud Hunyuan 3D Pro and supports prompt-only, image-only, "
+            "and Sketch prompt-plus-image input. `seed3d` uses Volcengine Ark "
+            "doubao-seed3d-2-0-260328 and requires one input image through input_path or image_url."
         ),
     ),
 }

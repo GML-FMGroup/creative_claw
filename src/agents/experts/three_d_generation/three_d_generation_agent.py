@@ -60,8 +60,11 @@ class ThreeDGenerationAgent(CreativeExpert):
             yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
             return
 
-        if provider != "hy3d":
-            error_text = f"{self._public_name} only supports provider `hy3d` in the current implementation."
+        if provider not in {"hy3d", "seed3d"}:
+            error_text = (
+                f"{self._public_name} supports providers `hy3d` and `seed3d` "
+                "in the current implementation."
+            )
             logger.error(error_text)
             yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
             return
@@ -72,40 +75,98 @@ class ThreeDGenerationAgent(CreativeExpert):
             yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
             return
 
-        generate_type = generation_tools.normalize_generate_type(
-            current_parameters.get("generate_type", generation_tools.DEFAULT_GENERATE_TYPE)
-        )
-        if prompt and input_paths and generate_type != "Sketch":
-            error_text = (
-                f"{self._public_name} requires `generate_type=sketch` when both prompt and input image are provided."
-            )
-            logger.error(error_text)
-            yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
-            return
+        generate_type = ""
+        if provider == "seed3d":
+            image_url = str(current_parameters.get("image_url", "") or "").strip() or None
+            if input_paths and image_url:
+                error_text = f"{self._public_name} provider `seed3d` accepts only one image source."
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+            if not input_paths and not image_url:
+                error_text = (
+                    f"{self._public_name} provider `seed3d` requires `input_path`, "
+                    "`input_paths`, or `image_url`."
+                )
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
 
-        result = await generation_tools.hy3d_generate_tool(
-            prompt=prompt or None,
-            input_path=input_paths[0] if input_paths else None,
-            model=str(current_parameters.get("model", generation_tools.DEFAULT_MODEL) or generation_tools.DEFAULT_MODEL),
-            enable_pbr=generation_tools.coerce_bool(current_parameters.get("enable_pbr"), default=False),
-            generate_type=generate_type,
-            face_count=current_parameters.get("face_count"),
-            polygon_type=(
-                str(current_parameters.get("polygon_type", "")).strip() or None
-            ),
-            result_format=(
-                str(current_parameters.get("result_format", "")).strip() or None
-            ),
-            timeout_seconds=int(
-                current_parameters.get("timeout_seconds", generation_tools.DEFAULT_TIMEOUT_SECONDS)
-            ),
-            interval_seconds=int(
-                current_parameters.get("interval_seconds", generation_tools.DEFAULT_INTERVAL_SECONDS)
-            ),
-            session_id=ctx.session.id,
-            turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
-            step=int(ctx.session.state.get("step", 0) or 0),
-        )
+            result = await generation_tools.seed3d_generate_tool(
+                input_path=input_paths[0] if input_paths else None,
+                image_url=image_url,
+                model=str(
+                    current_parameters.get(
+                        "model",
+                        generation_tools.DEFAULT_SEED3D_MODEL,
+                    )
+                    or generation_tools.DEFAULT_SEED3D_MODEL
+                ),
+                file_format=str(
+                    current_parameters.get(
+                        "file_format",
+                        current_parameters.get(
+                            "result_format",
+                            generation_tools.DEFAULT_SEED3D_FILE_FORMAT,
+                        ),
+                    )
+                    or generation_tools.DEFAULT_SEED3D_FILE_FORMAT
+                ),
+                subdivision_level=str(
+                    current_parameters.get(
+                        "subdivision_level",
+                        generation_tools.DEFAULT_SEED3D_SUBDIVISION_LEVEL,
+                    )
+                    or generation_tools.DEFAULT_SEED3D_SUBDIVISION_LEVEL
+                ),
+                timeout_seconds=int(
+                    current_parameters.get("timeout_seconds", generation_tools.DEFAULT_TIMEOUT_SECONDS)
+                ),
+                interval_seconds=int(
+                    current_parameters.get(
+                        "interval_seconds",
+                        generation_tools.DEFAULT_SEED3D_INTERVAL_SECONDS,
+                    )
+                ),
+                session_id=ctx.session.id,
+                turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
+                step=int(ctx.session.state.get("step", 0) or 0),
+            )
+        else:
+            generate_type = generation_tools.normalize_generate_type(
+                current_parameters.get("generate_type", generation_tools.DEFAULT_GENERATE_TYPE)
+            )
+            if prompt and input_paths and generate_type != "Sketch":
+                error_text = (
+                    f"{self._public_name} requires `generate_type=sketch` when both prompt and input image are provided."
+                )
+                logger.error(error_text)
+                yield self.format_event(error_text, {"current_output": {"status": "error", "message": error_text}})
+                return
+
+            result = await generation_tools.hy3d_generate_tool(
+                prompt=prompt or None,
+                input_path=input_paths[0] if input_paths else None,
+                model=str(current_parameters.get("model", generation_tools.DEFAULT_MODEL) or generation_tools.DEFAULT_MODEL),
+                enable_pbr=generation_tools.coerce_bool(current_parameters.get("enable_pbr"), default=False),
+                generate_type=generate_type,
+                face_count=current_parameters.get("face_count"),
+                polygon_type=(
+                    str(current_parameters.get("polygon_type", "")).strip() or None
+                ),
+                result_format=(
+                    str(current_parameters.get("result_format", "")).strip() or None
+                ),
+                timeout_seconds=int(
+                    current_parameters.get("timeout_seconds", generation_tools.DEFAULT_TIMEOUT_SECONDS)
+                ),
+                interval_seconds=int(
+                    current_parameters.get("interval_seconds", generation_tools.DEFAULT_INTERVAL_SECONDS)
+                ),
+                session_id=ctx.session.id,
+                turn_index=int(ctx.session.state.get("turn_index", 0) or 0),
+                step=int(ctx.session.state.get("step", 0) or 0),
+            )
 
         if result["status"] == "error":
             current_output = {
@@ -126,12 +187,13 @@ class ThreeDGenerationAgent(CreativeExpert):
         current_step = int(ctx.session.state.get("step", 0) or 0)
         current_expert_step = int(ctx.session.state.get("expert_step", 0) or 0)
         prompt_description = prompt or "[image-only generation]"
+        provider_name = str(result.get("provider", provider) or provider)
 
         for index, file_info in enumerate(downloaded_files, start=1):
             output_path = Path(file_info["path"])
             artifact_name = output_path.name
             description = (
-                f"The {index}th 3D file generated by hy3d in turn {current_turn}, step {current_step}. "
+                f"The {index}th 3D file generated by {provider_name} in turn {current_turn}, step {current_step}. "
                 f"generate_type={result.get('generate_type', generate_type)}, prompt={prompt_description}"
             )
             output_files.append(
@@ -157,17 +219,19 @@ class ThreeDGenerationAgent(CreativeExpert):
 
         file_names = ", ".join(file_info["name"] for file_info in output_files)
         message = (
-            f"{self._public_name} completed hy3d job {result.get('job_id', '')} with "
+            f"{self._public_name} completed {provider_name} job {result.get('job_id', '')} with "
             f"{len(output_files)} file(s): {file_names}"
         )
         current_output = {
             "status": "success",
             "message": message,
             "output_files": output_files,
-            "provider": result.get("provider", provider),
+            "provider": provider_name,
             "model_name": result.get("model_name", ""),
             "job_id": result.get("job_id", ""),
             "generate_type": result.get("generate_type", generate_type),
+            "file_format": result.get("file_format", ""),
+            "subdivision_level": result.get("subdivision_level", ""),
             "result_files": structured_results,
         }
         logger.info(message)

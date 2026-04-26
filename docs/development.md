@@ -147,7 +147,7 @@ How to fill it:
 - If you mainly use OpenAI text generation, fill `providers.openai.api_key`.
 - If you want Gemini image or VEO video support, fill `providers.gemini.api_key`.
 - If you want Anthropic text models, fill `providers.anthropic.api_key`.
-- If you want Seedream or Seedance, fill `services.ark_api_key`.
+- If you want Seedream, Seedance, or Seed3D, fill `services.ark_api_key`.
 - If you want image grounding or segmentation, fill `services.dds_api_key`.
 - If you want SearchAgent image search, fill `services.serper_api_key`.
 - If you want the built-in `web_search` tool, fill `services.brave_api_key`.
@@ -300,7 +300,7 @@ Field notes:
 | `providers.<name>.api_version` | Provider-specific API version | Mainly Azure OpenAI |
 | `providers.<name>.extra_headers` | Extra HTTP headers | Enterprise proxy or custom gateway integration |
 | `providers.ollama.api_base` | Local Ollama endpoint | Prefilled as `http://localhost:11434/v1` by `creative-claw init` |
-| `services.ark_api_key` | Volcengine Ark key | Seedream and Seedance paths |
+| `services.ark_api_key` | Volcengine Ark key | Seedream, Seedance, and Seed3D paths |
 | `services.dds_api_key` | DeepDataSpace key | Image grounding and image segmentation |
 | `services.serper_api_key` | Serper key | `SearchAgent` image mode |
 | `services.brave_api_key` | Brave search key | Built-in web search tool |
@@ -337,7 +337,7 @@ First-round text LLM providers:
 
 Feature-specific extra service keys:
 
-- `services.ark_api_key`: Seedream image generation, image editing, and `VideoGenerationAgent` (`seedance`)
+- `services.ark_api_key`: Seedream image generation, image editing, `VideoGenerationAgent` (`seedance`), and `ThreeDGenerationAgent` (`seed3d`)
 - `services.kling_access_key` and `services.kling_secret_key`: `VideoGenerationAgent` (`kling`)
 - `services.kling_api_base`: optional Kling API base override; when omitted, the provider probes the official Beijing and Singapore gateways and caches the first working base
 - `services.dds_api_key`: `ImageGroundingAgent` and `ImageSegmentationAgent`
@@ -449,6 +449,27 @@ Example `invoke_agent` payloads:
 
 ```json
 {"input_path":"generated/session_1/clip.mp4","prompt":"Continue the motion naturally with wind and crowd ambience","provider":"veo","mode":"video_extension","resolution":"720p","duration_seconds":8,"negative_prompt":"glitches, abrupt cuts","seed":123}
+```
+
+## 3D Generation Expert
+
+`3DGeneration` supports these provider paths:
+
+- `hy3d`: default provider, Tencent Cloud Hunyuan 3D Pro, requires Tencent Cloud credentials.
+- `seed3d`: Volcengine Ark `doubao-seed3d-2-0-260328`, requires `services.ark_api_key` or `ARK_API_KEY`.
+
+Important `seed3d` notes:
+
+- it is image-to-3D only
+- pass exactly one workspace image through `input_path` / `input_paths`, or one remote `image_url`
+- optional controls are `file_format` (`glb|obj|usd|usdz`), `subdivision_level` (`low|medium|high`), `timeout_seconds`, and `interval_seconds`
+- returned 3D URLs are downloaded into the workspace because provider links expire
+- `hyper3d-gen2-260112` and `hitem3d-2-0-251223` are listed by Volcengine as separate 3D models, but their separate API shapes are not exposed by CreativeClaw yet
+
+Example `invoke_agent` payload:
+
+```json
+{"provider":"seed3d","input_path":"inbox/cli/session_1/object.png","file_format":"glb","subdivision_level":"medium"}
 ```
 
 ## Deterministic Media Operations

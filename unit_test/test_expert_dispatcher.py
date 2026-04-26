@@ -189,6 +189,21 @@ class ExpertDispatcherTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parameters["timeout_seconds"], 900)
         self.assertEqual(parameters["interval_seconds"], 8)
 
+    def test_normalize_invoke_agent_parameters_accepts_seed3d_image_url(self) -> None:
+        parameters = normalize_invoke_agent_parameters(
+            agent_name="3DGeneration",
+            prompt=(
+                '{"provider":"seed3d","image_url":"https://example.com/object.png",'
+                '"file_format":"glb","subdivision_level":"medium"}'
+            ),
+            state={},
+        )
+
+        self.assertEqual(parameters["provider"], "seed3d")
+        self.assertEqual(parameters["image_url"], "https://example.com/object.png")
+        self.assertEqual(parameters["file_format"], "glb")
+        self.assertEqual(parameters["subdivision_level"], "medium")
+
     def test_normalize_invoke_agent_parameters_requires_structured_payload_for_image_segmentation(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires structured invoke_agent parameters"):
             normalize_invoke_agent_parameters(

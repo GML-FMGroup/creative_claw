@@ -166,8 +166,9 @@ class ExpertCardTests(unittest.TestCase):
                 "Keep voiceover and spoken narration requests routed to `SpeechSynthesisExpert`",
             ],
             ("three_d_generation", "EXPERT.md"): [
-                "only supports provider `hy3d`",
+                "Provider `hy3d` remains the default",
                 "Tencent Cloud Hunyuan 3D Pro",
+                "doubao-seed3d-2-0-260328",
                 "supports at most one input image",
             ],
         }
@@ -207,7 +208,8 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("audio_format", synthesis_agent.parameters)
         self.assertIn("code default model is `music-2.5`", music_agent.description)
         self.assertIn("instrumental", music_agent.parameters)
-        self.assertIn("only supports provider `hy3d`", three_d_agent.description)
+        self.assertIn("Provider `hy3d` remains the default", three_d_agent.description)
+        self.assertIn("provider': 'seed3d'", three_d_agent.parameters)
         self.assertIn("result_format", three_d_agent.parameters)
 
     def test_minimal_agent_roster_is_enriched_by_expert_cards(self) -> None:

@@ -38,6 +38,7 @@
 | `MusicGenerationExpert` | `music-2.5` | MiniMax Music 2.5 | 待补 | 待补 | `MINIMAX_API_KEY` | 待补 |
 | `3DGeneration` | `3.0` | Tencent Hunyuan 3D Pro 3.0 | 待补 | 待补 | 腾讯云密钥 | 待补 |
 | `3DGeneration` | `3.1` | Tencent Hunyuan 3D Pro 3.1 | 待补 | 待补 | 腾讯云密钥 | 待补 |
+| `3DGeneration` | `doubao-seed3d-2-0-260328` | Doubao Seed3D 2.0（图生 3D） | 待补 | 待补 | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `ImageBasicOperations` | 无 | Pillow / 本地图片处理 | 待补 | 待补 | 无 | 无需 |
 | `VideoBasicOperations` | 无 | ffmpeg / 本地视频处理 | 待补 | 待补 | 无 | 无需 |
 | `AudioBasicOperations` | 无 | ffmpeg / 本地音频处理 | 待补 | 待补 | 无 | 无需 |
@@ -83,3 +84,4 @@
 - Kling 输入图像如果不满足官方限制，当前 expert 只会报错，不会自动 resize 或裁剪；需要时应先让主 agent 调 `image_info` / `image_resize` 等本地工具。
 - `SpeechRecognitionExpert` 当前不是通用 LLM，而是三条火山语音资源路径：`volc.bigasr.auc_turbo`、`vc.async.default`、`volc.ata.default`。
 - 图片反推 prompt 已统一归入 `ImageUnderstandingAgent` 的 `prompt` 模式，不再单独作为一个 expert 维护。
+- `3DGeneration` 已新增 `seed3d` provider，当前只接入 `doubao-seed3d-2-0-260328`。同页列出的 `hyper3d-gen2-260112` 和 `hitem3d-2-0-251223` 走独立 API，需确认详细请求/返回结构后再开放。
