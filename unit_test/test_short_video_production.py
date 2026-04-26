@@ -792,6 +792,26 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(references[0]["replaced_by"], references[1]["reference_asset_id"])
         self.assertEqual(state_payload["asset_plan"]["reference_asset_ids"], [references[1]["reference_asset_id"]])
 
+    def test_manager_start_accepts_string_input_file_paths(self) -> None:
+        state = _adk_state()
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            reference_path = Path(tmpdir) / "product.png"
+            reference_path.write_bytes(b"product-reference")
+            manager = ShortVideoProductionManager()
+
+            result = asyncio.run(manager.start(
+                user_prompt="make a product ad",
+                input_files=[workspace_relative_path(reference_path)],
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "9:16"},
+                adk_state=state,
+            ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(state_payload["reference_assets"]), 1)
+        self.assertEqual(state_payload["reference_assets"][0]["metadata"]["name"], "product.png")
+
     def test_manager_resume_approve_uses_default_seedance_native_audio_runtime(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(
@@ -966,6 +986,30 @@ class ShortVideoProductionTests(unittest.TestCase):
         )
         self.assertEqual(reference_item["count"], 1)
 
+    def test_tool_accepts_string_input_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            upload_path = Path(tmpdir) / "product.png"
+            upload_path.write_bytes(b"fake-upload")
+            state = _adk_state()
+            tool_context = SimpleNamespace(state=state)
+
+            result = asyncio.run(
+                run_short_video_production(
+                    action="start",
+                    user_prompt="make a product ad from this package image",
+                    input_files=[workspace_relative_path(upload_path)],
+                    placeholder_assets=False,
+                    render_settings={"aspect_ratio": "9:16"},
+                    tool_context=tool_context,
+                )
+            )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        reference_item = next(
+            item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets"
+        )
+        self.assertEqual(reference_item["count"], 1)
+
     def test_tool_view_defaults_to_active_session(self) -> None:
         state = _adk_state()
         tool_context = SimpleNamespace(state=state)
@@ -1025,6 +1069,35 @@ class ShortVideoProductionTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "needs_user_review")
         self.assertEqual(result["review_payload"]["review_type"], "asset_plan_review")
+        reference_item = next(item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets")
+        self.assertEqual(reference_item["count"], 1)
+
+    def test_tool_add_reference_assets_accepts_string_input_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            upload_path = Path(tmpdir) / "product.png"
+            upload_path.write_bytes(b"fake-upload")
+            state = _adk_state()
+            tool_context = SimpleNamespace(state=state)
+            started = asyncio.run(
+                run_short_video_production(
+                    action="start",
+                    user_prompt="make a product ad",
+                    placeholder_assets=False,
+                    render_settings={"aspect_ratio": "9:16"},
+                    tool_context=tool_context,
+                )
+            )
+
+            result = asyncio.run(
+                run_short_video_production(
+                    action="add_reference_assets",
+                    production_session_id=started["production_session_id"],
+                    input_files=[workspace_relative_path(upload_path)],
+                    tool_context=tool_context,
+                )
+            )
+
+        self.assertEqual(result["status"], "needs_user_review")
         reference_item = next(item for item in result["review_payload"]["items"] if item["kind"] == "reference_assets")
         self.assertEqual(reference_item["count"], 1)
 

@@ -84,7 +84,7 @@ class ShortVideoProductionManager:
         self,
         *,
         user_prompt: str,
-        input_files: list[dict[str, Any]],
+        input_files: list[Any],
         placeholder_assets: bool,
         render_settings: dict[str, Any] | None,
         adk_state,
@@ -447,7 +447,7 @@ class ShortVideoProductionManager:
         self,
         *,
         production_session_id: str | None,
-        input_files: list[dict[str, Any]],
+        input_files: list[Any],
         user_response: Any | None,
         adk_state,
     ) -> ProductionRunResult:
@@ -1715,11 +1715,11 @@ def _review_options() -> list[dict[str, str]]:
 
 def _reference_assets_from_input_files(
     *,
-    input_files: list[dict[str, Any]],
+    input_files: Any,
     turn_index: int,
 ) -> list[ReferenceAssetEntry]:
     references: list[ReferenceAssetEntry] = []
-    for file_info in input_files:
+    for file_info in _iter_input_file_records(input_files):
         path = str(file_info.get("path", "") or "").strip()
         if not path:
             continue
@@ -1735,6 +1735,38 @@ def _reference_assets_from_input_files(
             )
         )
     return references
+
+
+def _iter_input_file_records(input_files: Any) -> list[dict[str, Any]]:
+    """Return normalized file records from ADK file payload variants."""
+    if input_files is None:
+        return []
+    if isinstance(input_files, (str, dict)):
+        candidates = [input_files]
+    else:
+        try:
+            candidates = list(input_files)
+        except TypeError:
+            return []
+
+    records: list[dict[str, Any]] = []
+    for file_info in candidates:
+        if isinstance(file_info, str):
+            path = file_info.strip()
+            if path:
+                records.append({"path": path, "name": Path(path).name, "description": ""})
+            continue
+        if not isinstance(file_info, dict):
+            continue
+        path = str(file_info.get("path", "") or "").strip()
+        if not path:
+            continue
+        record = dict(file_info)
+        record["path"] = path
+        record.setdefault("name", Path(path).name)
+        record.setdefault("description", "")
+        records.append(record)
+    return records
 
 
 def _normalize_render_settings(payload: dict[str, Any]) -> ShortVideoRenderSettings:

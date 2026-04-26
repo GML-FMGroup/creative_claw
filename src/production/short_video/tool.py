@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from google.adk.tools.tool_context import ToolContext
@@ -23,7 +24,7 @@ async def run_short_video_production(
     user_prompt: str = "",
     production_session_id: str | None = None,
     view_type: Literal["overview", "brief", "asset_plan", "timeline", "events", "artifacts"] = "overview",
-    input_files: list[dict[str, Any]] | None = None,
+    input_files: list[Any] | str | None = None,
     placeholder_assets: bool = False,
     render_settings: dict[str, Any] | None = None,
     user_response: dict[str, Any] | None = None,
@@ -36,7 +37,7 @@ async def run_short_video_production(
         user_prompt: User's short-video brief when starting production.
         production_session_id: Existing production session id for status, resume, view, or impact analysis.
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
-        input_files: Optional workspace file records to use as reference assets.
+        input_files: Optional workspace file records or workspace-relative path strings to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
         render_settings: Optional aspect ratio, duration, fps, width, height, Seedance model_name, and resolution settings.
         user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for revision actions. Plain text is accepted and treated as notes.
@@ -52,11 +53,8 @@ async def run_short_video_production(
         ).model_dump(mode="json")
 
     state = tool_context.state
-    resolved_input_files = (
-        list(input_files)
-        if input_files is not None
-        else list(state.get("uploaded") or state.get("input_files") or [])
-    )
+    raw_input_files = input_files if input_files is not None else state.get("uploaded") or state.get("input_files")
+    resolved_input_files = _normalize_input_files(raw_input_files)
     manager = ShortVideoProductionManager()
     if action == "start":
         result = await manager.start(
@@ -112,3 +110,36 @@ async def run_short_video_production(
             message=f"Unsupported short-video production action: {action}",
         )
     return result.model_dump(mode="json")
+
+
+def _normalize_input_files(raw_files: Any) -> list[dict[str, Any]]:
+    """Normalize ADK file payload variants into workspace file records."""
+    if raw_files is None:
+        return []
+    if isinstance(raw_files, (str, dict)):
+        candidates = [raw_files]
+    else:
+        try:
+            candidates = list(raw_files)
+        except TypeError:
+            return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in candidates:
+        if isinstance(item, str):
+            path = item.strip()
+            if path:
+                normalized.append({"path": path, "name": Path(path).name, "description": ""})
+            continue
+
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "") or "").strip()
+        if not path:
+            continue
+        normalized_item = dict(item)
+        normalized_item["path"] = path
+        normalized_item.setdefault("name", Path(path).name)
+        normalized_item.setdefault("description", "")
+        normalized.append(normalized_item)
+    return normalized
