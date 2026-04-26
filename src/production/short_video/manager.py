@@ -441,6 +441,7 @@ class ShortVideoProductionManager:
             state,
             notes=revision_notes,
             target_kinds=target_kinds,
+            matched_targets=impact_view.get("matched_targets", []),
         )
         _mark_revision_outputs_stale(
             state,
@@ -1034,7 +1035,7 @@ class ShortVideoProductionManager:
         user_response: dict[str, Any],
         adk_state,
     ) -> ProductionRunResult:
-        """Generate the first P1b shot segment from an approved asset plan."""
+        """Generate the next provider shot segment from an approved asset plan."""
         if state.asset_plan is None:
             return self._fail_state(
                 state,
@@ -1071,6 +1072,17 @@ class ShortVideoProductionManager:
         state.asset_plan.selected_ratio = selected_ratio
         state.asset_plan.status = "approved"
         state.active_breakpoint = None
+        if _has_partial_shot_regeneration_pending(state):
+            _prepare_partial_shot_regeneration(
+                state,
+                selected_ratio=selected_ratio,
+            )
+            return await self._generate_next_shot_segment_and_pause(
+                state,
+                adk_state=adk_state,
+                message_prefix="Approved the revised shot segment plan.",
+            )
+
         state.shot_asset_plans = _build_shot_asset_plans(
             storyboard=state.storyboard,
             asset_plan=state.asset_plan,
@@ -1148,12 +1160,16 @@ class ShortVideoProductionManager:
             artifact.status = "stale"
             segment_plan = _shot_asset_plan_by_id(state, artifact.shot_asset_plan_id)
             if segment_plan is not None:
-                segment_plan.status = "stale"
-        _mark_generated_outputs_stale(
-            state,
-            reason="Shot review revision requested before continuing generation.",
-            artifact_notice="Stale after shot review revision.",
-        )
+                _apply_notes_to_shot_segment_plan(
+                    segment_plan,
+                    notes=notes,
+                    target_kinds={"shot_asset_plan"},
+                )
+            _mark_shot_artifact_media_stale(
+                state,
+                artifact,
+                reason="Shot review revision requested before continuing generation.",
+            )
         if state.asset_plan is not None:
             state.asset_plan.status = "draft"
         state.artifacts = []
@@ -1289,7 +1305,7 @@ class ShortVideoProductionManager:
                     name=f"shot_segment_{segment_plan.segment_index}_preview.mp4",
                     path=preview_report.output_path,
                     description=(
-                        "P1b shot segment preview. Approve it to continue generation; "
+                        "Shot segment preview. Approve it to continue generation; "
                         "it is not the final deliverable yet."
                     ),
                     source=self.capability,
@@ -1421,7 +1437,7 @@ class ShortVideoProductionManager:
             WorkspaceFileRef(
                 name="final.mp4",
                 path=state.render_report.output_path,
-                description=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video render.",
+                description=f"P1c {_video_type_label(state.asset_plan.video_type)} short-video render.",
                 source=self.capability,
             )
         ]
@@ -1429,7 +1445,7 @@ class ShortVideoProductionManager:
             ProductionEvent(
                 event_type="production_completed",
                 stage=state.stage,
-                message=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
+                message=f"P1c {_video_type_label(state.asset_plan.video_type)} short-video render completed.",
                 metadata={
                     "artifact_path": state.render_report.output_path,
                     "shot_segments": len(approved_artifacts),
@@ -1447,7 +1463,7 @@ class ShortVideoProductionManager:
         self.store.project_to_adk_state(adk_state, state)
         return self._result_from_state(
             state,
-            message=f"P1b {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
+            message=f"P1c {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
         )
 
     def _fail_state(
@@ -2407,10 +2423,21 @@ def _apply_revision_to_asset_plan(
     *,
     notes: str,
     target_kinds: set[str],
+    matched_targets: list[dict[str, Any]],
 ) -> None:
     asset_plan = state.asset_plan
     if asset_plan is None:
         return
+
+    if target_kinds & {"shot_asset_plan", "shot_artifact"}:
+        if _apply_targeted_shot_revision(
+            state,
+            notes=notes,
+            target_kinds=target_kinds,
+            matched_targets=matched_targets,
+        ):
+            asset_plan.status = "draft"
+            return
 
     if target_kinds <= {"voiceover"}:
         asset_plan.plan_id = new_id("asset_plan")
@@ -2434,6 +2461,92 @@ def _apply_revision_to_asset_plan(
     )
 
 
+def _apply_targeted_shot_revision(
+    state: ShortVideoProductionState,
+    *,
+    notes: str,
+    target_kinds: set[str],
+    matched_targets: list[dict[str, Any]],
+) -> bool:
+    """Apply revision notes to targeted shot segment plans only."""
+    target_plan_ids = _targeted_shot_asset_plan_ids(state, matched_targets)
+    if not target_plan_ids:
+        review_artifact = _current_review_shot_artifact(state)
+        if review_artifact is not None:
+            target_plan_ids.add(review_artifact.shot_asset_plan_id)
+    if not target_plan_ids:
+        return False
+
+    for plan in state.shot_asset_plans:
+        if plan.shot_asset_plan_id in target_plan_ids:
+            _apply_notes_to_shot_segment_plan(
+                plan,
+                notes=notes,
+                target_kinds=target_kinds,
+            )
+    for artifact in state.shot_artifacts:
+        if artifact.shot_asset_plan_id in target_plan_ids:
+            artifact.status = "stale"
+            artifact.metadata["stale_reason"] = f"Revision applied: {notes}"
+            _mark_shot_artifact_media_stale(
+                state,
+                artifact,
+                reason=f"Revision applied: {notes}",
+            )
+    return True
+
+
+def _targeted_shot_asset_plan_ids(
+    state: ShortVideoProductionState,
+    matched_targets: list[dict[str, Any]],
+) -> set[str]:
+    """Return shot segment ids selected by revision targets."""
+    plan_ids: set[str] = set()
+    for target in matched_targets:
+        kind = str(target.get("kind", "") or "").strip()
+        target_id = str(target.get("id", "") or "").strip()
+        if kind == "shot_asset_plan" and target_id:
+            plan_ids.add(target_id)
+        elif kind == "shot_artifact" and target_id:
+            artifact = _shot_artifact_by_id(state, target_id)
+            if artifact is not None:
+                plan_ids.add(artifact.shot_asset_plan_id)
+        elif kind == "shot" and target_id:
+            plan_ids.update(
+                plan.shot_asset_plan_id
+                for plan in state.shot_asset_plans
+                if target_id in plan.storyboard_shot_ids
+            )
+    return plan_ids
+
+
+def _apply_notes_to_shot_segment_plan(
+    segment_plan: ShortVideoShotAssetPlan,
+    *,
+    notes: str,
+    target_kinds: set[str],
+) -> None:
+    """Attach user revision notes to one segment plan and mark it pending."""
+    if notes:
+        segment_plan.visual_prompt = _append_segment_revision_note(
+            segment_plan.visual_prompt,
+            notes,
+        )
+        if target_kinds & {"voiceover"}:
+            segment_plan.voiceover_text = notes
+    segment_plan.status = "draft"
+
+
+def _append_segment_revision_note(base_text: str, notes: str) -> str:
+    base = str(base_text or "").strip()
+    note = str(notes or "").strip()
+    if not note:
+        return base
+    if note in base:
+        return base
+    return f"{base}\nSegment revision request: {note}".strip()
+
+
 def _mark_revision_outputs_stale(
     state: ShortVideoProductionState,
     *,
@@ -2447,24 +2560,33 @@ def _mark_revision_outputs_stale(
     }
     if not impacted_kinds:
         return
+    impacted_ids = _impacted_ids_by_kind(impacted)
 
     if "video_asset" in impacted_kinds:
+        video_ids = impacted_ids.get("video_asset", set())
         for asset in state.asset_manifest:
-            if asset.kind == "video" and asset.status == "valid":
+            if asset.kind == "video" and asset.status == "valid" and (not video_ids or asset.asset_id in video_ids):
                 asset.status = "stale"
                 asset.stale_reason = reason
     if "audio_asset" in impacted_kinds:
+        audio_ids = impacted_ids.get("audio_asset", set())
         for audio in state.audio_manifest:
-            if audio.status == "valid":
+            if audio.status == "valid" and (not audio_ids or audio.audio_id in audio_ids):
                 audio.status = "stale"
                 audio.stale_reason = reason
     if "shot_asset_plan" in impacted_kinds:
+        plan_ids = impacted_ids.get("shot_asset_plan", set())
         for plan in state.shot_asset_plans:
-            if plan.status in {"approved", "generating", "generated", "reviewed"}:
+            if plan.status in {"approved", "generating", "generated", "reviewed"} and (
+                not plan_ids or plan.shot_asset_plan_id in plan_ids
+            ):
                 plan.status = "stale"
     if "shot_artifact" in impacted_kinds:
+        artifact_ids = impacted_ids.get("shot_artifact", set())
         for artifact in state.shot_artifacts:
-            if artifact.status in {"generated", "approved"}:
+            if artifact.status in {"generated", "approved"} and (
+                not artifact_ids or artifact.shot_artifact_id in artifact_ids
+            ):
                 artifact.status = "stale"
                 artifact.metadata["stale_reason"] = reason
     if impacted_kinds & {"timeline", "video_asset", "audio_asset", "shot_artifact"}:
@@ -2477,6 +2599,46 @@ def _mark_revision_outputs_stale(
                 artifact.description = (
                     f"{artifact.description} May be stale after revision."
                 ).strip()
+
+
+def _impacted_ids_by_kind(impacted: list[dict[str, Any]]) -> dict[str, set[str]]:
+    """Group revision-impact item ids by kind."""
+    ids_by_kind: dict[str, set[str]] = {}
+    for item in impacted:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "") or "").strip()
+        item_id = str(item.get("id", "") or "").strip()
+        if kind:
+            ids_by_kind.setdefault(kind, set())
+            if item_id:
+                ids_by_kind[kind].add(item_id)
+    return ids_by_kind
+
+
+def _mark_shot_artifact_media_stale(
+    state: ShortVideoProductionState,
+    artifact: ShortVideoShotArtifact,
+    *,
+    reason: str,
+) -> None:
+    """Mark the generated media for one shot artifact stale."""
+    media_asset_ids = {
+        artifact.video_asset_id,
+        str(artifact.metadata.get("preview_video_asset_id") or "").strip(),
+    }
+    media_asset_ids.discard("")
+    for asset in state.asset_manifest:
+        if asset.asset_id in media_asset_ids and asset.status == "valid":
+            asset.status = "stale"
+            asset.stale_reason = reason
+    for audio in state.audio_manifest:
+        if audio.audio_id == artifact.audio_id and audio.status == "valid":
+            audio.status = "stale"
+            audio.stale_reason = reason
+    state.timeline = None
+    state.render_report = None
+    state.render_validation_report = None
 
 
 def _mark_existing_generated_media_superseded(
@@ -2708,6 +2870,31 @@ def _next_pending_shot_asset_plan(
     return None
 
 
+def _has_partial_shot_regeneration_pending(state: ShortVideoProductionState) -> bool:
+    """Return whether an existing segment plan is waiting for local regeneration."""
+    if not state.shot_asset_plans:
+        return False
+    if not state.shot_artifacts:
+        return False
+    return any(plan.status == "draft" for plan in state.shot_asset_plans)
+
+
+def _prepare_partial_shot_regeneration(
+    state: ShortVideoProductionState,
+    *,
+    selected_ratio: str,
+) -> None:
+    """Prepare existing segment plans for gated partial regeneration."""
+    for plan in state.shot_asset_plans:
+        if plan.selected_ratio is None:
+            plan.selected_ratio = selected_ratio  # type: ignore[assignment]
+        if plan.status == "stale":
+            plan.status = "draft"
+    state.timeline = None
+    state.render_report = None
+    state.render_validation_report = None
+
+
 def _shot_asset_plan_by_id(
     state: ShortVideoProductionState,
     shot_asset_plan_id: str,
@@ -2716,6 +2903,17 @@ def _shot_asset_plan_by_id(
     for plan in state.shot_asset_plans:
         if plan.shot_asset_plan_id == shot_asset_plan_id:
             return plan
+    return None
+
+
+def _shot_artifact_by_id(
+    state: ShortVideoProductionState,
+    shot_artifact_id: str,
+) -> ShortVideoShotArtifact | None:
+    """Return a shot artifact by id."""
+    for artifact in state.shot_artifacts:
+        if artifact.shot_artifact_id == shot_artifact_id:
+            return artifact
     return None
 
 

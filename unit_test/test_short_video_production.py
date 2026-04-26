@@ -737,8 +737,142 @@ class ShortVideoProductionTests(unittest.TestCase):
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(state_payload["asset_plan"]["status"], "draft")
         self.assertEqual(state_payload["shot_artifacts"][0]["status"], "stale")
-        self.assertEqual(state_payload["shot_asset_plans"][0]["status"], "stale")
+        self.assertEqual(state_payload["shot_asset_plans"][0]["status"], "draft")
         self.assertIn("Keep the product larger in frame.", state_payload["brief_summary"])
+
+    def test_manager_revises_only_current_shot_segment_before_regeneration(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a 20 second product ad with three clear beats",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16", "duration_seconds": 20},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        first_review = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        self.assertEqual(first_review.stage, "shot_review")
+        second_review = _approve_shot_review(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        self.assertEqual(second_review.stage, "shot_review")
+        before_revision = json.loads(resolve_workspace_path(second_review.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(before_revision["shot_asset_plans"]), 3)
+        first_video_id = before_revision["shot_artifacts"][0]["video_asset_id"]
+        second_video_id = before_revision["shot_artifacts"][1]["video_asset_id"]
+
+        revised = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "revise", "notes": "Make this segment a tighter product close-up."},
+            adk_state=state,
+        ))
+
+        self.assertEqual(revised.status, "needs_user_review")
+        self.assertEqual(revised.stage, "asset_plan_review")
+        revised_payload = json.loads(resolve_workspace_path(revised.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(revised_payload["shot_asset_plans"][0]["status"], "reviewed")
+        self.assertEqual(revised_payload["shot_asset_plans"][1]["status"], "draft")
+        self.assertEqual(revised_payload["shot_asset_plans"][2]["status"], "approved")
+        self.assertEqual(revised_payload["shot_artifacts"][0]["status"], "approved")
+        self.assertEqual(revised_payload["shot_artifacts"][1]["status"], "stale")
+        first_video = next(item for item in revised_payload["asset_manifest"] if item["asset_id"] == first_video_id)
+        second_video = next(item for item in revised_payload["asset_manifest"] if item["asset_id"] == second_video_id)
+        self.assertEqual(first_video["status"], "valid")
+        self.assertEqual(second_video["status"], "stale")
+        self.assertIn(
+            "Make this segment a tighter product close-up.",
+            revised_payload["shot_asset_plans"][1]["visual_prompt"],
+        )
+
+        regenerated = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+
+        self.assertEqual(regenerated.status, "needs_user_review")
+        self.assertEqual(regenerated.stage, "shot_review")
+        regenerated_payload = json.loads(resolve_workspace_path(regenerated.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(regenerated_payload["shot_asset_plans"][0]["status"], "reviewed")
+        self.assertEqual(regenerated_payload["shot_asset_plans"][1]["status"], "generated")
+        self.assertEqual(regenerated_payload["shot_asset_plans"][2]["status"], "approved")
+        self.assertEqual(regenerated_payload["shot_artifacts"][1]["status"], "stale")
+        self.assertEqual(regenerated_payload["shot_artifacts"][2]["status"], "generated")
+
+    def test_manager_targets_future_shot_plan_without_full_rebuild(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a 20 second product ad with three clear beats",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16", "duration_seconds": 20},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        first_review = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        first_payload = json.loads(resolve_workspace_path(first_review.state_ref or "").read_text(encoding="utf-8"))
+        plan_ids_before = [item["shot_asset_plan_id"] for item in first_payload["shot_asset_plans"]]
+        first_artifact_id = first_payload["shot_artifacts"][0]["shot_artifact_id"]
+
+        revised = asyncio.run(manager.apply_revision(
+            production_session_id=started.production_session_id,
+            user_response={
+                "targets": [{"kind": "shot_asset_plan", "id": plan_ids_before[2]}],
+                "notes": "Make the closing segment a tighter pack shot.",
+            },
+            adk_state=state,
+        ))
+
+        self.assertEqual(revised.status, "needs_user_review")
+        self.assertEqual(revised.stage, "asset_plan_review")
+        revised_payload = json.loads(resolve_workspace_path(revised.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual([item["shot_asset_plan_id"] for item in revised_payload["shot_asset_plans"]], plan_ids_before)
+        self.assertEqual(revised_payload["shot_asset_plans"][0]["status"], "generated")
+        self.assertEqual(revised_payload["shot_asset_plans"][1]["status"], "approved")
+        self.assertEqual(revised_payload["shot_asset_plans"][2]["status"], "draft")
+
+        next_review = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+
+        self.assertEqual(next_review.status, "needs_user_review")
+        self.assertEqual(next_review.stage, "shot_review")
+        next_payload = json.loads(resolve_workspace_path(next_review.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual([item["shot_asset_plan_id"] for item in next_payload["shot_asset_plans"]], plan_ids_before)
+        self.assertIn(first_artifact_id, {item["shot_artifact_id"] for item in next_payload["shot_artifacts"]})
+        self.assertEqual(next_payload["shot_asset_plans"][0]["status"], "generated")
+        self.assertEqual(next_payload["shot_asset_plans"][1]["status"], "generated")
+        self.assertEqual(next_payload["shot_asset_plans"][2]["status"], "draft")
 
     def test_manager_resume_defaults_to_active_session_after_misc_work(self) -> None:
         state = _adk_state()
@@ -964,6 +1098,77 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(latest_audio["status"], "valid")
         self.assertEqual(state_payload["timeline"]["video_tracks"][0]["clips"][0]["asset_id"], latest_video["asset_id"])
         self.assertEqual(state_payload["timeline"]["audio_tracks"][0]["clips"][0]["audio_id"], latest_audio["audio_id"])
+
+    def test_manager_apply_revision_targets_one_completed_shot_artifact(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a 20 second product ad with three clear beats",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16", "duration_seconds": 20},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        completed = _approve_asset_plan(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+        completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        second_artifact = completed_payload["shot_artifacts"][1]
+        first_video_id = completed_payload["shot_artifacts"][0]["video_asset_id"]
+        second_video_id = second_artifact["video_asset_id"]
+        third_video_id = completed_payload["shot_artifacts"][2]["video_asset_id"]
+
+        applied = asyncio.run(manager.apply_revision(
+            production_session_id=completed.production_session_id,
+            user_response={
+                "targets": [{"kind": "shot_artifact", "id": second_artifact["shot_artifact_id"]}],
+                "notes": "Regenerate only this segment with a clearer close-up.",
+            },
+            adk_state=state,
+        ))
+
+        self.assertEqual(applied.status, "needs_user_review")
+        self.assertEqual(applied.stage, "asset_plan_review")
+        applied_payload = json.loads(resolve_workspace_path(applied.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(applied_payload["shot_asset_plans"][0]["status"], "reviewed")
+        self.assertEqual(applied_payload["shot_asset_plans"][1]["status"], "draft")
+        self.assertEqual(applied_payload["shot_asset_plans"][2]["status"], "reviewed")
+        self.assertEqual(applied_payload["shot_artifacts"][0]["status"], "approved")
+        self.assertEqual(applied_payload["shot_artifacts"][1]["status"], "stale")
+        self.assertEqual(applied_payload["shot_artifacts"][2]["status"], "approved")
+        first_video = next(item for item in applied_payload["asset_manifest"] if item["asset_id"] == first_video_id)
+        second_video = next(item for item in applied_payload["asset_manifest"] if item["asset_id"] == second_video_id)
+        third_video = next(item for item in applied_payload["asset_manifest"] if item["asset_id"] == third_video_id)
+        self.assertEqual(first_video["status"], "valid")
+        self.assertEqual(second_video["status"], "stale")
+        self.assertEqual(third_video["status"], "valid")
+        self.assertIn("stale", applied_payload["artifacts"][0]["description"].lower())
+
+        regenerated = _approve_asset_plan_to_shot_review(
+            manager,
+            production_session_id=completed.production_session_id,
+            adk_state=state,
+        )
+
+        self.assertEqual(regenerated.status, "needs_user_review")
+        self.assertEqual(regenerated.stage, "shot_review")
+        regenerated_payload = json.loads(resolve_workspace_path(regenerated.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(regenerated_payload["shot_asset_plans"][0]["status"], "reviewed")
+        self.assertEqual(regenerated_payload["shot_asset_plans"][1]["status"], "generated")
+        self.assertEqual(regenerated_payload["shot_asset_plans"][2]["status"], "reviewed")
+        self.assertEqual(regenerated_payload["shot_artifacts"][1]["status"], "stale")
+        self.assertEqual(regenerated_payload["shot_artifacts"][3]["status"], "generated")
 
     def test_manager_apply_revision_rejects_unmatched_target_without_mutation(self) -> None:
         state = _adk_state()

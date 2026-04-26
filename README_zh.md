@@ -200,7 +200,7 @@ creative-claw chat cli \
 - **工作区文件工具**：`list_dir`、`glob`、`grep`、`read_file`、`write_file`、`edit_file`。
 - **确定性媒体工具**：`image_crop`、`image_rotate`、`image_flip`、`image_info`、`image_resize`、`image_convert`、`video_info`、`video_extract_frame`、`video_trim`、`video_concat`、`video_convert`、`audio_info`、`audio_trim`、`audio_concat`、`audio_convert`。
 - **运行时与网页工具**：`exec_command`、`process_session`、`web_search`、`web_fetch`、`list_session_files`。
-- **生产工具**：`run_short_video_production`，用于短视频 P1b 的持久化生产流程，支持 storyboard 审阅、资产计划审阅、分段成片确认、修改、参考素材更新和最终产物追踪。
+- **生产工具**：`run_short_video_production`，用于短视频 P1c 的持久化生产流程，支持 storyboard 审阅、资产计划审阅、分段成片确认、定向分段修改、局部重生成、参考素材更新和最终产物追踪。
 - **Expert 调度工具**：`invoke_agent`，把结构化请求路由到 `ImageGenerationAgent`、`ImageEditingAgent`、`ImageUnderstandingAgent`、`VideoGenerationAgent`、`SpeechRecognitionExpert`、`SpeechSynthesisExpert`、`MusicGenerationExpert`、`3DGeneration` 等 expert。
 
 `VideoGenerationAgent` 当前暴露这些按 provider 区分的工具参数：
@@ -279,7 +279,7 @@ mmx auth status
 ## 📚 更多文档
 
 - [docs/development.md](docs/development.md)：架构、环境、凭证、测试和开发说明
-- [docs/short_video_production_zh.md](docs/short_video_production_zh.md)：短视频生产 P1b 的 storyboard-first、asset-plan 和 shot-review 运行方式，Seedance 2.0/fast 使用方式和飞书验收检查项
+- [docs/short_video_production_zh.md](docs/short_video_production_zh.md)：短视频生产 P1c 的 storyboard-first、asset-plan、shot-review 和定向分段重生成运行方式，Seedance 2.0/fast 使用方式和飞书验收检查项
 - [docs/short_video_p0_completion_zh.md](docs/short_video_p0_completion_zh.md)：短视频 P0 完成状态、验收记录、已知限制和 P1 边界
 - [docs/model_and_token_map.md](docs/model_and_token_map.md)：模型名、对应 expert 和 token 申请链接
 - [docs/expert_model_capability_map_zh.md](docs/expert_model_capability_map_zh.md)：当前 expert 能力边界，包括 Kling 的路由覆盖和限制

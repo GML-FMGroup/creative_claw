@@ -32,14 +32,14 @@
           "rubric_id": "short_video_impact_before_targeted_revision",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks what would happen if they change a specific short-video shot, voiceover, plan item, timeline, or final output, the agent uses run_short_video_production with analyze_revision_impact before applying the change."
+            "text_property": "When the user asks what would happen if they change a specific short-video shot, generated shot segment, voiceover, plan item, timeline, or final output, the agent uses run_short_video_production with analyze_revision_impact before applying the change."
           }
         },
         {
           "rubric_id": "short_video_apply_revision_after_confirmation",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, and it does not call resume or raw generation tools until the updated storyboard, asset plan, or generated shot segment is reviewed and approved."
+            "text_property": "When the user explicitly confirms applying a short-video revision, the agent uses run_short_video_production with apply_revision, scopes targeted shot_asset_plan or shot_artifact revisions to the impacted segment when possible, and does not call resume or raw generation tools until the updated storyboard, asset plan, or generated shot segment is reviewed and approved."
           }
         }
       ]

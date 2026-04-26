@@ -250,6 +250,12 @@ def _revision_impact_entries(
             "shot_artifact",
         }
 
+    target_ids_by_kind = _target_ids_by_kind(matched_targets)
+    targeted_segment_plan_ids = _targeted_segment_plan_ids(state, target_ids_by_kind)
+    segment_scoped = bool(target_kinds & {"shot_asset_plan", "shot_artifact"}) and not (
+        target_kinds & {"brief", "storyboard", "asset_plan", "reference_asset"}
+    )
+
     impacted: list[dict[str, Any]] = []
     if target_kinds & {"brief", "storyboard", "shot", "voiceover", "reference_asset"}:
         if state.storyboard is not None:
@@ -283,6 +289,7 @@ def _revision_impact_entries(
                 "reason": "Provider segment plans are derived from the storyboard and asset plan.",
             }
             for plan in state.shot_asset_plans
+            if not segment_scoped or plan.shot_asset_plan_id in targeted_segment_plan_ids
         )
     if target_kinds & {"reference_asset"}:
         target_ids = {
@@ -318,12 +325,20 @@ def _revision_impact_entries(
                 "reason": "Generated segment previews depend on provider segment plans and generated media.",
             }
             for artifact in state.shot_artifacts
+            if (
+                not segment_scoped
+                or artifact.shot_asset_plan_id in targeted_segment_plan_ids
+                or artifact.shot_artifact_id in target_ids_by_kind.get("shot_artifact", set())
+            )
         )
 
     video_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "reference_asset", "shot_asset_plan", "shot_artifact"})
     audio_impacted = bool(target_kinds & {"brief", "storyboard", "asset_plan", "shot", "voiceover", "shot_asset_plan", "shot_artifact"})
     timeline_impacted = bool(target_kinds & {"timeline"})
     artifact_impacted = bool(target_kinds & {"artifact"})
+
+    impacted_video_asset_ids = _targeted_video_asset_ids(state, targeted_segment_plan_ids) if segment_scoped else set()
+    impacted_audio_ids = _targeted_audio_ids(state, targeted_segment_plan_ids) if segment_scoped else set()
 
     if video_impacted:
         impacted.extend(
@@ -337,6 +352,7 @@ def _revision_impact_entries(
             }
             for asset in state.asset_manifest
             if asset.kind == "video"
+            if not segment_scoped or asset.asset_id in impacted_video_asset_ids
         )
     if audio_impacted:
         impacted.extend(
@@ -349,6 +365,7 @@ def _revision_impact_entries(
                 "reason": "The voiceover depends on the brief, shot plan, or voiceover text.",
             }
             for audio in state.audio_manifest
+            if not segment_scoped or audio.audio_id in impacted_audio_ids
         )
 
     media_impacted = any(item["kind"] in {"video_asset", "audio_asset"} for item in impacted)
@@ -375,6 +392,59 @@ def _revision_impact_entries(
             for artifact in state.artifacts
         )
     return impacted
+
+
+def _target_ids_by_kind(targets: list[dict[str, str]]) -> dict[str, set[str]]:
+    ids_by_kind: dict[str, set[str]] = {}
+    for target in targets:
+        kind = str(target.get("kind", "") or "").strip()
+        target_id = str(target.get("id", "") or "").strip()
+        if kind:
+            ids_by_kind.setdefault(kind, set())
+            if target_id:
+                ids_by_kind[kind].add(target_id)
+    return ids_by_kind
+
+
+def _targeted_segment_plan_ids(
+    state: ShortVideoProductionState,
+    target_ids_by_kind: dict[str, set[str]],
+) -> set[str]:
+    plan_ids = set(target_ids_by_kind.get("shot_asset_plan", set()))
+    artifact_ids = target_ids_by_kind.get("shot_artifact", set())
+    if artifact_ids:
+        plan_ids.update(
+            artifact.shot_asset_plan_id
+            for artifact in state.shot_artifacts
+            if artifact.shot_artifact_id in artifact_ids
+        )
+    return plan_ids
+
+
+def _targeted_video_asset_ids(
+    state: ShortVideoProductionState,
+    segment_plan_ids: set[str],
+) -> set[str]:
+    asset_ids: set[str] = set()
+    for artifact in state.shot_artifacts:
+        if artifact.shot_asset_plan_id not in segment_plan_ids:
+            continue
+        asset_ids.add(artifact.video_asset_id)
+        preview_asset_id = str(artifact.metadata.get("preview_video_asset_id") or "").strip()
+        if preview_asset_id:
+            asset_ids.add(preview_asset_id)
+    return asset_ids
+
+
+def _targeted_audio_ids(
+    state: ShortVideoProductionState,
+    segment_plan_ids: set[str],
+) -> set[str]:
+    return {
+        artifact.audio_id
+        for artifact in state.shot_artifacts
+        if artifact.shot_asset_plan_id in segment_plan_ids
+    }
 
 
 def _revision_impact_level(

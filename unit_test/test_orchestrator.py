@@ -120,7 +120,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("creative-workflow-router", instruction)
         self.assertIn("creative-qc", instruction)
         self.assertIn("do not skip straight to `ImageGenerationAgent` or `VideoGenerationAgent`", instruction)
-        self.assertIn("P1b gated shot-segment review", instruction)
+        self.assertIn("P1c gated shot-segment review", instruction)
         self.assertIn("storyboard_review", instruction)
         self.assertIn("shot_review", instruction)
         self.assertIn("cartoon_short_drama", instruction)
