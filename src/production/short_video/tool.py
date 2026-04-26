@@ -18,6 +18,7 @@ async def run_short_video_production(
         "view",
         "add_reference_assets",
         "analyze_revision_impact",
+        "apply_revision",
     ],
     user_prompt: str = "",
     production_session_id: str | None = None,
@@ -28,17 +29,17 @@ async def run_short_video_production(
     user_response: dict[str, Any] | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """Run, inspect, resume, view, or analyze a short-video production task.
+    """Run, inspect, resume, view, revise, or analyze a short-video production task.
 
     Args:
-        action: Use start, status, resume, view, add_reference_assets, or analyze_revision_impact.
+        action: Use start, status, resume, view, add_reference_assets, analyze_revision_impact, or apply_revision.
         user_prompt: User's short-video brief when starting production.
         production_session_id: Existing production session id for status, resume, view, or impact analysis.
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, asset_plan, timeline, events, and artifacts.
         input_files: Optional workspace file records to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
         render_settings: Optional aspect ratio, duration, fps, width, and height settings.
-        user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for analyze_revision_impact. Plain text is accepted and treated as notes.
+        user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for revision actions. Plain text is accepted and treated as notes.
     """
     if tool_context is None:
         return ProductionRunResult(
@@ -91,6 +92,12 @@ async def run_short_video_production(
         )
     elif action == "analyze_revision_impact":
         result = await manager.analyze_revision_impact(
+            production_session_id=production_session_id,
+            user_response=user_response,
+            adk_state=state,
+        )
+    elif action == "apply_revision":
+        result = await manager.apply_revision(
             production_session_id=production_session_id,
             user_response=user_response,
             adk_state=state,

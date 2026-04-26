@@ -451,6 +451,95 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(json.dumps(state, sort_keys=True), adk_state_before)
         self.assertEqual(state_path.read_text(encoding="utf-8"), state_payload_before)
 
+    def test_manager_apply_revision_marks_impacted_outputs_stale_and_pauses_for_review(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+        state_path = resolve_workspace_path(completed.state_ref or "")
+        completed_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        visual_prompt_before = completed_payload["asset_plan"]["shot_plan"]["visual_prompt"]
+        generated_count = len(state["generated"])
+
+        result = asyncio.run(manager.apply_revision(
+            production_session_id=completed.production_session_id,
+            user_response={
+                "targets": [{"kind": "voiceover"}],
+                "notes": "A warmer voiceover line.",
+            },
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "asset_plan_review")
+        self.assertEqual(result.review_payload.review_type, "asset_plan_review")
+        self.assertEqual(state["active_production_status"], "needs_user_review")
+        self.assertEqual(len(state["generated"]), generated_count)
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["asset_plan"]["status"], "draft")
+        self.assertEqual(
+            state_payload["asset_plan"]["shot_plan"]["voiceover_text"],
+            "A warmer voiceover line.",
+        )
+        self.assertEqual(
+            state_payload["asset_plan"]["shot_plan"]["visual_prompt"],
+            visual_prompt_before,
+        )
+        self.assertEqual(state_payload["asset_manifest"][0]["status"], "valid")
+        self.assertEqual(state_payload["audio_manifest"][0]["status"], "stale")
+        self.assertIsNone(state_payload["timeline"])
+        self.assertIn("stale", state_payload["artifacts"][0]["description"].lower())
+
+    def test_manager_apply_revision_rejects_unmatched_target_without_mutation(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="make a product ad",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16"},
+            adk_state=state,
+        ))
+        completed = asyncio.run(manager.resume(
+            production_session_id=started.production_session_id,
+            user_response={"decision": "approve"},
+            adk_state=state,
+        ))
+        state_path = resolve_workspace_path(completed.state_ref or "")
+        state_payload_before = state_path.read_text(encoding="utf-8")
+
+        result = asyncio.run(manager.apply_revision(
+            production_session_id=completed.production_session_id,
+            user_response={
+                "targets": [{"kind": "shot", "id": "shot_999"}],
+                "notes": "Change a nonexistent shot.",
+            },
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.error.code, "revision_target_unmatched")
+        self.assertEqual(result.view["impact_level"], "target_unmatched")
+        self.assertEqual(state_path.read_text(encoding="utf-8"), state_payload_before)
+
     def test_manager_add_reference_assets_marks_outputs_stale_without_duplicate_projection(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager(
@@ -790,6 +879,38 @@ class ShortVideoProductionTests(unittest.TestCase):
             "Only change the current voiceover. Do not apply it yet.",
         )
         self.assertEqual(result["view"]["state_mutation"], "none")
+
+    def test_tool_apply_revision_defaults_to_active_session(self) -> None:
+        state = _adk_state()
+        tool_context = SimpleNamespace(state=state)
+        started = asyncio.run(
+            run_short_video_production(
+                action="start",
+                user_prompt="make a product ad",
+                placeholder_assets=False,
+                render_settings={"aspect_ratio": "16:9"},
+                tool_context=tool_context,
+            )
+        )
+
+        result = asyncio.run(
+            run_short_video_production(
+                action="apply_revision",
+                user_response={
+                    "targets": [{"kind": "voiceover"}],
+                    "notes": "Make the voiceover shorter.",
+                },
+                tool_context=tool_context,
+            )
+        )
+
+        self.assertEqual(result["status"], "needs_user_review")
+        self.assertEqual(result["production_session_id"], started["production_session_id"])
+        self.assertEqual(result["review_payload"]["review_type"], "asset_plan_review")
+        self.assertEqual(
+            result["view"]["revision_request"]["notes"],
+            "Make the voiceover shorter.",
+        )
 
     def test_store_owner_check_rejects_other_session(self) -> None:
         store = ProductionSessionStore()

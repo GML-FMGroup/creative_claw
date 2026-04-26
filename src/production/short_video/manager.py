@@ -317,6 +317,119 @@ class ShortVideoProductionManager:
             view=build_revision_impact_view(state, normalize_user_response(user_response)),
         )
 
+    async def apply_revision(
+        self,
+        *,
+        production_session_id: str | None,
+        user_response: Any | None,
+        adk_state,
+    ) -> ProductionRunResult:
+        """Apply a confirmed revision and pause for review before regeneration."""
+        context = _context_from_adk_state(adk_state)
+        session_id = _resolve_requested_session_id(production_session_id, adk_state)
+        try:
+            state = self.store.load_state(
+                production_session_id=session_id,
+                adk_session_id=context["sid"],
+                owner_ref=context["owner_ref"],
+                state_type=ShortVideoProductionState,
+            )
+        except ProductionSessionNotFoundError:
+            return ProductionRunResult(
+                status="failed",
+                capability=self.capability,
+                production_session_id=session_id or "",
+                stage="not_found",
+                progress_percent=0,
+                message="Production session was not found or is not owned by this conversation.",
+                error=ProductionErrorInfo(
+                    code="production_session_not_found_or_not_owned",
+                    message="Production session was not found or is not owned by this conversation.",
+                ),
+            )
+
+        response = normalize_user_response(user_response)
+        revision_notes = _revision_notes_from_response(response)
+        impact_view = build_revision_impact_view(state, response)
+        if not revision_notes:
+            return self._result_from_state(
+                state,
+                message="Please provide concrete revision notes before applying a production change.",
+                view=impact_view,
+                error=ProductionErrorInfo(
+                    code="invalid_revision_request",
+                    message="Revision notes are required before applying a production change.",
+                ),
+            )
+        if impact_view.get("unmatched_targets") and not impact_view.get("matched_targets"):
+            return self._result_from_state(
+                state,
+                message="Revision target was not found. Choose one available target before applying the change.",
+                view=impact_view,
+                error=ProductionErrorInfo(
+                    code="revision_target_unmatched",
+                    message="Revision target was not found.",
+                ),
+            )
+        if state.asset_plan is None:
+            return self._result_from_state(
+                state,
+                message="No asset plan exists for this production session.",
+                view=impact_view,
+                error=ProductionErrorInfo(
+                    code="invalid_state",
+                    message="No asset plan exists for this production session.",
+                ),
+            )
+
+        target_kinds = _revision_target_kinds(impact_view)
+        state.brief_summary = _append_revision_note(state.brief_summary, revision_notes)
+        _apply_revision_to_asset_plan(
+            state,
+            notes=revision_notes,
+            target_kinds=target_kinds,
+        )
+        _mark_revision_outputs_stale(
+            state,
+            impacted=impact_view.get("impacted", []),
+            reason=f"Revision applied: {revision_notes}",
+        )
+        state.status = "needs_user_review"
+        state.stage = "asset_plan_review"
+        state.progress_percent = 30
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_asset_plan_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="revision_applied",
+                stage=state.stage,
+                message="Applied user revision to the short-video plan and paused for review.",
+                metadata={
+                    "user_response": response,
+                    "target_kinds": sorted(target_kinds),
+                    "impact_level": impact_view.get("impact_level", ""),
+                    "impacted": [
+                        {
+                            "kind": item.get("kind", ""),
+                            "id": item.get("id", ""),
+                        }
+                        for item in impact_view.get("impacted", [])
+                        if isinstance(item, dict)
+                    ],
+                },
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Revision was applied to the plan. Please review the updated asset plan before regeneration.",
+            view=build_revision_impact_view(state, response),
+        )
+
     async def add_reference_assets(
         self,
         *,
@@ -384,7 +497,11 @@ class ShortVideoProductionManager:
 
         state.reference_assets.extend(new_references)
         reason = "Reference assets changed; dependent production outputs need review."
-        _mark_generated_outputs_stale(state, reason=reason)
+        _mark_generated_outputs_stale(
+            state,
+            reason=reason,
+            artifact_notice="May be stale after reference asset changes.",
+        )
         selected_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else None
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else 8.0
         state.asset_plan = _build_product_ad_asset_plan(
@@ -1077,6 +1194,7 @@ def _mark_generated_outputs_stale(
     state: ShortVideoProductionState,
     *,
     reason: str,
+    artifact_notice: str = "May be stale after production inputs changed.",
 ) -> None:
     for asset in state.asset_manifest:
         if asset.status == "valid":
@@ -1088,10 +1206,91 @@ def _mark_generated_outputs_stale(
             audio.stale_reason = reason
     for artifact in state.artifacts:
         if "stale" not in artifact.description.lower():
-            artifact.description = f"{artifact.description} May be stale after reference asset changes.".strip()
+            artifact.description = f"{artifact.description} {artifact_notice}".strip()
     state.timeline = None
     state.render_report = None
     state.render_validation_report = None
+
+
+def _revision_notes_from_response(response: dict[str, Any]) -> str:
+    for key in ("notes", "message", "revision_notes", "revision_request"):
+        value = str(response.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _revision_target_kinds(impact_view: dict[str, Any]) -> set[str]:
+    kinds = {
+        str(target.get("kind", "") or "").strip()
+        for target in impact_view.get("matched_targets", [])
+        if isinstance(target, dict)
+    }
+    return kinds or {"production"}
+
+
+def _append_revision_note(brief_summary: str, notes: str) -> str:
+    base = str(brief_summary or "").strip() or "Short-video production."
+    return f"{base}\n\nRevision notes: {notes}"
+
+
+def _apply_revision_to_asset_plan(
+    state: ShortVideoProductionState,
+    *,
+    notes: str,
+    target_kinds: set[str],
+) -> None:
+    asset_plan = state.asset_plan
+    if asset_plan is None:
+        return
+
+    if target_kinds <= {"voiceover"}:
+        asset_plan.shot_plan.voiceover_text = notes
+        asset_plan.status = "draft"
+        return
+
+    state.asset_plan = _build_product_ad_asset_plan(
+        user_prompt=state.brief_summary,
+        reference_assets=_valid_reference_assets(state),
+        selected_ratio=asset_plan.selected_ratio,
+        duration_seconds=asset_plan.duration_seconds,
+    )
+
+
+def _mark_revision_outputs_stale(
+    state: ShortVideoProductionState,
+    *,
+    impacted: list[dict[str, Any]],
+    reason: str,
+) -> None:
+    impacted_kinds = {
+        str(item.get("kind", "") or "").strip()
+        for item in impacted
+        if isinstance(item, dict)
+    }
+    if not impacted_kinds:
+        return
+
+    if "video_asset" in impacted_kinds:
+        for asset in state.asset_manifest:
+            if asset.kind == "video" and asset.status == "valid":
+                asset.status = "stale"
+                asset.stale_reason = reason
+    if "audio_asset" in impacted_kinds:
+        for audio in state.audio_manifest:
+            if audio.status == "valid":
+                audio.status = "stale"
+                audio.stale_reason = reason
+    if impacted_kinds & {"timeline", "video_asset", "audio_asset"}:
+        state.timeline = None
+        state.render_report = None
+        state.render_validation_report = None
+    if "final_artifact" in impacted_kinds:
+        for artifact in state.artifacts:
+            if "stale" not in artifact.description.lower():
+                artifact.description = (
+                    f"{artifact.description} May be stale after revision."
+                ).strip()
 
 
 def _asset_plan_review_payload(state: ShortVideoProductionState) -> ReviewPayload:

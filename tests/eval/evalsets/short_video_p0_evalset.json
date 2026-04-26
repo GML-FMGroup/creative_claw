@@ -117,6 +117,59 @@
           "final_file_paths": []
         }
       }
+    },
+    {
+      "eval_id": "apply_confirmed_revision",
+      "conversation": [
+        {
+          "invocation_id": "apply_confirmed_revision_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "我要做一个 16:9 的产品广告短视频，主题是耳机新品发布。先生成计划让我确认。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "apply_confirmed_revision_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "如果我只改当前镜头的旁白，会影响哪些素材和最终视频？先不要真的改。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "apply_confirmed_revision_3",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "确认，就先应用这个旁白修改：把口播改得更温暖、更像新品发布。不要直接重新生成视频。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_apply_revision",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
     }
   ]
 }

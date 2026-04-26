@@ -26,3 +26,4 @@ class ShortVideoAdkEvalAssetsTests(unittest.TestCase):
         rubric_ids = {item["rubric_id"] for item in rubrics}
         self.assertIn("short_video_uses_production_tool", rubric_ids)
         self.assertIn("short_video_impact_before_targeted_revision", rubric_ids)
+        self.assertIn("short_video_apply_revision_after_confirmation", rubric_ids)
