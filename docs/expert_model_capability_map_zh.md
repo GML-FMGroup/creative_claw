@@ -19,14 +19,16 @@
 | `VideoUnderstandingExpert` | 运行时 `llm.model` | 通用多模态 LLM | 待补 | 待补 | 取决于 provider | 待补 |
 | `ImageGenerationAgent` | `gemini-3.1-flash-image-preview` | Gemini 3.1 Flash Image Preview | 待补 | 待补 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | 待补 |
 | `ImageGenerationAgent` | `doubao-seedream-5-0-260128` | Seedream 5.0 | 待补 | 待补 | `ARK_API_KEY` | 待补 |
-| `ImageGenerationAgent` | `gpt-image-1.5` | GPT Image 1.5 | 待补 | 待补 | `OPENAI_API_KEY` | 待补 |
+| `ImageGenerationAgent` | `gpt-image-2` | GPT Image 2 | 待补 | 待补 | `OPENAI_API_KEY` | 待补 |
 | `ImageEditingAgent` | `gemini-3.1-flash-image-preview` | Gemini 3.1 Flash Image Preview | 待补 | 待补 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | 待补 |
 | `ImageEditingAgent` | `doubao-seedream-5-0-260128` | Seedream 5.0 | 待补 | 待补 | `ARK_API_KEY` | 待补 |
 | `ImageGroundingAgent` | `DINO-XSeek-1.0` | DINO-XSeek 1.0 | 待补 | 待补 | `DDS_API_KEY` | 待补 |
 | `ImageSegmentationAgent` | `DINO-X-1.0` | DINO-X 1.0 | 待补 | 待补 | `DDS_API_KEY` | 待补 |
 | `SearchAgent` | Serper 图片搜索接口 | Serper Image Search | 待补 | 待补 | `SERPER_API_KEY` | 待补 |
 | `SearchAgent` | DuckDuckGo 文本搜索接口 | DuckDuckGo Search | 待补 | 待补 | 无或待补 | 待补 |
-| `VideoGenerationAgent` | `doubao-seedance-1-0-pro-250528` | Seedance 1.0 Pro | 待补 | 待补 | `ARK_API_KEY` | 待补 |
+| `VideoGenerationAgent` | `doubao-seedance-2-0-260128` | Seedance 2.0（默认，有声视频） | 待补 | 待补 | `ARK_API_KEY` | 待补 |
+| `VideoGenerationAgent` | `doubao-seedance-2-0-fast-260128` | Seedance 2.0 fast（快速路径，720p） | 待补 | 待补 | `ARK_API_KEY` | 待补 |
+| `VideoGenerationAgent` | `doubao-seedance-1-0-pro-250528` | Seedance 1.0 Pro（兼容旧路径） | 待补 | 待补 | `ARK_API_KEY` | 待补 |
 | `VideoGenerationAgent` | `veo-3.1-generate-preview` | Veo 3.1 Generate Preview | 待补 | 待补 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | 待补 |
 | `VideoGenerationAgent` | `kling-v3` | Kling 3（文生/图生默认模型；`multi_reference` 当前走 `kling-v1-6`） | 待补 | 待补 | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | 待补 |
 | `SpeechRecognitionExpert` | `volc.bigasr.auc_turbo` | Volcengine BigASR Flash | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |

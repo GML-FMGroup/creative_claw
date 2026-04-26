@@ -18,6 +18,7 @@ No more jumping back and forth between different tools.
 With CreativeClaw, you can keep iterating around a single idea and move from inspiration to final output in one flow.
 
 ## 📰 News
+ - 2026-04-26: Closed short-video P0 documentation with Seedance 2.0 as the default native-audio path and Veo+TTS as an implemented compatible runtime.
  - 2026-04-26: Documented the current LLM/orchestrator tool surface, short-video production tool, and Seedance 2.0 / 2.0 fast video generation support.
  - 2026-04-21: Added Kling video provider integration, including text-to-video, image-to-video, multi-reference video generation, gateway probing, and updated docs.
  - 2026-04-20: Expanded Veo video generation support.
@@ -291,6 +292,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
 - [docs/short_video_production_zh.md](docs/short_video_production_zh.md): short-video P0 usage, Seedance 2.0/fast routing, and Feishu acceptance checklist
+- [docs/short_video_p0_completion_zh.md](docs/short_video_p0_completion_zh.md): short-video P0 completion status, verification, known limits, and P1 boundary
 - [docs/model_and_token_map.md](docs/model_and_token_map.md): model names, mapped experts, and token application links
 - [docs/expert_model_capability_map_zh.md](docs/expert_model_capability_map_zh.md): current expert capability boundaries, including Kling route coverage and constraints
 

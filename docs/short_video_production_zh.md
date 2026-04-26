@@ -18,6 +18,12 @@
 - 默认音频：Seedance 原生有声视频，`generate_audio=true`
 - 支持输入：纯文本任务描述，或任务描述加参考图片
 
+兼容路径：
+
+- `VeoTtsProviderRuntime` 已实现，可以使用 Veo 生成视频片段，再使用 ByteDance / Volcengine TTS 生成 voiceover。
+- 这条路径当前不是默认用户路径，也没有做成对话里可直接切换的公开选项。
+- 当前限制：只支持 `16:9` / `9:16`，时长 `4/6/8` 秒，分辨率固定 `720p`。
+
 P0 暂不做多镜头 storyboard、rough cut 二次确认、局部镜头重生成和自动质量评估。这些属于 P1。
 
 ## 运行前准备
@@ -119,3 +125,5 @@ creative-claw chat feishu
 - 社交媒体短片：小红书/抖音风格，要求强开头钩子和快节奏。
 
 如果真实模型输出质量不稳定，优先调资产计划中的 `visual_prompt` 和原生音频指令，不要绕回“视频 + 单独 TTS 解说”的默认链路。
+
+P0 收口状态见 [short_video_p0_completion_zh.md](short_video_p0_completion_zh.md)。

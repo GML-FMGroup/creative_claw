@@ -5,11 +5,13 @@ This document lists the concrete model names currently used in the codebase, the
 | Model Name | Expert | Required Key / Token | Application Link |
 | --- | --- | --- | --- |
 | `gpt-5.4` | `OrchestratorAgent`, `KnowledgeAgent`, and the default text-LLM path | `OPENAI_API_KEY` | [OpenAI API Key](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key%23.class) |
-| `gpt-image-1.5` | `ImageGenerationAgent` (`gpt_image`) | `OPENAI_API_KEY` | [OpenAI API Key](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key%23.class) |
+| `gpt-image-2` | `ImageGenerationAgent` (`gpt_image`) | `OPENAI_API_KEY` | [OpenAI API Key](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key%23.class) |
 | `gemini-3.1-flash-image-preview` | `ImageGenerationAgent` (`nano_banana`), `ImageEditingAgent` (`nano_banana`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `veo-3.1-generate-preview` | `VideoGenerationAgent` (`veo`) | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | [Google AI Studio API Key](https://ai.google.dev/gemini-api/docs/api-key) |
 | `doubao-seedream-5-0-260128` | `ImageGenerationAgent` (`seedream`), `ImageEditingAgent` (`seedream`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
-| `doubao-seedance-1-0-pro-250528` | `VideoGenerationAgent` (`seedance`) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `doubao-seedance-2-0-260128` | `VideoGenerationAgent` (`seedance`, default), `ShortVideoProductionManager` default runtime | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `doubao-seedance-2-0-fast-260128` | `VideoGenerationAgent` (`seedance` fast), short-video fast path | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
+| `doubao-seedance-1-0-pro-250528` | `VideoGenerationAgent` (`seedance`, legacy-compatible) | `ARK_API_KEY` | [Volcengine Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey) |
 | `kling-v3` | `VideoGenerationAgent` (`kling`, default basic-route model) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | `kling-v1-6` | `VideoGenerationAgent` (`kling`, `multi_reference`) | `KLING_ACCESS_KEY` + `KLING_SECRET_KEY` | [Kling AI API Access](https://app.klingai.com/global/dev/document-api) |
 | `DINO-XSeek-1.0` | `ImageGroundingAgent` | `DDS_API_KEY` | [DeepDataSpace DINO-X Platform](https://cloud.deepdataspace.com/zh/dashboard/token-key) |
