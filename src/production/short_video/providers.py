@@ -339,6 +339,7 @@ class VeoTtsProviderRuntime:
             metadata={
                 "model_name": str(result.get("model_name", "") or ""),
                 "speaker": str(result.get("speaker", "") or ""),
+                "voice_name": str(result.get("voice_name", "") or ""),
                 "log_id": str(result.get("log_id", "") or ""),
             },
         )

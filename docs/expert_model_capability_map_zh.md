@@ -34,7 +34,7 @@
 | `SpeechRecognitionExpert` | `volc.bigasr.auc_turbo` | Volcengine BigASR Flash | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
 | `SpeechRecognitionExpert` | `vc.async.default` | Volcengine Subtitle Generation | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
 | `SpeechRecognitionExpert` | `volc.ata.default` | Volcengine Subtitle Alignment | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
-| `SpeechSynthesisExpert` | `seed-tts-1.0` | ByteDance / Volcengine TTS | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
+| `SpeechSynthesisExpert` | `seed-tts-2.0` | ByteDance / Volcengine TTS（默认 Vivi 2.0，支持 2.0 音色名或 voice_type） | 待补 | 待补 | `VOLCENGINE_APPID` + `VOLCENGINE_ACCESS_TOKEN` | 待补 |
 | `MusicGenerationExpert` | `music-2.5` | MiniMax Music 2.5 | 待补 | 待补 | `MINIMAX_API_KEY` | 待补 |
 | `3DGeneration` | `3.0` | Tencent Hunyuan 3D Pro 3.0 | 待补 | 待补 | 腾讯云密钥 | 待补 |
 | `3DGeneration` | `3.1` | Tencent Hunyuan 3D Pro 3.1 | 待补 | 待补 | 腾讯云密钥 | 待补 |

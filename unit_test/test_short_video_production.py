@@ -2061,8 +2061,9 @@ class ShortVideoProviderRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "status": "success",
                 "message": b"audio-bytes",
                 "provider": "bytedance_tts",
-                "model_name": "seed-tts-1.0",
-                "speaker": "zh_female",
+                "model_name": "seed-tts-2.0",
+                "speaker": "zh_female_vv_uranus_bigtts",
+                "voice_name": "Vivi 2.0",
                 "log_id": "log-1",
             }
         )
@@ -2098,7 +2099,8 @@ class ShortVideoProviderRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(video_asset.provider, "veo")
             self.assertEqual(audio_asset.provider, "bytedance_tts")
             self.assertEqual(video_asset.metadata["model_name"], "veo-3.1-generate-preview")
-            self.assertEqual(audio_asset.metadata["speaker"], "zh_female")
+            self.assertEqual(audio_asset.metadata["speaker"], "zh_female_vv_uranus_bigtts")
+            self.assertEqual(audio_asset.metadata["voice_name"], "Vivi 2.0")
             self.assertEqual(video_mock.await_args.kwargs["aspect_ratio"], "9:16")
             self.assertEqual(video_mock.await_args.kwargs["duration_seconds"], 8)
             self.assertEqual(video_mock.await_args.kwargs["mode"], "prompt")

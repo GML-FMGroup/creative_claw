@@ -21,6 +21,7 @@ from src.agents.experts.music_generation.music_generation_expert import MusicGen
 from src.agents.experts.search.search_agent import SearchAgent
 from src.agents.experts.speech_recognition.speech_recognition_expert import SpeechRecognitionExpert
 from src.agents.experts.speech_synthesis.speech_synthesis_expert import SpeechSynthesisExpert
+from src.agents.experts.speech_synthesis.voice_catalog import seed_tts_2_voice_summary
 from src.agents.experts.text_transform.text_transform_expert import TextTransformExpert
 from src.agents.experts.three_d_generation.three_d_generation_agent import ThreeDGenerationAgent
 from src.agents.experts.video_basic_operations.video_basic_operations_agent import VideoBasicOperationsAgent
@@ -347,7 +348,9 @@ _EXPERT_SPECS = {
         mirrored_output_keys=("speech_synthesis_results",),
         notes=(
             "Text-to-speech only. "
-            "Uses the ByteDance HTTP streaming TTS path. Optional parameters: speaker, resource_id, audio_format, sample_rate, language, enable_timestamp, latex_parser."
+            "Uses the ByteDance HTTP streaming TTS path. Default resource_id is seed-tts-2.0. "
+            "Optional parameters: speaker, voice_type, voice_name, resource_id, audio_format, sample_rate, language, enable_timestamp, latex_parser. "
+            + seed_tts_2_voice_summary()
         ),
     ),
     "MusicGenerationExpert": ExpertSpec(

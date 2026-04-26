@@ -157,7 +157,8 @@ class ExpertCardTests(unittest.TestCase):
             ],
             ("speech_synthesis", "EXPERT.md"): [
                 "plain text or SSML",
-                "default resource id is `seed-tts-1.0`",
+                "default resource id is `seed-tts-2.0`",
+                "voice_name",
                 "does not transcribe audio",
             ],
             ("music_generation", "EXPERT.md"): [
@@ -205,7 +206,8 @@ class ExpertCardTests(unittest.TestCase):
         self.assertIn("subtitle_format", recognition_agent.parameters)
         self.assertIn("save a binary mask image file", segmentation_agent.description)
         self.assertIn("'model': 'DINO-X-1.0'", segmentation_agent.parameters)
-        self.assertIn("default resource id is `seed-tts-1.0`", synthesis_agent.description)
+        self.assertIn("default resource id is `seed-tts-2.0`", synthesis_agent.description)
+        self.assertIn("voice_name", synthesis_agent.parameters)
         self.assertIn("audio_format", synthesis_agent.parameters)
         self.assertIn("code default model is `music-2.5`", music_agent.description)
         self.assertIn("instrumental", music_agent.parameters)
