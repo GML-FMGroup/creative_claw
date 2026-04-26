@@ -33,6 +33,7 @@ from src.production.short_video.models import (
     ReferenceAssetEntry,
     ShortVideoAssetPlan,
     ShortVideoProductionState,
+    ShortVideoQualityReport,
     ShortVideoRenderSettings,
     ShortVideoShotArtifact,
     ShortVideoShotAssetPlan,
@@ -50,6 +51,7 @@ from src.production.short_video.providers import (
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
 )
+from src.production.short_video.quality import build_quality_report, quality_report_markdown
 from src.production.short_video.renderer import TimelineRenderer
 from src.production.short_video.user_response import normalize_user_response
 from src.production.short_video.validators import RenderValidator
@@ -57,7 +59,7 @@ from src.runtime.step_events import publish_orchestration_step_event
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
-_VIEW_TYPES = ("overview", "brief", "storyboard", "asset_plan", "timeline", "events", "artifacts")
+_VIEW_TYPES = ("overview", "brief", "storyboard", "asset_plan", "timeline", "quality", "events", "artifacts")
 _VIDEO_TYPES = ("product_ad", "cartoon_short_drama", "social_media_short")
 _VIDEO_TYPE_LABELS = {
     "product_ad": "product-ad",
@@ -170,6 +172,9 @@ class ShortVideoProductionManager:
             state.render_validation_report = self.validator.validate(state.render_report.output_path)
             if state.render_validation_report.status != "valid":
                 raise RuntimeError("; ".join(state.render_validation_report.issues) or "render validation failed")
+            state.stage = "quality_report"
+            state.progress_percent = 95
+            state.quality_report = self._build_quality_report(state)
 
             state.status = "completed"
             state.stage = "completed"
@@ -1431,6 +1436,9 @@ class ShortVideoProductionManager:
             state.render_validation_report = self.validator.validate(state.render_report.output_path)
             if state.render_validation_report.status != "valid":
                 raise RuntimeError("; ".join(state.render_validation_report.issues) or "render validation failed")
+            state.stage = "quality_report"
+            state.progress_percent = 98
+            state.quality_report = self._build_quality_report(state)
         except Exception as exc:
             return self._fail_state(
                 state,
@@ -1459,6 +1467,9 @@ class ShortVideoProductionManager:
                 metadata={
                     "artifact_path": state.render_report.output_path,
                     "shot_segments": len(approved_artifacts),
+                    "quality_report_status": (
+                        state.quality_report.status if state.quality_report is not None else ""
+                    ),
                 },
             )
         )
@@ -1475,6 +1486,24 @@ class ShortVideoProductionManager:
             state,
             message=f"P1c {_video_type_label(state.asset_plan.video_type)} short-video production completed.",
         )
+
+    def _build_quality_report(self, state: ShortVideoProductionState) -> ShortVideoQualityReport:
+        """Build and attach a deterministic quality report for a rendered output."""
+        report_path = f"{state.production_session.root_dir}/quality_report.json"
+        report = build_quality_report(state, report_path=report_path)
+        state.production_events.append(
+            ProductionEvent(
+                event_type="quality_report_created",
+                stage=state.stage,
+                message=f"Short-video quality report created with status: {report.status}.",
+                metadata={
+                    "quality_report_status": report.status,
+                    "quality_report_path": report_path,
+                    "recommendations": report.recommendations,
+                },
+            )
+        )
+        return report
 
     def _fail_state(
         self,
@@ -1598,6 +1627,15 @@ class ShortVideoProductionManager:
                 state.timeline.model_dump_json(indent=2),
                 encoding="utf-8",
             )
+        if state.quality_report is not None:
+            (root / "quality_report.json").write_text(
+                state.quality_report.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        (root / "quality_report.md").write_text(
+            quality_report_markdown(state.quality_report),
+            encoding="utf-8",
+        )
 
 
 def _context_from_adk_state(adk_state) -> dict[str, Any]:
@@ -1666,6 +1704,8 @@ def _build_production_view(state: ShortVideoProductionState, view_type: str) -> 
         return _asset_plan_view(state)
     if view_type == "timeline":
         return _timeline_view(state)
+    if view_type == "quality":
+        return _quality_view(state)
     if view_type == "events":
         return _events_view(state)
     if view_type == "artifacts":
@@ -1710,6 +1750,7 @@ def _overview_view(state: ShortVideoProductionState) -> dict[str, Any]:
             "has_storyboard": state.storyboard is not None,
             "has_timeline": state.timeline is not None,
             "has_render_report": state.render_report is not None,
+            "has_quality_report": state.quality_report is not None,
             "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
         }
     )
@@ -1807,6 +1848,27 @@ def _events_view(state: ShortVideoProductionState) -> dict[str, Any]:
     return view
 
 
+def _quality_view(state: ShortVideoProductionState) -> dict[str, Any]:
+    view = _base_view(state, "quality")
+    view.update(
+        {
+            "quality_report": (
+                state.quality_report.model_dump(mode="json")
+                if state.quality_report is not None
+                else None
+            ),
+            "quality_report_path": f"{state.production_session.root_dir}/quality_report.json",
+            "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md",
+            "render_validation_report": (
+                state.render_validation_report.model_dump(mode="json")
+                if state.render_validation_report is not None
+                else None
+            ),
+        }
+    )
+    return view
+
+
 def _artifacts_view(state: ShortVideoProductionState) -> dict[str, Any]:
     view = _base_view(state, "artifacts")
     view.update(
@@ -1815,6 +1877,11 @@ def _artifacts_view(state: ShortVideoProductionState) -> dict[str, Any]:
             "shot_artifacts": [item.model_dump(mode="json") for item in state.shot_artifacts],
             "asset_manifest": [item.model_dump(mode="json") for item in state.asset_manifest],
             "audio_manifest": [item.model_dump(mode="json") for item in state.audio_manifest],
+            "quality_report_path": (
+                state.quality_report.report_path
+                if state.quality_report is not None
+                else f"{state.production_session.root_dir}/quality_report.json"
+            ),
             "final_dir": f"{state.production_session.root_dir}/final",
         }
     )
@@ -2578,6 +2645,7 @@ def _mark_generated_outputs_stale(
     state.timeline = None
     state.render_report = None
     state.render_validation_report = None
+    state.quality_report = None
 
 
 def _revision_notes_from_response(response: dict[str, Any]) -> str:
@@ -2778,7 +2846,9 @@ def _mark_revision_outputs_stale(
         state.timeline = None
         state.render_report = None
         state.render_validation_report = None
+        state.quality_report = None
     if "final_artifact" in impacted_kinds:
+        state.quality_report = None
         for artifact in state.artifacts:
             if "stale" not in artifact.description.lower():
                 artifact.description = (
@@ -2824,6 +2894,7 @@ def _mark_shot_artifact_media_stale(
     state.timeline = None
     state.render_report = None
     state.render_validation_report = None
+    state.quality_report = None
 
 
 def _mark_existing_generated_media_superseded(
@@ -2843,6 +2914,7 @@ def _mark_existing_generated_media_superseded(
     state.timeline = None
     state.render_report = None
     state.render_validation_report = None
+    state.quality_report = None
 
 
 def _mark_existing_shot_outputs_stale(
@@ -3078,6 +3150,7 @@ def _prepare_partial_shot_regeneration(
     state.timeline = None
     state.render_report = None
     state.render_validation_report = None
+    state.quality_report = None
 
 
 def _shot_asset_plan_by_id(

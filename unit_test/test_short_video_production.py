@@ -338,6 +338,8 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertTrue((state_path.parent / "brief.md").exists())
         self.assertTrue((state_path.parent / "asset_plan.json").exists())
         self.assertTrue((state_path.parent / "timeline.json").exists())
+        self.assertTrue((state_path.parent / "quality_report.json").exists())
+        self.assertTrue((state_path.parent / "quality_report.md").exists())
 
     def test_manager_status_uses_owner_check(self) -> None:
         state = _adk_state()
@@ -750,6 +752,89 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(state["final_file_paths"], [result.artifacts[0].path])
         state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(state_payload["shot_artifacts"][0]["status"], "approved")
+        self.assertIsNotNone(state_payload["quality_report"])
+
+    def test_manager_completed_video_writes_quality_report_and_quality_view(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt=(
+                "给我做一个短视频，是关于两只猫咪的对话。不用显示字幕，"
+                "但是需要有语音，语音风格软萌萌可爱。"
+            ),
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "16:9", "duration_seconds": 4},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        completed = _approve_asset_plan(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+
+        self.assertEqual(completed.status, "completed")
+        state_path = resolve_workspace_path(completed.state_ref or "")
+        quality_json = state_path.parent / "quality_report.json"
+        quality_md = state_path.parent / "quality_report.md"
+        self.assertTrue(quality_json.exists())
+        self.assertTrue(quality_md.exists())
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        report = state_payload["quality_report"]
+        check_by_id = {item["check_id"]: item for item in report["checks"]}
+        self.assertEqual(check_by_id["no_subtitles_constraint"]["status"], "pass")
+        self.assertEqual(check_by_id["audio_or_voiceover"]["status"], "pass")
+
+        quality_view = asyncio.run(manager.view(
+            production_session_id=completed.production_session_id,
+            view_type="quality",
+            adk_state=state,
+        ))
+
+        self.assertEqual(quality_view.view["view_type"], "quality")
+        self.assertEqual(quality_view.view["quality_report"]["report_id"], report["report_id"])
+        self.assertTrue(quality_view.view["quality_report_path"].endswith("quality_report.json"))
+
+    def test_manager_product_ad_quality_report_checks_exposure_benefits_and_cta(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+        started = asyncio.run(manager.start(
+            user_prompt="为猫粮产品做一个广告短视频，卖点是高含肉、无谷，结尾引导下单。",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "16:9", "duration_seconds": 4},
+            adk_state=state,
+        ))
+        asset_review = _approve_storyboard(
+            manager,
+            production_session_id=started.production_session_id,
+            adk_state=state,
+        )
+        completed = _approve_asset_plan(
+            manager,
+            production_session_id=asset_review.production_session_id,
+            adk_state=state,
+        )
+
+        state_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        report = state_payload["quality_report"]
+        check_by_id = {item["check_id"]: item for item in report["checks"]}
+        self.assertEqual(check_by_id["product_exposure"]["status"], "pass")
+        self.assertEqual(check_by_id["product_benefit_coverage"]["status"], "pass")
+        self.assertEqual(check_by_id["product_cta"]["status"], "pass")
 
     def test_manager_resume_revise_shot_review_returns_to_asset_plan_review(self) -> None:
         state = _adk_state()

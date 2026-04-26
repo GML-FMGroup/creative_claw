@@ -1,7 +1,7 @@
 {
   "eval_set_id": "short_video_p0",
-  "name": "Short-video P1d behavior",
-  "description": "Checks that the orchestrator routes short-video production through typed production tools, pauses for storyboard/asset-plan/shot review, and preserves explicit provider choices.",
+  "name": "Short-video P1e behavior",
+  "description": "Checks that the orchestrator routes short-video production through typed production tools, pauses for storyboard/asset-plan/shot review, preserves explicit provider choices, and uses quality report views.",
   "eval_cases": [
     {
       "eval_id": "start_product_ad_requires_review",
@@ -227,6 +227,48 @@
         "user_id": "short_video_eval_user",
         "state": {
           "sid": "eval_short_video_view",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "short_video_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "view_quality_report_state",
+      "conversation": [
+        {
+          "invocation_id": "view_quality_report_state_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "我要做一个 9:16 的猫粮产品广告短视频，先停在计划确认，不要直接生成。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "view_quality_report_state_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "现在这个短视频任务有质量报告或者 QC 检查吗？如果有，把质量报告给我看；没有也从生产状态里确认一下。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "short_video_eval_user",
+        "state": {
+          "sid": "eval_short_video_quality_view",
           "turn_index": 1,
           "channel": "eval",
           "chat_id": "short_video_p0",

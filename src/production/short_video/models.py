@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from src.production.models import ProductionState, new_id
+from src.production.models import ProductionState, new_id, utc_now_iso
 
 
 class ShortVideoRenderSettings(BaseModel):
@@ -238,6 +238,30 @@ class RenderValidationReport(BaseModel):
     issues: list[str] = Field(default_factory=list)
 
 
+class ShortVideoQualityCheck(BaseModel):
+    """One explainable deterministic or business-rule quality check."""
+
+    check_id: str
+    category: Literal["structure", "business", "creative"]
+    status: Literal["pass", "warning", "fail", "not_applicable"]
+    summary: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShortVideoQualityReport(BaseModel):
+    """Explainable quality report for a completed short-video production."""
+
+    report_id: str = Field(default_factory=lambda: new_id("quality_report"))
+    created_at: str = Field(default_factory=utc_now_iso)
+    status: Literal["pass", "warning", "fail"] = "pass"
+    summary: str = ""
+    artifact_path: str = ""
+    report_path: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    checks: list[ShortVideoQualityCheck] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+
+
 class ShortVideoProductionState(ProductionState):
     """Persisted state for short-video production."""
 
@@ -253,3 +277,4 @@ class ShortVideoProductionState(ProductionState):
     timeline: ShortVideoTimeline | None = None
     render_report: RenderReport | None = None
     render_validation_report: RenderValidationReport | None = None
+    quality_report: ShortVideoQualityReport | None = None

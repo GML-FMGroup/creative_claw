@@ -25,7 +25,7 @@
           "rubric_id": "short_video_view_for_intermediate_state",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
-            "text_property": "When the user asks about current short-video production state, storyboard, intermediate plans, events, timeline, or artifacts, the agent uses run_short_video_production with a read-only production view action."
+            "text_property": "When the user asks about current short-video production state, storyboard, intermediate plans, quality report, events, timeline, or artifacts, the agent uses run_short_video_production with a read-only production view action."
           }
         },
         {
@@ -47,6 +47,13 @@
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
             "text_property": "When the user explicitly asks for Seedance 2.0 fast or Veo+TTS, the agent passes the provider and model/runtime choice into run_short_video_production render_settings, keeps the normal review gates, and does not silently switch to another provider after a failure."
+          }
+        },
+        {
+          "rubric_id": "short_video_quality_report_view",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for short-video quality, QC, validation, checks, issues, or whether the current/final short video meets requirements, the agent uses run_short_video_production with action view and view_type quality instead of making up a quality report from memory."
           }
         }
       ]
