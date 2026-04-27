@@ -267,11 +267,22 @@ class PPTProductionManager:
             if state.outline is not None:
                 state.outline.status = "approved"
             state.active_breakpoint = None
+            if _should_pause_for_deck_spec_review(state):
+                return self._build_deck_spec_and_pause(state, adk_state=adk_state)
             return self._build_final_preview_or_complete(
                 state,
                 adk_state=adk_state,
                 complete=False,
                 message_prefix="Outline approved.",
+            )
+        if state.active_breakpoint.stage == "deck_spec_review":
+            _approve_deck_spec(state.deck_spec)
+            state.active_breakpoint = None
+            return self._build_final_preview_or_complete(
+                state,
+                adk_state=adk_state,
+                complete=False,
+                message_prefix="Deck spec approved.",
             )
         if state.active_breakpoint.stage == "final_preview_review":
             state.status = "completed"
@@ -476,6 +487,47 @@ class PPTProductionManager:
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="PPT revision was applied. Please review the updated outline.")
 
+    def _build_deck_spec_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
+        """Build an executable deck spec and pause for user review."""
+        try:
+            state.stage = "deck_spec_planning"
+            state.progress_percent = max(state.progress_percent, 35)
+            _publish_ppt_progress(adk_state, state, title="Building deck spec", detail="Converting the approved outline into executable slide content.")
+            state.deck_spec = _build_deck_spec(state.outline, state.render_settings)
+            state.status = "needs_user_review"
+            state.stage = "deck_spec_review"
+            state.progress_percent = max(state.progress_percent, 42)
+            state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_deck_spec_review_payload(state))
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="deck_spec_review_required",
+                    stage=state.stage,
+                    message="Prepared a PPT deck spec and paused before PPTX generation.",
+                    metadata={"deck_spec_id": state.deck_spec.deck_spec_id, "slide_count": len(state.deck_spec.slides)},
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(state, message="Please review the PPT deck spec before PPTX generation.")
+        except Exception as exc:
+            state.status = "failed"
+            state.stage = "failed"
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="deck_spec_build_failed",
+                    stage=state.stage,
+                    message=f"Deck spec build failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            return self._result_from_state(
+                state,
+                message="PPT deck spec build failed.",
+                error=ProductionErrorInfo(code="ppt_deck_spec_build_failed", message=f"{type(exc).__name__}: {exc}"),
+            )
+
     def _build_final_preview_or_complete(
         self,
         state: PPTProductionState,
@@ -485,9 +537,10 @@ class PPTProductionManager:
         message_prefix: str,
     ) -> ProductionRunResult:
         try:
-            _publish_ppt_progress(adk_state, state, title="Building PPTX", detail="Generating editable PPTX from approved outline.")
-            state.deck_spec = _build_deck_spec(state.outline, state.render_settings)
-            state.deck_spec.status = "approved"
+            _publish_ppt_progress(adk_state, state, title="Building PPTX", detail="Generating editable PPTX from approved deck spec.")
+            if state.deck_spec is None:
+                state.deck_spec = _build_deck_spec(state.outline, state.render_settings)
+            _approve_deck_spec(state.deck_spec)
             state.stage = "native_build"
             state.progress_percent = 55
             session_root = self.store.session_root(state.production_session)
@@ -656,6 +709,7 @@ def _normalize_render_settings(payload: dict[str, Any]) -> PPTRenderSettings:
         style_preset=style,  # type: ignore[arg-type]
         pipeline=pipeline,  # type: ignore[arg-type]
         template_edit_mode=str(payload.get("template_edit_mode", "auto") or "auto").strip() or "auto",
+        deck_spec_review=bool(payload.get("deck_spec_review", True)),
         skip_review=bool(payload.get("skip_review", False)),
     )
 
@@ -752,6 +806,18 @@ def _apply_input_context_to_outline(
         entries[0].bullet_points.append("Source documents are attached, but no supported text was extracted yet.")
 
 
+def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
+    return bool(state.render_settings.deck_spec_review and not state.render_settings.skip_review)
+
+
+def _approve_deck_spec(deck_spec: DeckSpec | None) -> None:
+    if deck_spec is None:
+        return
+    deck_spec.status = "approved"
+    for slide in deck_spec.slides:
+        slide.status = "approved"
+
+
 def _outline_entry(sequence_index: int, title: str, purpose: str, layout_type: str, bullets: list[str]) -> PPTOutlineEntry:
     return PPTOutlineEntry(
         sequence_index=sequence_index,
@@ -833,7 +899,6 @@ def _build_deck_spec(outline: PPTOutline | None, settings: PPTRenderSettings) ->
             bullets=entry.bullet_points,
             visual_notes=_visual_note(entry.layout_type, settings.style_preset),
             speaker_notes=entry.speaker_notes,
-            status="approved",
         )
         for entry in outline.entries
     ]
@@ -900,11 +965,40 @@ def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
     return ReviewPayload(
         review_type="ppt_outline_review",
         title="Review PPT Outline",
-        summary="Approve this outline to generate an editable PPTX, or revise it before generation.",
+        summary="Approve this outline to build an executable deck spec, or revise it before generation.",
         items=items,
         options=[
-            {"decision": "approve", "label": "Approve outline and generate PPTX"},
+            {"decision": "approve", "label": "Approve outline and build deck spec"},
             {"decision": "revise", "label": "Revise outline", "requires_notes": True},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
+
+
+def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
+    deck_spec = state.deck_spec
+    items = []
+    if deck_spec is not None:
+        items = [
+            {
+                "id": slide.slide_id,
+                "sequence_index": slide.sequence_index,
+                "title": slide.title,
+                "layout_type": slide.layout_type,
+                "bullets": slide.bullets,
+                "visual_notes": slide.visual_notes,
+                "speaker_notes": slide.speaker_notes,
+            }
+            for slide in deck_spec.slides
+        ]
+    return ReviewPayload(
+        review_type="ppt_deck_spec_review",
+        title="Review PPT Deck Spec",
+        summary="Approve this executable deck spec to generate an editable PPTX, or revise it before generation.",
+        items=items,
+        options=[
+            {"decision": "approve", "label": "Approve deck spec and generate PPTX"},
+            {"decision": "revise", "label": "Revise deck spec", "requires_notes": True},
             {"decision": "cancel", "label": "Cancel production"},
         ],
     )

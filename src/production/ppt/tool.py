@@ -27,6 +27,8 @@ async def run_ppt_production(
         "overview",
         "brief",
         "inputs",
+        "document_summary",
+        "template_summary",
         "outline",
         "deck_spec",
         "previews",
