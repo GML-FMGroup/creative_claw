@@ -35,6 +35,7 @@ from src.production.ppt.models import (
 from src.production.ppt.preview_renderer import PreviewRendererService
 from src.production.ppt.quality import build_quality_report, quality_report_markdown
 from src.production.ppt.user_response import normalize_user_response
+from src.production.projection import get_active_production_session_id
 from src.production.session_store import ProductionSessionStore
 from src.runtime.step_events import publish_orchestration_step_event
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
@@ -393,6 +394,7 @@ class PPTProductionManager:
                 adk_session_id=context["sid"],
                 owner_ref=context["owner_ref"],
                 state_type=PPTProductionState,
+                capability=self.capability,
             )
         except ProductionSessionNotFoundError:
             return ProductionRunResult(
@@ -1009,7 +1011,7 @@ def _resolve_requested_session_id(production_session_id: str | None, adk_state) 
     requested = str(production_session_id or "").strip()
     if requested:
         return requested
-    return str(adk_state.get("active_production_session_id", "") or "").strip()
+    return get_active_production_session_id(adk_state, capability="ppt")
 
 
 def _normalize_view_type(view_type: str | None) -> str | None:

@@ -100,6 +100,7 @@ class ProductionSessionStore:
         adk_session_id: str,
         owner_ref: ProductionOwnerRef,
         state_type: type[StateT],
+        capability: str | None = None,
     ) -> StateT:
         """Load a production state after checking current session ownership."""
         entry = self._load_index_entry(
@@ -107,6 +108,8 @@ class ProductionSessionStore:
             adk_session_id=adk_session_id,
             owner_ref=owner_ref,
         )
+        if capability is not None and entry.capability != capability:
+            raise ProductionSessionNotFoundError("production_session_not_found_or_not_owned")
         state_path = resolve_workspace_path(entry.state_ref)
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))

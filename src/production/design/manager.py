@@ -33,6 +33,7 @@ from src.production.models import (
     ReviewPayload,
     WorkspaceFileRef,
 )
+from src.production.projection import get_active_production_session_id
 from src.production.session_store import ProductionSessionStore
 
 
@@ -333,6 +334,7 @@ class DesignProductionManager:
                 adk_session_id=context["sid"],
                 owner_ref=context["owner_ref"],
                 state_type=DesignProductionState,
+                capability=self.capability,
             )
         except ProductionSessionNotFoundError:
             return ProductionRunResult(
@@ -629,7 +631,7 @@ def _resolve_requested_session_id(production_session_id: str | None, adk_state) 
     requested = str(production_session_id or "").strip()
     if requested:
         return requested
-    return str(adk_state.get("active_production_session_id", "") or "").strip()
+    return get_active_production_session_id(adk_state, capability="design")
 
 
 def _normalize_view_type(view_type: str | None) -> str | None:
