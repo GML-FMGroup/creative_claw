@@ -1,13 +1,17 @@
 import asyncio
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.production.ppt.deck_builder import DeckBuilderService
+from src.production.ppt.document_loader import DocumentLoaderService
 from src.production.ppt.ingest import classify_input_path, ingest_input_files
 from src.production.ppt.manager import PPTProductionManager
-from src.production.ppt.models import SlidePreview
+from src.production.ppt.models import DeckSlide, DeckSpec, PPTRenderSettings, SlidePreview
 from src.production.ppt.prompt_catalog import PPTPromptCatalogError, available_prompt_templates, render_prompt_template
+from src.production.ppt.template_analyzer import TemplateAnalyzerService
 from src.production.ppt.tool import run_ppt_production
 from src.runtime.workspace import workspace_relative_path, workspace_root
 
@@ -45,6 +49,48 @@ def _adk_state(sid="session_ppt_test"):
     }
 
 
+def _write_minimal_docx(path: Path, paragraphs: list[str]) -> None:
+    body = "".join(
+        f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>"
+        for paragraph in paragraphs
+    )
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body>"
+        "</w:document>"
+    )
+    with zipfile.ZipFile(path, "w") as package:
+        package.writestr("word/document.xml", document_xml)
+
+
+def _build_template_pptx(output_path: Path) -> str:
+    deck_spec = DeckSpec(
+        title="Template Deck",
+        slides=[
+            DeckSlide(
+                slide_id="template_slide_1",
+                sequence_index=1,
+                title="Template Cover",
+                layout_type="cover",
+                bullets=["Template signal"],
+            ),
+            DeckSlide(
+                slide_id="template_slide_2",
+                sequence_index=2,
+                title="Template Content",
+                layout_type="content",
+                bullets=["Reusable content treatment"],
+            ),
+        ],
+    )
+    return DeckBuilderService().build(
+        deck_spec=deck_spec,
+        render_settings=PPTRenderSettings(aspect_ratio="16:9", style_preset="business_executive"),
+        output_path=output_path,
+    )
+
+
 class PPTProductionTests(unittest.TestCase):
     def test_classify_input_path_roles(self) -> None:
         self.assertEqual(classify_input_path("template.pptx"), "template_pptx")
@@ -52,7 +98,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(classify_input_path("logo.png"), "reference_image")
         self.assertEqual(classify_input_path("archive.zip"), "unknown")
 
-    def test_ingest_input_files_records_supported_and_p0_warnings(self) -> None:
+    def test_ingest_input_files_records_supported_inputs_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
             root = Path(tmpdir)
             template = root / "template.pptx"
@@ -74,9 +120,49 @@ class PPTProductionTests(unittest.TestCase):
 
         self.assertEqual([entry.role for entry in entries], ["template_pptx", "source_doc", "reference_image", "unknown"])
         self.assertEqual(entries[0].status, "valid")
-        self.assertIn("P0", entries[1].warning)
-        self.assertIn("P0", entries[2].warning)
+        self.assertEqual(entries[1].warning, "")
+        self.assertIn("Reference images", entries[2].warning)
         self.assertEqual(entries[3].status, "unsupported")
+
+    def test_document_loader_extracts_txt_and_docx_sources(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            txt = root / "source.txt"
+            docx = root / "notes.docx"
+            txt.write_text("Executive Summary\nRevenue grew 20% in Q1. Retention improved across enterprise accounts.", encoding="utf-8")
+            _write_minimal_docx(docx, ["Customer expansion pipeline reached 3.2M ARR.", "Sales cycle risk remains concentrated in finance approvals."])
+            entries = ingest_input_files([workspace_relative_path(txt), workspace_relative_path(docx)], turn_index=1)
+            summary = DocumentLoaderService().build_summary(entries)
+
+        self.assertEqual(summary.status, "ready")
+        self.assertEqual(summary.document_count, 2)
+        self.assertGreater(summary.extracted_character_count, 0)
+        self.assertTrue(any("Revenue grew 20%" in fact for fact in summary.salient_facts))
+        self.assertTrue(any("Customer expansion" in fact for fact in summary.salient_facts))
+
+    def test_document_loader_degrades_pdf_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            pdf = root / "source.pdf"
+            pdf.write_bytes(b"%PDF-1.4 fake")
+            entries = ingest_input_files([workspace_relative_path(pdf)], turn_index=1)
+            summary = DocumentLoaderService().build_summary(entries)
+
+        self.assertEqual(summary.status, "unsupported")
+        self.assertTrue(any("PDF extraction" in warning for warning in summary.warnings))
+
+    def test_template_analyzer_extracts_pptx_structure(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            template_path = root / "template.pptx"
+            template_ref = _build_template_pptx(template_path)
+            entries = ingest_input_files([template_ref], turn_index=1)
+            summary = TemplateAnalyzerService().build_summary(entries)
+
+        self.assertEqual(summary.status, "ready")
+        self.assertEqual(summary.slide_count, 2)
+        self.assertGreaterEqual(summary.layout_count, 1)
+        self.assertIn("native PPTX generation remains active", summary.summary)
 
     def test_prompt_catalog_renders_and_rejects_missing_variables(self) -> None:
         self.assertIn("outline_instruction", available_prompt_templates())
@@ -88,7 +174,49 @@ class PPTProductionTests(unittest.TestCase):
         with self.assertRaises(PPTPromptCatalogError):
             render_prompt_template("outline_instruction", {"brief": "Missing fields"})
 
-    def test_manager_native_flow_outline_preview_completion(self) -> None:
+    def test_manager_uses_document_and_template_summaries(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            source = root / "business.md"
+            source.write_text("Revenue grew 20% in Q1. Enterprise retention improved by 6 points.", encoding="utf-8")
+            template_ref = _build_template_pptx(root / "template.pptx")
+
+            state = _adk_state("session_ppt_input_context")
+            manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+            started = asyncio.run(
+                manager.start(
+                    user_prompt="做一份 3 页的 Q1 业务汇报，给高管看。",
+                    input_files=[workspace_relative_path(source), template_ref],
+                    placeholder_assets=False,
+                    render_settings={"target_pages": 3, "style_preset": "business_executive"},
+                    adk_state=state,
+                )
+            )
+
+            document_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="document_summary",
+                    adk_state=state,
+                )
+            )
+            template_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="template_summary",
+                    adk_state=state,
+                )
+            )
+
+        self.assertEqual(started.status, "needs_user_review")
+        self.assertEqual(document_view.view["document_summary"]["status"], "ready")
+        self.assertEqual(template_view.view["template_summary"]["status"], "ready")
+        outline_items = started.review_payload.items
+        outline_bullets = [bullet for item in outline_items for bullet in item["bullet_points"]]
+        self.assertTrue(any("Source fact: Revenue grew 20%" in bullet for bullet in outline_bullets))
+        self.assertTrue(any("Template analyzed" in bullet for bullet in outline_bullets))
+
+    def test_manager_native_flow_deck_spec_preview_completion(self) -> None:
         state = _adk_state("session_ppt_manager_flow")
         manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
 
@@ -106,6 +234,29 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(started.stage, "outline_review")
         self.assertEqual(started.review_payload.review_type, "ppt_outline_review")
         self.assertEqual(state["active_production_capability"], "ppt")
+
+        deck_spec_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(deck_spec_review.status, "needs_user_review")
+        self.assertEqual(deck_spec_review.stage, "deck_spec_review")
+        self.assertEqual(deck_spec_review.review_payload.review_type, "ppt_deck_spec_review")
+        self.assertFalse(any(artifact.name == "final.pptx" for artifact in deck_spec_review.artifacts))
+
+        deck_spec_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="deck_spec",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(deck_spec_view.view["deck_spec"]["status"], "draft")
+        self.assertEqual(len(deck_spec_view.view["deck_spec"]["slides"]), 3)
 
         preview_review = asyncio.run(
             manager.resume(
@@ -133,6 +284,32 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(completed.stage, "completed")
         self.assertTrue(state["final_file_paths"])
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+
+    def test_manager_can_skip_deck_spec_review(self) -> None:
+        state = _adk_state("session_ppt_skip_deck_spec_review")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 2 页的项目更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 2, "deck_spec_review": False},
+                adk_state=state,
+            )
+        )
+
+        preview_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview_review.status, "needs_user_review")
+        self.assertEqual(preview_review.stage, "final_preview_review")
+        self.assertEqual(preview_review.review_payload.review_type, "ppt_final_preview_review")
 
     def test_tool_wrapper_requires_tool_context(self) -> None:
         result = asyncio.run(run_ppt_production(action="start", user_prompt="Build slides"))

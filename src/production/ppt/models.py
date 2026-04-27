@@ -29,6 +29,7 @@ class PPTRenderSettings(BaseModel):
     style_preset: PPTStylePreset = "business_executive"
     pipeline: PPTPipeline = "auto"
     template_edit_mode: str = "auto"
+    deck_spec_review: bool = True
     skip_review: bool = False
 
 
@@ -46,7 +47,7 @@ class IngestEntry(BaseModel):
 
 
 class DocumentSummary(BaseModel):
-    """P0 placeholder for future document-to-outline extraction."""
+    """Extracted source-document context used by PPT planning."""
 
     summary_id: str = Field(default_factory=lambda: new_id("document_summary"))
     source_input_ids: list[str] = Field(default_factory=list)
@@ -54,10 +55,13 @@ class DocumentSummary(BaseModel):
     salient_facts: list[str] = Field(default_factory=list)
     status: Literal["not_started", "unsupported", "ready", "failed"] = "not_started"
     warnings: list[str] = Field(default_factory=list)
+    document_count: int = 0
+    extracted_character_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TemplateSummary(BaseModel):
-    """P0 placeholder for future template analysis and layout mapping."""
+    """Extracted PPT template structure used by PPT planning."""
 
     summary_id: str = Field(default_factory=lambda: new_id("template_summary"))
     template_input_id: str = ""
@@ -65,6 +69,14 @@ class TemplateSummary(BaseModel):
     layout_count: int = 0
     status: Literal["not_started", "unsupported", "ready", "failed"] = "not_started"
     warnings: list[str] = Field(default_factory=list)
+    slide_count: int = 0
+    master_count: int = 0
+    media_count: int = 0
+    theme_count: int = 0
+    detected_fonts: list[str] = Field(default_factory=list)
+    detected_colors: list[str] = Field(default_factory=list)
+    sample_text: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PPTOutlineEntry(BaseModel):
