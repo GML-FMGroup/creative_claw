@@ -28,11 +28,11 @@ def ingest_input_files(input_files: Any, *, turn_index: int) -> list[IngestEntry
         status = "valid"
         if role == "template_pptx":
             if template_seen:
-                warning = "Only the first PPT template is used in P0; this template is recorded but not applied."
+                warning = "Only the first PPT template is analyzed in this iteration; this template is recorded but not applied."
                 status = "unsupported"
             template_seen = True
-        elif role in {"source_doc", "reference_image"}:
-            warning = "This input role is recorded in P0 and will be used by a later implementation phase."
+        elif role == "reference_image":
+            warning = "Reference images are recorded and will be used by a later implementation phase."
         elif role == "unknown":
             warning = "Unsupported input type for PPT production."
             status = "unsupported"
