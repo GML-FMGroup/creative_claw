@@ -30,14 +30,14 @@ User
 - TXT/MD/DOCX 源文档轻量抽取，生成 `DocumentSummary`，并把关键事实注入 outline。
 - PPTX 模板轻量分析，生成 `TemplateSummary`，包括 slide/layout/master/theme/media 等结构信号。
 - `analyze_revision_impact` 只读分析修改影响范围，支持 `target_kind` / `target_id` / `slide_number` 定位。
-- `apply_revision` 在用户确认后应用修改：outline item 修改回到 `outline_review`，deck spec slide 修改回到 `deck_spec_review`，无法确定目标时回到整套 outline review。
+- `apply_revision` 在用户确认后应用修改：outline item 修改回到 `outline_review`，deck spec slide 修改回到 `deck_spec_review`，并把目标页 preview 标记为 stale；无法确定目标时回到整套 outline review。
 - 产物写入 production session 目录，并通过共享 projection 投影最终文件。
 
 当前暂不支持：
 
 - 真实模板编辑和版式映射。
 - PDF 内容抽取和事实引用。
-- 页面级局部重生成。
+- 页面级局部重生成。当前只做到页面级 stale 标记，还不会只重渲染单页。
 - HTML deck。
 - `brief_review` 和页面级 `page_preview_review`。
 
@@ -90,10 +90,13 @@ analyze_revision_impact
 
 目标定位规则：
 
+P1d 页面级 stale 语义：targeted deck slide 修改后，`slide_previews` 不再被整体清空；目标页 preview 会保留路径并变为 `stale`，未受影响页面保持 `generated`，方便用户对比当前页面状态。真正的单页 PPTX/PNG 局部重生成仍是后续能力。
+
+
 - 如果用户说“第 2 页”这类页码，orchestrator 可以传 `slide_number=2`。当 `DeckSpec` 已存在时优先匹配 `deck_slide`；否则匹配 outline entry。
 - 如果已经知道 review payload 里的 item id，优先传 `target_kind="deck_slide"` / `target_kind="outline_entry"` 和对应 `target_id`。
 - `analyze_revision_impact` 返回 `matched_targets`、`unmatched_targets`、`impacted` 和 `stale_items`，不会修改状态。
-- deck slide 级修改只更新对应 `DeckSlide` 的 bullets / speaker notes，清空 previews、final artifact 和 quality report，并暂停回 `deck_spec_review`。
+- deck slide 级修改只更新对应 `DeckSlide` 的 bullets / speaker notes，保留已有 preview 记录，把目标页 preview 标记为 `stale`，清空 final artifact 和 quality report，并暂停回 `deck_spec_review`。
 - outline entry 级修改只更新对应 `PPTOutlineEntry`，清空 deck spec、previews、final artifact 和 quality report，并暂停回 `outline_review`。
 - 未指定目标或目标不够明确时，沿用安全 fallback：把 revision notes 追加到 brief，重建 outline，并清空所有下游产物。
 

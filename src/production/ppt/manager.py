@@ -31,6 +31,7 @@ from src.production.ppt.models import (
     PPTOutline,
     PPTOutlineEntry,
     PPTProductionState,
+    SlidePreview,
     TemplateSummary,
 )
 from src.production.ppt.preview_renderer import PreviewRendererService
@@ -558,11 +559,11 @@ class PPTProductionManager:
                 _append_revision_to_deck_slide(slide, notes)
         if state.deck_spec is not None:
             state.deck_spec.status = "draft"
-        state.slide_previews = []
+        _mark_target_previews_stale(state, target_ids)
         state.final_artifact = None
         state.quality_report = None
-        state.artifacts = []
-        state.stale_items = impact_view.get("stale_items") or ["slide_previews", "final", "quality"]
+        state.artifacts = _artifact_refs(state)
+        state.stale_items = impact_view.get("stale_items") or [f"slide_preview:{target_id}" for target_id in sorted(target_ids)] + ["final", "quality"]
         state.revision_history.append({"notes": notes, "user_response": user_response, "matched_targets": matched_targets})
         state.status = "needs_user_review"
         state.stage = "deck_spec_review"
@@ -932,6 +933,16 @@ def _revision_bullet(notes: str) -> str:
     return f"Revision note: {cleaned or 'Update requested.'}"
 
 
+def _mark_target_previews_stale(state: PPTProductionState, target_ids: set[str]) -> None:
+    for preview in state.slide_previews:
+        if preview.slide_id in target_ids:
+            preview.status = "stale"
+
+
+def _preview_by_slide_id(state: PPTProductionState) -> dict[str, SlidePreview]:
+    return {preview.slide_id: preview for preview in state.slide_previews}
+
+
 def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
     return bool(state.render_settings.deck_spec_review and not state.render_settings.skip_review)
 
@@ -1056,20 +1067,21 @@ def _artifact_refs(state: PPTProductionState) -> list[WorkspaceFileRef]:
         WorkspaceFileRef(
             name=Path(preview.preview_path).name,
             path=preview.preview_path,
-            description=f"Preview image for slide {preview.sequence_index}.",
+            description=f"{preview.status.title()} preview image for slide {preview.sequence_index}.",
             source="ppt",
         )
         for preview in state.slide_previews
     )
-    root = state.production_session.root_dir
-    artifacts.append(
-        WorkspaceFileRef(
-            name="quality_report.md",
-            path=f"{root}/quality_report.md",
-            description="Deterministic PPT quality report.",
-            source="ppt",
+    if state.quality_report is not None:
+        root = state.production_session.root_dir
+        artifacts.append(
+            WorkspaceFileRef(
+                name="quality_report.md",
+                path=f"{root}/quality_report.md",
+                description="Deterministic PPT quality report.",
+                source="ppt",
+            )
         )
-    )
     return artifacts
 
 
@@ -1104,19 +1116,25 @@ def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
 def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
     deck_spec = state.deck_spec
     items = []
+    preview_by_slide_id = _preview_by_slide_id(state)
     if deck_spec is not None:
-        items = [
-            {
-                "id": slide.slide_id,
-                "sequence_index": slide.sequence_index,
-                "title": slide.title,
-                "layout_type": slide.layout_type,
-                "bullets": slide.bullets,
-                "visual_notes": slide.visual_notes,
-                "speaker_notes": slide.speaker_notes,
-            }
-            for slide in deck_spec.slides
-        ]
+        items = []
+        for slide in deck_spec.slides:
+            preview = preview_by_slide_id.get(slide.slide_id)
+            items.append(
+                {
+                    "id": slide.slide_id,
+                    "sequence_index": slide.sequence_index,
+                    "title": slide.title,
+                    "layout_type": slide.layout_type,
+                    "bullets": slide.bullets,
+                    "visual_notes": slide.visual_notes,
+                    "speaker_notes": slide.speaker_notes,
+                    "status": slide.status,
+                    "preview_status": preview.status if preview is not None else "",
+                    "preview_path": preview.preview_path if preview is not None else "",
+                }
+            )
     return ReviewPayload(
         review_type="ppt_deck_spec_review",
         title="Review PPT Deck Spec",
@@ -1156,6 +1174,7 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
                     "outline_slides": len(state.outline.entries) if state.outline is not None else 0,
                     "deck_spec_slides": len(state.deck_spec.slides) if state.deck_spec is not None else 0,
                     "previews": len(state.slide_previews),
+                    "stale_previews": len([item for item in state.slide_previews if item.status == "stale"]),
                     "artifacts": len(state.artifacts),
                     "events": len(state.production_events),
                 },
@@ -1208,6 +1227,7 @@ def _base_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
         "progress_percent": state.progress_percent,
         "state_ref": f"{state.production_session.root_dir}/state.json",
         "project_root": state.production_session.root_dir,
+        "stale_items": state.stale_items,
     }
 
 
