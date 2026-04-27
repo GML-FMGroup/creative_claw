@@ -55,6 +55,48 @@
           "rubric_content": {
             "text_property": "When the user asks for short-video quality, QC, validation, checks, issues, or whether the current/final short video meets requirements, the agent uses run_short_video_production with action view and view_type quality instead of making up a quality report from memory."
           }
+        },
+        {
+          "rubric_id": "design_uses_production_tool",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for durable HTML-centered design production such as a landing page, UI mockup, product detail page, microsite, one-pager, prototype, or wireframe, the agent uses the run_design_production tool instead of manually chaining image, file, browser, or one-shot expert tools."
+          }
+        },
+        {
+          "rubric_id": "design_review_before_html_generation",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user starts non-placeholder Design production, the agent should route through design_direction_review before HTML generation, then pause at preview_review after HTML validation, browser preview, and QC instead of pretending the final design is complete immediately."
+          }
+        },
+        {
+          "rubric_id": "design_view_for_preview_or_quality",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for current Design preview, quality, QC, validation, issues, artifacts, events, brief, design system, or layout, the agent uses run_design_production with a read-only view action and the appropriate view_type instead of reconstructing state from memory."
+          }
+        },
+        {
+          "rubric_id": "design_impact_before_targeted_revision",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks what would be affected by a targeted Design change such as changing the hero, layout, color system, product image, CTA, or mobile spacing, the agent uses run_design_production with analyze_revision_impact before applying the change."
+          }
+        },
+        {
+          "rubric_id": "design_apply_revision_after_confirmation",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user explicitly confirms applying a Design revision, the agent uses run_design_production with apply_revision or resume decision=revise, returns to preview_review after rebuilding/rechecking the HTML, and does not call raw HTML, image, or browser tools as the primary production path."
+          }
+        },
+        {
+          "rubric_id": "design_boundary_for_non_html_outputs",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for an editable PPT deck or a standalone poster/image output rather than an HTML-centered design artifact, the agent should not route the request to run_design_production; it should use the appropriate PPT or image workflow."
+          }
         }
       ]
     }
