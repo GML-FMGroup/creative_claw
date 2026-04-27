@@ -286,6 +286,8 @@ class PPTProductionManager:
                 complete=False,
                 message_prefix="Deck spec approved.",
             )
+        if state.active_breakpoint.stage == "page_preview_review":
+            return self._approve_page_preview_and_pause(state, adk_state=adk_state)
         if state.active_breakpoint.stage == "final_preview_review":
             state.status = "completed"
             state.stage = "completed"
@@ -471,17 +473,17 @@ class PPTProductionManager:
                 ["final", "quality"],
             )
             state.status = "needs_user_review"
-            state.stage = "deck_spec_review"
+            state.stage = "page_preview_review"
             state.progress_percent = max(state.progress_percent, 76)
             state.active_breakpoint = ProductionBreakpoint(
                 stage=state.stage,
-                review_payload=_deck_spec_review_payload(state),
+                review_payload=_page_preview_review_payload(state, regenerated_ids),
             )
             state.production_events.append(
                 ProductionEvent(
-                    event_type="ppt_stale_slide_segments_regenerated",
+                    event_type="page_preview_review_required",
                     stage=state.stage,
-                    message="Regenerated stale PPT slide segment artifacts and preview images.",
+                    message="Regenerated stale PPT slide segment artifacts and paused for page preview review.",
                     metadata={"slide_ids": regenerated_ids, "remaining_stale_items": state.stale_items},
                 )
             )
@@ -490,7 +492,7 @@ class PPTProductionManager:
             self.store.project_pointer_to_adk_state(adk_state, state)
             return self._result_from_state(
                 state,
-                message=f"Regenerated {len(regenerated_ids)} stale PPT slide preview/segment artifact(s). Please review the updated deck spec.",
+                message=f"Regenerated {len(regenerated_ids)} stale PPT slide preview/segment artifact(s). Please review the refreshed page preview.",
             )
         except Exception as exc:
             state.status = "failed"
@@ -512,6 +514,35 @@ class PPTProductionManager:
                     message=f"{type(exc).__name__}: {exc}",
                 ),
             )
+
+    def _approve_page_preview_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
+        review_payload = state.active_breakpoint.review_payload if state.active_breakpoint else None
+        reviewed_slide_ids = _review_payload_slide_ids(review_payload)
+        _approve_page_previews(state, reviewed_slide_ids)
+        state.stale_items = _remove_deck_slide_stale_items(state.stale_items, reviewed_slide_ids)
+        state.artifacts = _artifact_refs(state)
+        state.status = "needs_user_review"
+        state.stage = "deck_spec_review"
+        state.progress_percent = max(state.progress_percent, 78)
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_deck_spec_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_page_preview_approved",
+                stage=state.stage,
+                message="User approved regenerated PPT page previews; returned to deck spec review before final rebuild.",
+                metadata={"slide_ids": sorted(reviewed_slide_ids), "remaining_stale_items": state.stale_items},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Regenerated PPT page preview was approved. Approve the deck spec to rebuild the full final PPTX.",
+        )
 
     def _regenerate_slide_segment_previews(
         self,
@@ -1148,12 +1179,41 @@ def _remove_slide_preview_stale_items(stale_items: list[str], regenerated_slide_
     return [item for item in stale_items if item not in stale_preview_markers]
 
 
+def _remove_deck_slide_stale_items(stale_items: list[str], approved_slide_ids: set[str]) -> list[str]:
+    stale_deck_slide_markers = {f"deck_slide:{slide_id}" for slide_id in approved_slide_ids}
+    return [item for item in stale_items if item not in stale_deck_slide_markers]
+
+
 def _ensure_stale_items(stale_items: list[str], required_items: list[str]) -> list[str]:
     merged = list(stale_items)
     for item in required_items:
         if item not in merged:
             merged.append(item)
     return merged
+
+
+def _review_payload_slide_ids(payload: ReviewPayload | None) -> set[str]:
+    if payload is None:
+        return set()
+    slide_ids: set[str] = set()
+    for item in payload.items:
+        slide_id = str(item.get("slide_id") or item.get("id") or "").strip()
+        if slide_id:
+            slide_ids.add(slide_id)
+    return slide_ids
+
+
+def _approve_page_previews(state: PPTProductionState, slide_ids: set[str]) -> None:
+    for preview in state.slide_previews:
+        if preview.slide_id in slide_ids:
+            preview.status = "approved"
+    if state.deck_spec is None:
+        return
+    for slide in state.deck_spec.slides:
+        if slide.slide_id in slide_ids:
+            slide.status = "approved"
+    if state.deck_spec.slides and all(slide.status == "approved" for slide in state.deck_spec.slides):
+        state.deck_spec.status = "approved"
 
 
 def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
@@ -1371,6 +1431,29 @@ def _final_preview_review_payload(state: PPTProductionState) -> ReviewPayload:
         options=[
             {"decision": "approve", "label": "Approve final PPTX"},
             {"decision": "revise", "label": "Revise deck", "requires_notes": True},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
+
+
+def _page_preview_review_payload(state: PPTProductionState, slide_ids: list[str]) -> ReviewPayload:
+    selected_ids = set(slide_ids)
+    items = [
+        preview.model_dump(mode="json")
+        for preview in state.slide_previews
+        if preview.slide_id in selected_ids
+    ]
+    return ReviewPayload(
+        review_type="ppt_page_preview_review",
+        title="Review Regenerated PPT Page Preview",
+        summary=(
+            "Approve these regenerated page previews to return to deck spec review. "
+            "The full final PPTX and quality report remain stale until the deck spec is approved and rebuilt."
+        ),
+        items=items,
+        options=[
+            {"decision": "approve", "label": "Approve regenerated pages and review deck spec"},
+            {"decision": "revise", "label": "Revise regenerated page", "requires_notes": True},
             {"decision": "cancel", "label": "Cancel production"},
         ],
     )

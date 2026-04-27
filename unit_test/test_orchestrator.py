@@ -130,6 +130,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("PPT production", instruction)
         self.assertIn("outline_review", instruction)
         self.assertIn("deck_spec_review", instruction)
+        self.assertIn("page_preview_review", instruction)
         self.assertIn("slide_number", instruction)
         self.assertIn("target_kind", instruction)
         self.assertIn("target_id", instruction)
