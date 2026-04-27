@@ -23,6 +23,7 @@ from src.production.design.models import (
     PreviewReport,
 )
 from src.production.design.expert_runtime import DesignExpertRuntime
+from src.production.design.handoff import write_handoff_exports
 from src.production.design.placeholders import PlaceholderHtmlBuilder
 from src.production.design.quality import build_quality_report, quality_report_markdown
 from src.production.design.tools.asset_ingestor import AssetIngestor
@@ -273,6 +274,8 @@ class DesignProductionManager:
         for artifact in state.html_artifacts:
             artifact.status = "stale"
             artifact.stale_reason = "Reference assets changed."
+        state.artifacts = []
+        state.export_artifacts = []
         state.production_events.append(
             ProductionEvent(
                 event_type="reference_assets_added",
@@ -514,6 +517,7 @@ class DesignProductionManager:
                 artifact.status = "stale"
                 artifact.stale_reason = stale_reason
         state.artifacts = []
+        state.export_artifacts = []
         state.status = "running"
         state.stage = "revision_applying"
         state.progress_percent = max(state.progress_percent, 70)
@@ -823,6 +827,7 @@ class DesignProductionManager:
 
     def _finalize_artifacts(self, state: DesignProductionState) -> None:
         final_artifacts: list[WorkspaceFileRef] = []
+        session_root = self.store.session_root(state.production_session)
         latest_html = state.html_artifacts[-1] if state.html_artifacts else None
         if latest_html is not None:
             final_artifacts.append(
@@ -845,6 +850,7 @@ class DesignProductionManager:
                 )
         qc_path = f"{state.production_session.root_dir}/reports/qc_report.md"
         if state.qc_reports:
+            state.qc_reports[-1].report_path = qc_path
             final_artifacts.append(
                 WorkspaceFileRef(
                     name="qc_report.md",
@@ -853,6 +859,12 @@ class DesignProductionManager:
                     source=self.capability,
                 )
             )
+        state.export_artifacts = write_handoff_exports(
+            state=state,
+            session_root=session_root,
+            core_artifacts=final_artifacts,
+        )
+        final_artifacts.extend(state.export_artifacts)
         state.artifacts = final_artifacts
 
     def _result_from_state(
@@ -926,7 +938,7 @@ class DesignProductionManager:
 
 
 def _ensure_design_dirs(session_root: Path) -> None:
-    for child_name in ("artifacts", "previews", "reports"):
+    for child_name in ("artifacts", "previews", "reports", "exports"):
         (session_root / child_name).mkdir(parents=True, exist_ok=True)
 
 

@@ -251,6 +251,9 @@ class DesignProductionTests(unittest.TestCase):
         html_paths = [path for path in artifact_paths if path.endswith(".html")]
         self.assertEqual(len(html_paths), 1)
         self.assertTrue(resolve_workspace_path(html_paths[0]).exists())
+        artifact_names = {artifact.name for artifact in result.artifacts}
+        self.assertIn("design_spec.md", artifact_names)
+        self.assertIn("handoff_manifest.json", artifact_names)
         self.assertEqual(state["active_production_capability"], "design")
         self.assertEqual(state["active_production_status"], "completed")
         self.assertIn(html_paths[0], state["final_file_paths"])
@@ -260,6 +263,13 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(len(payload["html_artifacts"]), 1)
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
+        export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
+        self.assertEqual(len(export_paths), 2)
+        self.assertTrue(any(path.endswith("exports/design_spec.md") for path in export_paths))
+        manifest_path = next(path for path in export_paths if path.endswith("exports/handoff_manifest.json"))
+        manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["latest_html_path"], html_paths[0])
+        self.assertEqual(manifest["quality_status"], "pass")
 
     def test_manager_start_real_path_returns_design_direction_review(self) -> None:
         state = _adk_state("session_design_direction_review")
@@ -329,6 +339,11 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.stage, "completed")
         self.assertIn(html_path, state["final_file_paths"])
+        completed_names = {artifact.name for artifact in completed.artifacts}
+        self.assertIn("design_spec.md", completed_names)
+        self.assertIn("handoff_manifest.json", completed_names)
+        completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(completed_payload["export_artifacts"]), 2)
 
     def test_manager_expert_quality_failure_becomes_warning(self) -> None:
         state = _adk_state("session_design_expert_qc_fallback")
@@ -564,6 +579,34 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["view"]["view_type"], "overview")
         self.assertEqual(result["view"]["design_genre"], "landing_page")
+
+    def test_manager_artifacts_view_includes_handoff_exports(self) -> None:
+        state = _adk_state("session_design_artifacts_view")
+        manager = DesignProductionManager(preview_renderer=_FakePreviewRenderer())
+        completed = asyncio.run(
+            manager.start(
+                user_prompt="Design a landing page",
+                input_files=[],
+                placeholder_design=True,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        result = asyncio.run(
+            manager.view(
+                production_session_id=completed.production_session_id,
+                view_type="artifacts",
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.view["view_type"], "artifacts")
+        export_names = {artifact["name"] for artifact in result.view["export_artifacts"]}
+        self.assertEqual(export_names, {"design_spec.md", "handoff_manifest.json"})
+        final_names = {artifact["name"] for artifact in result.view["artifacts"]}
+        self.assertTrue(export_names.issubset(final_names))
 
     def test_design_prompt_catalog_renders_packaged_templates(self) -> None:
         self.assertIn("html_builder_expert", available_prompt_templates())

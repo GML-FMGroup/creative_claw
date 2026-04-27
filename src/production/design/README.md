@@ -29,6 +29,10 @@ At `preview_review`, a `decision=revise` response now runs revision impact analy
 
 Expert and revision HTML builds now run supplemental `DesignQCExpert` assessment after validator and preview facts are available. Deterministic validator and preview checks remain the hard fact source; expert findings are merged as informational or warning-level guidance, and expert QC failure records a warning instead of failing production.
 
+## P0b-E Lightweight Handoff
+
+When a Design production run reaches final approval, the manager now writes deterministic handoff exports under `exports/`: `design_spec.md` for human review and `handoff_manifest.json` for machine-readable downstream use. These files are derived from `DesignProductionState`, recorded in `export_artifacts`, and projected with the final HTML, preview screenshots, and QC report. P0b-E does not generate PDF, ZIP, Figma, or production-code handoff outputs.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -36,6 +40,7 @@ Expert and revision HTML builds now run supplemental `DesignQCExpert` assessment
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, and QC report models.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
+- `handoff.py`: deterministic Design spec and handoff manifest exports for completed production runs.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
 - `quality.py`: deterministic P0 quality report generation and supplemental expert finding merge.
 - `impact.py`: read-only P0 revision impact analysis.
