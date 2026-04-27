@@ -123,6 +123,27 @@ class PPTProductionManager:
             )
         )
         try:
+            if _should_pause_for_brief_review(state, placeholder_assets=placeholder_assets):
+                state.status = "needs_user_review"
+                state.stage = "brief_review"
+                state.progress_percent = 10
+                state.active_breakpoint = ProductionBreakpoint(
+                    stage=state.stage,
+                    review_payload=_brief_review_payload(state),
+                )
+                state.production_events.append(
+                    ProductionEvent(
+                        event_type="brief_review_required",
+                        stage=state.stage,
+                        message="Prepared a PPT brief review before outline planning.",
+                        metadata={"input_count": len(state.inputs), "target_pages": settings.target_pages},
+                    )
+                )
+                self._save_projection_files(state)
+                self.store.save_state(state)
+                self.store.project_pointer_to_adk_state(adk_state, state)
+                return self._result_from_state(state, message="Please review the PPT brief before outline generation.")
+
             state.outline = _build_outline(
                 brief=state.brief_summary,
                 settings=settings,
@@ -264,6 +285,37 @@ class PPTProductionManager:
             self.store.save_state(state)
             self.store.project_pointer_to_adk_state(adk_state, state)
             return self._result_from_state(state, message="Please respond with decision=approve, revise, or cancel.")
+
+        if state.active_breakpoint.stage == "brief_review":
+            state.active_breakpoint = None
+            state.outline = _build_outline(
+                brief=state.brief_summary,
+                settings=state.render_settings,
+                inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
+            )
+            state.stage = "outline_planning"
+            state.progress_percent = max(state.progress_percent, 15)
+            state.status = "needs_user_review"
+            state.stage = "outline_review"
+            state.progress_percent = max(state.progress_percent, 20)
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_outline_review_payload(state),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="outline_review_required",
+                    stage=state.stage,
+                    message="Approved PPT brief and prepared a PPT outline before PPTX generation.",
+                    metadata={"outline_id": state.outline.outline_id, "slide_count": len(state.outline.entries)},
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(state, message="PPT brief approved. Please review the generated outline.")
 
         if state.active_breakpoint.stage == "outline_review":
             if state.outline is not None:
@@ -642,6 +694,8 @@ class PPTProductionManager:
     def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         notes = _revision_notes_from_response(user_response)
         if notes:
+            if state.active_breakpoint is not None and state.active_breakpoint.stage == "brief_review":
+                return self._apply_brief_revision_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
             scoped_response = _scope_page_preview_revision_response(state, user_response)
             impact_view = build_revision_impact_view(state, scoped_response)
             return self._apply_revision_by_impact(state, notes=notes, user_response=scoped_response, impact_view=impact_view, adk_state=adk_state)
@@ -655,6 +709,34 @@ class PPTProductionManager:
         )
         self.store.save_state(state)
         return self._result_from_state(state, message="Please provide revision notes for the PPT review.")
+
+    def _apply_brief_revision_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+        """Apply pre-outline brief revision notes and remain at brief review."""
+        state.brief_summary = _append_revision_note(state.brief_summary, notes)
+        state.outline = None
+        state.deck_spec = None
+        state.slide_previews = []
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = []
+        state.stale_items = ["brief", "outline", "deck_spec", "slide_previews", "final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "stage": "brief_review"})
+        state.status = "needs_user_review"
+        state.stage = "brief_review"
+        state.progress_percent = max(10, min(state.progress_percent, 19))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_brief_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_brief_revision_applied",
+                stage=state.stage,
+                message="Applied PPT brief revision notes and remained at brief review.",
+                metadata={"user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT brief revision was applied. Please review the updated brief.")
 
     def _apply_revision_by_impact(
         self,
@@ -1010,6 +1092,7 @@ def _normalize_render_settings(payload: dict[str, Any]) -> PPTRenderSettings:
         style_preset=style,  # type: ignore[arg-type]
         pipeline=pipeline,  # type: ignore[arg-type]
         template_edit_mode=str(payload.get("template_edit_mode", "auto") or "auto").strip() or "auto",
+        brief_review=bool(payload.get("brief_review", False)),
         deck_spec_review=bool(payload.get("deck_spec_review", True)),
         skip_review=bool(payload.get("skip_review", False)),
     )
@@ -1267,6 +1350,10 @@ def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
     return bool(state.render_settings.deck_spec_review and not state.render_settings.skip_review)
 
 
+def _should_pause_for_brief_review(state: PPTProductionState, *, placeholder_assets: bool) -> bool:
+    return bool(state.render_settings.brief_review and not state.render_settings.skip_review and not placeholder_assets)
+
+
 def _approve_deck_spec(deck_spec: DeckSpec | None) -> None:
     if deck_spec is None:
         return
@@ -1431,6 +1518,55 @@ def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
             {"decision": "cancel", "label": "Cancel production"},
         ],
     )
+
+
+def _brief_review_payload(state: PPTProductionState) -> ReviewPayload:
+    settings = state.render_settings
+    return ReviewPayload(
+        review_type="ppt_brief_review",
+        title="Review PPT Brief",
+        summary="Approve this brief to generate a PPT outline, or revise the direction before planning.",
+        items=[
+            {
+                "id": "ppt_brief",
+                "brief_summary": state.brief_summary,
+                "target_pages": settings.target_pages,
+                "aspect_ratio": settings.aspect_ratio,
+                "style_preset": settings.style_preset,
+                "pipeline": settings.pipeline,
+                "template_edit_mode": settings.template_edit_mode,
+                "input_count": len(state.inputs),
+                "inputs": [
+                    {
+                        "id": item.input_id,
+                        "name": item.name,
+                        "role": item.role,
+                        "status": item.status,
+                        "warning": item.warning,
+                    }
+                    for item in state.inputs
+                ],
+                "document_summary": _review_summary_state(state.document_summary),
+                "template_summary": _review_summary_state(state.template_summary),
+                "warnings": state.warnings,
+            }
+        ],
+        options=[
+            {"decision": "approve", "label": "Approve brief and generate outline"},
+            {"decision": "revise", "label": "Revise brief", "requires_notes": True},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
+
+
+def _review_summary_state(summary: DocumentSummary | TemplateSummary | None) -> dict[str, Any] | None:
+    if summary is None:
+        return None
+    return {
+        "status": summary.status,
+        "summary": summary.summary,
+        "warnings": summary.warnings,
+    }
 
 
 def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
