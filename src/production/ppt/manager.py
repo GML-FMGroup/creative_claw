@@ -381,10 +381,11 @@ class PPTProductionManager:
         if isinstance(state_or_result, ProductionRunResult):
             return state_or_result
         state = state_or_result
+        response = _scope_page_preview_revision_response(state, normalize_user_response(user_response))
         return self._result_from_state(
             state,
             message="Loaded PPT revision impact analysis. No production state was changed.",
-            view=build_revision_impact_view(state, user_response),
+            view=build_revision_impact_view(state, response),
         )
 
     async def apply_revision(
@@ -399,7 +400,7 @@ class PPTProductionManager:
         if isinstance(state_or_result, ProductionRunResult):
             return state_or_result
         state = state_or_result
-        response = normalize_user_response(user_response)
+        response = _scope_page_preview_revision_response(state, normalize_user_response(user_response))
         notes = _revision_notes_from_response(response)
         impact_view = build_revision_impact_view(state, response)
         if not notes:
