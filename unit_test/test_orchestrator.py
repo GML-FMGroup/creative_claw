@@ -134,6 +134,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("target_kind", instruction)
         self.assertIn("target_id", instruction)
         self.assertIn("final_preview_review", instruction)
+        self.assertIn('action="regenerate_stale_segments"', instruction)
         self.assertIn("P1e gated shot-segment review", instruction)
         self.assertIn("view_type=\"quality\"", instruction)
         self.assertIn("storyboard_review", instruction)
