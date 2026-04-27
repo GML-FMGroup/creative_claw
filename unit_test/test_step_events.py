@@ -92,6 +92,42 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Status: started", self.messages[0].text)
         self.assertIn("stage=asset_plan_review", self.messages[1].text)
 
+    async def test_plugin_publishes_ppt_production_progress(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-ppt")
+        tool = SimpleNamespace(name="run_ppt_production")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-ppt",
+            session=SimpleNamespace(id="session-ppt", state={"turn_index": 4}),
+        )
+
+        with route_context("web", "chat-ppt"):
+            await plugin.before_run_callback(invocation_context=invocation)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_ppt": True},
+                tool_context=tool_context,
+            )
+            await plugin.after_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_ppt": True},
+                tool_context=tool_context,
+                result={
+                    "status": "needs_user_review",
+                    "capability": "ppt",
+                    "stage": "outline_review",
+                    "progress_percent": 30,
+                    "message": "Please review the PPT outline.",
+                },
+            )
+            await plugin.after_run_callback(invocation_context=invocation)
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertEqual(self.messages[0].metadata["stage"], "ppt_processing")
+        self.assertEqual(self.messages[0].metadata["stage_title"], "run_ppt_production")
+        self.assertIn("Status: started", self.messages[0].text)
+        self.assertIn("ppt status=needs_user_review", self.messages[1].text)
+
     async def test_plugin_publishes_design_production_progress(self) -> None:
         plugin = CreativeClawStepEventPlugin()
         invocation = SimpleNamespace(invocation_id="inv-design")

@@ -12,6 +12,7 @@ include = [
     "conf/jsons/*.json",
     "playbooks/design/*.md",
     "skills/**/*",
+    "src/production/design/prompts/*.md",
     "src/production/short_video/prompts/*.md",
     "src/production/ppt/prompts/*.md",
     "src/webchat/static/**/*",

@@ -39,7 +39,7 @@ class ProductionSessionIsolationTests(unittest.TestCase):
             run_design_production(
                 action="start",
                 user_prompt="Design a product detail page",
-                placeholder_design=False,
+                placeholder_design=True,
                 tool_context=tool_context,
             )
         )
@@ -54,7 +54,7 @@ class ProductionSessionIsolationTests(unittest.TestCase):
         )
 
         self.assertEqual(ppt_started["status"], "needs_user_review")
-        self.assertEqual(design_started["status"], "needs_user_review")
+        self.assertEqual(design_started["status"], "completed")
         self.assertEqual(short_video_started["status"], "needs_user_review")
         self.assertEqual(state["active_production_session_id"], short_video_started["production_session_id"])
 
