@@ -469,10 +469,11 @@ class PPTProductionTests(unittest.TestCase):
         )
         payload = _load_state_payload(regenerated)
         previews = {preview["slide_id"]: preview for preview in payload["slide_previews"]}
-        review_items = {item["id"]: item for item in regenerated.review_payload.items}
 
         self.assertEqual(regenerated.status, "needs_user_review")
-        self.assertEqual(regenerated.stage, "deck_spec_review")
+        self.assertEqual(regenerated.stage, "page_preview_review")
+        self.assertEqual(regenerated.review_payload.review_type, "ppt_page_preview_review")
+        self.assertEqual([item["slide_id"] for item in regenerated.review_payload.items], [target_slide_id])
         self.assertEqual(previews[target_slide_id]["status"], "generated")
         self.assertEqual(previews[untouched_slide_id]["status"], "generated")
         self.assertTrue((workspace_root() / previews[target_slide_id]["preview_path"]).is_file())
@@ -485,8 +486,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertIn(f"deck_slide:{target_slide_id}", payload["stale_items"])
         self.assertIn("final", payload["stale_items"])
         self.assertIn("quality", payload["stale_items"])
-        self.assertEqual(review_items[target_slide_id]["preview_status"], "generated")
-        self.assertTrue(review_items[target_slide_id]["segment_path"].endswith(".pptx"))
+        self.assertTrue(regenerated.review_payload.items[0]["segment_path"].endswith(".pptx"))
         self.assertFalse(any(artifact["name"] == "final.pptx" for artifact in payload["artifacts"]))
 
         overview = asyncio.run(
@@ -497,6 +497,38 @@ class PPTProductionTests(unittest.TestCase):
             )
         )
         self.assertEqual(overview.view["counts"]["stale_previews"], 0)
+
+        page_approved = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        approved_payload = _load_state_payload(page_approved)
+        approved_previews = {preview["slide_id"]: preview for preview in approved_payload["slide_previews"]}
+        approved_review_items = {item["id"]: item for item in page_approved.review_payload.items}
+
+        self.assertEqual(page_approved.stage, "deck_spec_review")
+        self.assertEqual(page_approved.review_payload.review_type, "ppt_deck_spec_review")
+        self.assertEqual(approved_previews[target_slide_id]["status"], "approved")
+        self.assertNotIn(f"deck_slide:{target_slide_id}", approved_payload["stale_items"])
+        self.assertIn("final", approved_payload["stale_items"])
+        self.assertIn("quality", approved_payload["stale_items"])
+        self.assertEqual(approved_review_items[target_slide_id]["preview_status"], "approved")
+        self.assertTrue(any("Approved preview" in artifact["description"] for artifact in approved_payload["artifacts"]))
+
+        rebuilt = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(rebuilt.stage, "final_preview_review")
+        self.assertTrue(any(artifact.name == "final.pptx" for artifact in rebuilt.artifacts))
+        self.assertEqual(_load_state_payload(rebuilt)["stale_items"], [])
 
     def test_apply_revision_updates_targeted_outline_entry(self) -> None:
         state = _adk_state("session_ppt_revision_outline_entry")
