@@ -216,7 +216,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any("Source fact: Revenue grew 20%" in bullet for bullet in outline_bullets))
         self.assertTrue(any("Template analyzed" in bullet for bullet in outline_bullets))
 
-    def test_manager_native_flow_outline_preview_completion(self) -> None:
+    def test_manager_native_flow_deck_spec_preview_completion(self) -> None:
         state = _adk_state("session_ppt_manager_flow")
         manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
 
@@ -234,6 +234,29 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(started.stage, "outline_review")
         self.assertEqual(started.review_payload.review_type, "ppt_outline_review")
         self.assertEqual(state["active_production_capability"], "ppt")
+
+        deck_spec_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(deck_spec_review.status, "needs_user_review")
+        self.assertEqual(deck_spec_review.stage, "deck_spec_review")
+        self.assertEqual(deck_spec_review.review_payload.review_type, "ppt_deck_spec_review")
+        self.assertFalse(any(artifact.name == "final.pptx" for artifact in deck_spec_review.artifacts))
+
+        deck_spec_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="deck_spec",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(deck_spec_view.view["deck_spec"]["status"], "draft")
+        self.assertEqual(len(deck_spec_view.view["deck_spec"]["slides"]), 3)
 
         preview_review = asyncio.run(
             manager.resume(
@@ -261,6 +284,32 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(completed.stage, "completed")
         self.assertTrue(state["final_file_paths"])
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+
+    def test_manager_can_skip_deck_spec_review(self) -> None:
+        state = _adk_state("session_ppt_skip_deck_spec_review")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 2 页的项目更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 2, "deck_spec_review": False},
+                adk_state=state,
+            )
+        )
+
+        preview_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview_review.status, "needs_user_review")
+        self.assertEqual(preview_review.stage, "final_preview_review")
+        self.assertEqual(preview_review.review_payload.review_type, "ppt_final_preview_review")
 
     def test_tool_wrapper_requires_tool_context(self) -> None:
         result = asyncio.run(run_ppt_production(action="start", user_prompt="Build slides"))
