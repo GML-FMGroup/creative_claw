@@ -24,7 +24,7 @@ User
 - 纯文本 brief 生成原生可编辑 `.pptx`。
 - `outline_review`：审阅页数、每页标题、purpose、layout 和 bullet。
 - `deck_spec_review`：生成 PPTX 前审阅每页可执行内容，包括标题、正文、layout、visual notes 和 speaker notes。
-- `final_preview_review`：生成后审阅 preview PNG 和质量报告。
+- `final_preview_review`：生成后审阅 preview PNG、每页可编辑 PPTX segment 和质量报告。
 - `status` / `view` 查询当前状态、中间结果、事件和产物。
 - `add_inputs` 追加 PPT 模板、源文档和参考图，并回到 outline review。
 - TXT/MD/DOCX 源文档轻量抽取，生成 `DocumentSummary`，并把关键事实注入 outline。
@@ -90,7 +90,7 @@ analyze_revision_impact
 
 目标定位规则：
 
-P1d 页面级 stale 语义：targeted deck slide 修改后，`slide_previews` 不再被整体清空；目标页 preview 会保留路径并变为 `stale`，未受影响页面保持 `generated`，方便用户对比当前页面状态。真正的单页 PPTX/PNG 局部重生成仍是后续能力。
+P1d/P1e 页面级 stale 语义：targeted deck slide 修改后，`slide_previews` 不再被整体清空；目标页 preview 会保留路径并变为 `stale`，未受影响页面保持 `generated`。每条 preview 还会带 `segment_path`，指向对应单页可编辑 `.pptx` segment，方便后续做页面级重生成和替换。真正的单页回写到最终 PPTX 仍是后续能力。
 
 
 - 如果用户说“第 2 页”这类页码，orchestrator 可以传 `slide_number=2`。当 `DeckSpec` 已存在时优先匹配 `deck_slide`；否则匹配 outline entry。
@@ -144,6 +144,8 @@ generated/{adk_session_id}/production/{ppt_session_id}/
   preview/
     index.json
     slide-01.png
+  segments/
+    slide-01.pptx
   final/
     final.pptx
   quality_report.md
@@ -151,6 +153,8 @@ generated/{adk_session_id}/production/{ppt_session_id}/
 ```
 
 `state.json` 是事实源；Markdown/JSON 视图和 preview 是投影。
+
+P1e segment 产物是中间产物：`SlidePreview.segment_path` 会记录每页单独的可编辑 `.pptx`，但它们不会作为最终交付文件写入 `final_file_paths`。用户需要检查页面级状态时，通过 `view_type="previews"` 查看。
 
 ## 环境与降级
 

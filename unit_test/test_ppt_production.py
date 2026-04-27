@@ -279,6 +279,15 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any(artifact.name == "final.pptx" for artifact in preview_review.artifacts))
         final_artifact = next(artifact for artifact in preview_review.artifacts if artifact.name == "final.pptx")
         self.assertTrue((workspace_root() / final_artifact.path).is_file())
+        segment_paths = [item["segment_path"] for item in preview_review.review_payload.items]
+        self.assertEqual(len(segment_paths), 3)
+        self.assertTrue(all(path.endswith(".pptx") for path in segment_paths))
+        for segment_path in segment_paths:
+            resolved_segment = workspace_root() / segment_path
+            self.assertTrue(resolved_segment.is_file())
+            with zipfile.ZipFile(resolved_segment) as package:
+                slide_xml = [name for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
+            self.assertEqual(len(slide_xml), 1)
 
         completed = asyncio.run(
             manager.resume(
@@ -292,6 +301,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(completed.stage, "completed")
         self.assertTrue(state["final_file_paths"])
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+        self.assertFalse(any("/segments/" in path for path in state["final_file_paths"]))
 
     def test_revision_impact_prefers_deck_slide_for_slide_number(self) -> None:
         state = _adk_state("session_ppt_revision_impact_slide_number")
@@ -382,6 +392,8 @@ class PPTProductionTests(unittest.TestCase):
         previews = {preview["slide_id"]: preview for preview in payload["slide_previews"]}
         self.assertEqual(previews[target_slide_id]["status"], "stale")
         self.assertEqual(previews[untouched_slide_id]["status"], "generated")
+        self.assertTrue(previews[target_slide_id]["segment_path"].endswith(".pptx"))
+        self.assertTrue((workspace_root() / previews[target_slide_id]["segment_path"]).is_file())
         self.assertIsNone(payload["final_artifact"])
         self.assertFalse(any(artifact["name"] == "final.pptx" for artifact in payload["artifacts"]))
         self.assertTrue(any("Stale preview" in artifact["description"] for artifact in payload["artifacts"]))

@@ -654,6 +654,12 @@ class PPTProductionManager:
                 render_settings=state.render_settings,
                 output_dir=session_root / "preview",
             )
+            segment_paths = self.deck_builder.build_slide_segments(
+                deck_spec=state.deck_spec,
+                render_settings=state.render_settings,
+                output_dir=session_root / "segments",
+            )
+            _attach_segment_paths(state.slide_previews, segment_paths)
             state.final_artifact.preview_paths = [item.preview_path for item in state.slide_previews]
             state.stage = "quality_check"
             state.progress_percent = 90
@@ -937,6 +943,11 @@ def _mark_target_previews_stale(state: PPTProductionState, target_ids: set[str])
     for preview in state.slide_previews:
         if preview.slide_id in target_ids:
             preview.status = "stale"
+
+
+def _attach_segment_paths(previews: list[SlidePreview], segment_paths: dict[str, str]) -> None:
+    for preview in previews:
+        preview.segment_path = segment_paths.get(preview.slide_id, "")
 
 
 def _preview_by_slide_id(state: PPTProductionState) -> dict[str, SlidePreview]:

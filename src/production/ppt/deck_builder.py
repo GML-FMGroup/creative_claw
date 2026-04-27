@@ -61,6 +61,23 @@ class DeckBuilderService:
         prs.save(output_path)
         return workspace_relative_path(output_path)
 
+    def build_slide_segments(self, *, deck_spec: DeckSpec, render_settings: PPTRenderSettings, output_dir: Path) -> dict[str, str]:
+        """Write one editable single-slide PPTX segment per deck slide."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        segment_paths: dict[str, str] = {}
+        for slide in deck_spec.slides:
+            segment_spec = DeckSpec(
+                title=f"{deck_spec.title} - Slide {slide.sequence_index:02d}",
+                slides=[slide.model_copy(deep=True)],
+            )
+            output_path = output_dir / f"slide-{slide.sequence_index:02d}.pptx"
+            segment_paths[slide.slide_id] = self.build(
+                deck_spec=segment_spec,
+                render_settings=render_settings,
+                output_path=output_path,
+            )
+        return segment_paths
+
 
 def _slide_size_inches(aspect_ratio: str) -> tuple[float, float]:
     if aspect_ratio == "4:3":
@@ -236,9 +253,9 @@ def _build_minimal_ooxml_deck(*, deck_spec: DeckSpec, render_settings: PPTRender
         package.writestr("ppt/slideMasters/_rels/slideMaster1.xml.rels", _slide_master_rels())
         package.writestr("ppt/slideLayouts/slideLayout1.xml", _slide_layout_xml())
         package.writestr("ppt/slideLayouts/_rels/slideLayout1.xml.rels", _slide_layout_rels())
-        for slide in deck_spec.slides:
-            package.writestr(f"ppt/slides/slide{slide.sequence_index}.xml", _slide_xml(slide, theme))
-            package.writestr(f"ppt/slides/_rels/slide{slide.sequence_index}.xml.rels", _slide_rels())
+        for part_index, slide in enumerate(deck_spec.slides, start=1):
+            package.writestr(f"ppt/slides/slide{part_index}.xml", _slide_xml(slide, theme))
+            package.writestr(f"ppt/slides/_rels/slide{part_index}.xml.rels", _slide_rels())
     return workspace_relative_path(output_path)
 
 

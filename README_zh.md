@@ -204,7 +204,7 @@ creative-claw chat cli \
 - **工作区文件工具**：`list_dir`、`glob`、`grep`、`read_file`、`write_file`、`edit_file`。
 - **确定性媒体工具**：`image_crop`、`image_rotate`、`image_flip`、`image_info`、`image_resize`、`image_convert`、`video_info`、`video_extract_frame`、`video_trim`、`video_concat`、`video_convert`、`audio_info`、`audio_trim`、`audio_concat`、`audio_convert`。
 - **运行时与网页工具**：`exec_command`、`process_session`、`web_search`、`web_fetch`、`list_session_files`。
-- **PPT 生产工具**：`run_ppt_production`，用于 PPT P0 的持久化生产流程，支持 outline 审阅、原生可编辑 `.pptx` 生成、页面 preview、质量报告读取、输入记录、修改影响分析、目标级 outline/deck slide 修订、页面级 preview stale 状态和最终产物追踪。
+- **PPT 生产工具**：`run_ppt_production`，用于 PPT P0 的持久化生产流程，支持 outline 审阅、原生可编辑 `.pptx` 生成、页面 preview、质量报告读取、输入记录、修改影响分析、目标级 outline/deck slide 修订、页面级 preview stale 状态、单页 PPTX segment 和最终产物追踪。
 - **生产工具**：`run_short_video_production`，用于短视频 P1e 的持久化生产流程，支持 storyboard 审阅、资产计划审阅、分段成片确认、定向分段修改、局部重生成、显式 provider/runtime 选择、质量报告读取、参考素材更新和最终产物追踪。
 - **Expert 调度工具**：`invoke_agent`，把结构化请求路由到 `ImageGenerationAgent`、`ImageEditingAgent`、`ImageUnderstandingAgent`、`VideoGenerationAgent`、`SpeechRecognitionExpert`、`SpeechSynthesisExpert`、`MusicGenerationExpert`、`3DGeneration` 等 expert。
 
