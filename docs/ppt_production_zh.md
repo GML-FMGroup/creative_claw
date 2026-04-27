@@ -15,7 +15,7 @@ User
 -> final.pptx + previews + quality report
 ```
 
-当前目标是在 P0/P1a 闭环上推进 P1b deck spec review：用户给出 brief，系统生成可审阅 outline；用户确认 outline 后生成可审阅 `DeckSpec`；用户确认 deck spec 后生成可编辑 PPTX、每页 preview 和质量报告；用户再确认 preview 后完成并投影最终产物到 ADK session state。若用户附加 TXT/MD/DOCX 源文档或 PPTX 模板，系统会先生成轻量 `DocumentSummary` / `TemplateSummary`，再把可用上下文纳入 outline 和 deck spec。
+当前目标是在 P0/P1a/P1b 闭环上推进 P1c targeted revision：用户给出 brief，系统生成可审阅 outline；用户确认 outline 后生成可审阅 `DeckSpec`；用户确认 deck spec 后生成可编辑 PPTX、每页 preview 和质量报告；用户再确认 preview 后完成并投影最终产物到 ADK session state。若用户附加 TXT/MD/DOCX 源文档或 PPTX 模板，系统会先生成轻量 `DocumentSummary` / `TemplateSummary`，再把可用上下文纳入 outline 和 deck spec。用户后续明确修改某一页或某个 outline item 时，系统会优先做目标级 stale 标记，而不是默认重建整套 deck。
 
 ## 当前支持
 
@@ -29,8 +29,8 @@ User
 - `add_inputs` 追加 PPT 模板、源文档和参考图，并回到 outline review。
 - TXT/MD/DOCX 源文档轻量抽取，生成 `DocumentSummary`，并把关键事实注入 outline。
 - PPTX 模板轻量分析，生成 `TemplateSummary`，包括 slide/layout/master/theme/media 等结构信号。
-- `analyze_revision_impact` 只读分析修改影响范围。
-- `apply_revision` 在用户确认后应用修改，并回到 outline review。
+- `analyze_revision_impact` 只读分析修改影响范围，支持 `target_kind` / `target_id` / `slide_number` 定位。
+- `apply_revision` 在用户确认后应用修改：outline item 修改回到 `outline_review`，deck spec slide 修改回到 `deck_spec_review`，无法确定目标时回到整套 outline review。
 - 产物写入 production session 目录，并通过共享 projection 投影最终文件。
 
 当前暂不支持：
@@ -74,7 +74,28 @@ start
 | `resume` | 是 | 对 active review 执行 `approve`、`revise` 或 `cancel`；当前 review 可能是 `outline_review`、`deck_spec_review` 或 `final_preview_review`。 |
 | `add_inputs` | 是 | 追加模板、源文档或参考图，标记下游 stale，并回到 outline review。 |
 | `analyze_revision_impact` | 否 | 只读分析用户修改会影响哪些对象。 |
-| `apply_revision` | 是 | 用户确认后应用修改，清理下游产物，并回到 outline review。 |
+| `apply_revision` | 是 | 用户确认后应用修改，按目标清理下游产物；outline 目标回到 `outline_review`，deck slide 目标回到 `deck_spec_review`，未指定目标时回到 `outline_review`。 |
+
+## 修改与 stale 语义
+
+推荐流程是先只读分析，再由用户确认后应用：
+
+```text
+analyze_revision_impact
+  -> user confirms
+  -> apply_revision
+  -> review updated outline or deck spec
+  -> resume approve
+```
+
+目标定位规则：
+
+- 如果用户说“第 2 页”这类页码，orchestrator 可以传 `slide_number=2`。当 `DeckSpec` 已存在时优先匹配 `deck_slide`；否则匹配 outline entry。
+- 如果已经知道 review payload 里的 item id，优先传 `target_kind="deck_slide"` / `target_kind="outline_entry"` 和对应 `target_id`。
+- `analyze_revision_impact` 返回 `matched_targets`、`unmatched_targets`、`impacted` 和 `stale_items`，不会修改状态。
+- deck slide 级修改只更新对应 `DeckSlide` 的 bullets / speaker notes，清空 previews、final artifact 和 quality report，并暂停回 `deck_spec_review`。
+- outline entry 级修改只更新对应 `PPTOutlineEntry`，清空 deck spec、previews、final artifact 和 quality report，并暂停回 `outline_review`。
+- 未指定目标或目标不够明确时，沿用安全 fallback：把 revision notes 追加到 brief，重建 outline，并清空所有下游产物。
 
 ## render_settings
 
