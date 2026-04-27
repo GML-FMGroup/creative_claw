@@ -351,6 +351,75 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
         self.assertFalse(any("/segments/" in path for path in state["final_file_paths"]))
 
+    def test_manager_can_pause_at_brief_review_before_outline(self) -> None:
+        state = _adk_state("session_ppt_brief_review")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 3 页的产品策略更新，给管理层看。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 3, "style_preset": "pitch_deck", "brief_review": True},
+                adk_state=state,
+            )
+        )
+        payload = _load_state_payload(started)
+
+        self.assertEqual(started.status, "needs_user_review")
+        self.assertEqual(started.stage, "brief_review")
+        self.assertEqual(started.review_payload.review_type, "ppt_brief_review")
+        self.assertIsNone(payload["outline"])
+        self.assertTrue(payload["render_settings"]["brief_review"])
+        self.assertEqual(started.review_payload.items[0]["target_pages"], 3)
+        self.assertEqual(started.review_payload.items[0]["style_preset"], "pitch_deck")
+
+        approved = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        approved_payload = _load_state_payload(approved)
+
+        self.assertEqual(approved.status, "needs_user_review")
+        self.assertEqual(approved.stage, "outline_review")
+        self.assertEqual(approved.review_payload.review_type, "ppt_outline_review")
+        self.assertEqual(len(approved.review_payload.items), 3)
+        self.assertIsNotNone(approved_payload["outline"])
+
+    def test_brief_review_revise_stays_at_brief_review(self) -> None:
+        state = _adk_state("session_ppt_brief_review_revise")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 4 页的产品策略更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 4, "brief_review": True},
+                adk_state=state,
+            )
+        )
+
+        revised = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "revise", "notes": "Audience is CFO and finance leadership."},
+                adk_state=state,
+            )
+        )
+        payload = _load_state_payload(revised)
+
+        self.assertEqual(revised.status, "needs_user_review")
+        self.assertEqual(revised.stage, "brief_review")
+        self.assertEqual(revised.review_payload.review_type, "ppt_brief_review")
+        self.assertIsNone(payload["outline"])
+        self.assertIn("Audience is CFO and finance leadership.", payload["brief_summary"])
+        self.assertEqual(revised.review_payload.items[0]["brief_summary"], payload["brief_summary"])
+        self.assertEqual(payload["revision_history"][0]["stage"], "brief_review")
+
     def test_revision_impact_prefers_deck_slide_for_slide_number(self) -> None:
         state = _adk_state("session_ppt_revision_impact_slide_number")
         manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())

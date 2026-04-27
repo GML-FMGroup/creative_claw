@@ -29,6 +29,7 @@ class PPTRenderSettings(BaseModel):
     style_preset: PPTStylePreset = "business_executive"
     pipeline: PPTPipeline = "auto"
     template_edit_mode: str = "auto"
+    brief_review: bool = False
     deck_spec_review: bool = True
     skip_review: bool = False
 
