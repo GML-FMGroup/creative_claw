@@ -19,6 +19,7 @@ from src.production.models import (
     WorkspaceFileRef,
 )
 from src.production.ppt.deck_builder import DeckBuilderService
+from src.production.ppt.document_loader import DocumentLoaderService
 from src.production.ppt.impact import build_revision_impact_view
 from src.production.ppt.ingest import ingest_input_files
 from src.production.ppt.models import (
@@ -33,6 +34,7 @@ from src.production.ppt.models import (
     TemplateSummary,
 )
 from src.production.ppt.preview_renderer import PreviewRendererService
+from src.production.ppt.template_analyzer import TemplateAnalyzerService
 from src.production.ppt.quality import build_quality_report, quality_report_markdown
 from src.production.ppt.user_response import normalize_user_response
 from src.production.projection import get_active_production_session_id
@@ -45,6 +47,8 @@ _VIEW_TYPES = (
     "overview",
     "brief",
     "inputs",
+    "document_summary",
+    "template_summary",
     "outline",
     "deck_spec",
     "previews",
@@ -65,11 +69,15 @@ class PPTProductionManager:
         store: ProductionSessionStore | None = None,
         deck_builder: DeckBuilderService | None = None,
         preview_renderer: PreviewRendererService | None = None,
+        document_loader: DocumentLoaderService | None = None,
+        template_analyzer: TemplateAnalyzerService | None = None,
     ) -> None:
         """Initialize the PPT production manager."""
         self.store = store or ProductionSessionStore()
         self.deck_builder = deck_builder or DeckBuilderService()
         self.preview_renderer = preview_renderer or PreviewRendererService()
+        self.document_loader = document_loader or DocumentLoaderService()
+        self.template_analyzer = template_analyzer or TemplateAnalyzerService()
 
     async def start(
         self,
@@ -90,6 +98,8 @@ class PPTProductionManager:
         )
         settings = _normalize_render_settings(render_settings or {})
         inputs = ingest_input_files(input_files, turn_index=context["turn_index"])
+        template_summary = self.template_analyzer.build_summary(inputs)
+        document_summary = self.document_loader.build_summary(inputs)
         state = PPTProductionState(
             production_session=production_session,
             status="running",
@@ -98,9 +108,9 @@ class PPTProductionManager:
             brief_summary=_brief_summary(user_prompt),
             render_settings=settings,
             inputs=inputs,
-            template_summary=_template_summary_from_inputs(inputs),
-            document_summary=_document_summary_from_inputs(inputs),
-            warnings=_input_warnings(inputs),
+            template_summary=template_summary,
+            document_summary=document_summary,
+            warnings=_state_warnings(inputs, template_summary, document_summary),
         )
         state.production_events.append(
             ProductionEvent(
@@ -115,6 +125,8 @@ class PPTProductionManager:
                 brief=state.brief_summary,
                 settings=settings,
                 inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
             )
             state.stage = "outline_planning"
             state.progress_percent = 15
@@ -309,11 +321,17 @@ class PPTProductionManager:
                 error=ProductionErrorInfo(code="ppt_invalid_input", message="No valid PPT inputs were provided."),
             )
         state.inputs.extend(new_inputs)
-        state.warnings = _input_warnings(state.inputs)
-        state.template_summary = _template_summary_from_inputs(state.inputs)
-        state.document_summary = _document_summary_from_inputs(state.inputs)
+        state.template_summary = self.template_analyzer.build_summary(state.inputs)
+        state.document_summary = self.document_loader.build_summary(state.inputs)
+        state.warnings = _state_warnings(state.inputs, state.template_summary, state.document_summary)
         state.stale_items = ["outline", "deck_spec", "slide_previews", "final", "quality"]
-        state.outline = _build_outline(brief=state.brief_summary, settings=state.render_settings, inputs=state.inputs)
+        state.outline = _build_outline(
+            brief=state.brief_summary,
+            settings=state.render_settings,
+            inputs=state.inputs,
+            document_summary=state.document_summary,
+            template_summary=state.template_summary,
+        )
         state.deck_spec = None
         state.slide_previews = []
         state.final_artifact = None
@@ -427,7 +445,13 @@ class PPTProductionManager:
 
     def _apply_revision_notes_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         state.brief_summary = _append_revision_note(state.brief_summary, notes)
-        state.outline = _build_outline(brief=state.brief_summary, settings=state.render_settings, inputs=state.inputs)
+        state.outline = _build_outline(
+            brief=state.brief_summary,
+            settings=state.render_settings,
+            inputs=state.inputs,
+            document_summary=state.document_summary,
+            template_summary=state.template_summary,
+        )
         state.deck_spec = None
         state.slide_previews = []
         state.final_artifact = None
@@ -586,8 +610,10 @@ class PPTProductionManager:
         (root / "deck_spec.md").write_text(_deck_spec_markdown(state), encoding="utf-8")
         if state.template_summary is not None:
             (root / "template_summary.json").write_text(state.template_summary.model_dump_json(indent=2), encoding="utf-8")
+            (root / "template_summary.md").write_text(_template_summary_markdown(state.template_summary), encoding="utf-8")
         if state.document_summary is not None:
             (root / "document_summary.json").write_text(state.document_summary.model_dump_json(indent=2), encoding="utf-8")
+            (root / "document_summary.md").write_text(_document_summary_markdown(state.document_summary), encoding="utf-8")
         (root / "preview").mkdir(parents=True, exist_ok=True)
         (root / "preview" / "index.json").write_text(
             json.dumps([item.model_dump(mode="json") for item in state.slide_previews], ensure_ascii=False, indent=2),
@@ -634,31 +660,15 @@ def _normalize_render_settings(payload: dict[str, Any]) -> PPTRenderSettings:
     )
 
 
-def _template_summary_from_inputs(inputs) -> TemplateSummary:
-    templates = [item for item in inputs if item.role == "template_pptx"]
-    if not templates:
-        return TemplateSummary(status="not_started")
-    primary = templates[0]
-    warnings = [item.warning for item in templates if item.warning]
-    warnings.append("Template analysis/editing is not implemented in P0; native PPTX generation is used.")
-    return TemplateSummary(
-        template_input_id=primary.input_id,
-        summary=f"Recorded template input `{primary.name}` for future template pipeline.",
-        status="unsupported",
-        warnings=warnings,
-    )
-
-
-def _document_summary_from_inputs(inputs) -> DocumentSummary:
-    docs = [item for item in inputs if item.role == "source_doc"]
-    if not docs:
-        return DocumentSummary(status="not_started")
-    return DocumentSummary(
-        source_input_ids=[item.input_id for item in docs],
-        summary="Source documents are recorded in P0; extraction is planned for P1.",
-        status="unsupported",
-        warnings=["Document extraction is not implemented in P0; the brief drives the outline."],
-    )
+def _state_warnings(inputs, template_summary: TemplateSummary | None, document_summary: DocumentSummary | None) -> list[str]:
+    warnings = _input_warnings(inputs)
+    for summary in (template_summary, document_summary):
+        if summary is None:
+            continue
+        for warning in summary.warnings:
+            if warning and warning not in warnings:
+                warnings.append(warning)
+    return warnings
 
 
 def _input_warnings(inputs) -> list[str]:
@@ -666,7 +676,14 @@ def _input_warnings(inputs) -> list[str]:
     return [warning for warning in warnings if warning]
 
 
-def _build_outline(*, brief: str, settings: PPTRenderSettings, inputs) -> PPTOutline:
+def _build_outline(
+    *,
+    brief: str,
+    settings: PPTRenderSettings,
+    inputs,
+    document_summary: DocumentSummary | None = None,
+    template_summary: TemplateSummary | None = None,
+) -> PPTOutline:
     title = _deck_title(brief)
     count = settings.target_pages
     entries: list[PPTOutlineEntry] = []
@@ -695,11 +712,44 @@ def _build_outline(*, brief: str, settings: PPTRenderSettings, inputs) -> PPTOut
                 ["Confirm the main decision or desired audience response.", "Assign owners for the next phase.", "Set a clear follow-up checkpoint."],
             )
         )
-    if any(item.role == "template_pptx" for item in inputs):
-        entries[0].bullet_points.append("Template input is recorded; P0 uses native editable output.")
-    if any(item.role == "source_doc" for item in inputs):
-        entries[0].bullet_points.append("Source documents are recorded; P1 will extract facts and citations.")
+    _apply_input_context_to_outline(
+        entries,
+        inputs=inputs,
+        document_summary=document_summary,
+        template_summary=template_summary,
+    )
     return PPTOutline(title=title, target_pages=count, entries=entries)
+
+
+def _apply_input_context_to_outline(
+    entries: list[PPTOutlineEntry],
+    *,
+    inputs,
+    document_summary: DocumentSummary | None,
+    template_summary: TemplateSummary | None,
+) -> None:
+    """Attach extracted input context to the deterministic outline."""
+    if not entries:
+        return
+    if template_summary is not None and template_summary.status == "ready":
+        entries[0].bullet_points.append(
+            f"Template analyzed: {template_summary.layout_count} layout(s), "
+            f"{template_summary.slide_count} slide(s); native editable output remains active."
+        )
+    elif any(item.role == "template_pptx" for item in inputs):
+        entries[0].bullet_points.append("Template input is recorded; native editable output remains active.")
+
+    if document_summary is not None and document_summary.status == "ready":
+        entries[0].bullet_points.append("Source documents analyzed; outline includes extracted facts.")
+        targets = entries[1:-1] or entries
+        for index, fact in enumerate(document_summary.salient_facts[: max(1, min(4, len(targets)))]):
+            target = targets[index % len(targets)]
+            target.bullet_points.append(f"Source fact: {fact}")
+            for source_id in document_summary.source_input_ids:
+                if source_id not in target.source_refs:
+                    target.source_refs.append(source_id)
+    elif any(item.role == "source_doc" for item in inputs):
+        entries[0].bullet_points.append("Source documents are attached, but no supported text was extracted yet.")
 
 
 def _outline_entry(sequence_index: int, title: str, purpose: str, layout_type: str, bullets: list[str]) -> PPTOutlineEntry:
@@ -897,6 +947,22 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
         base.update({"brief_summary": state.brief_summary, "brief_path": f"{state.production_session.root_dir}/brief.md"})
     elif view_type == "inputs":
         base.update({"inputs": [item.model_dump(mode="json") for item in state.inputs], "inputs_path": f"{state.production_session.root_dir}/inputs.json"})
+    elif view_type == "document_summary":
+        base.update(
+            {
+                "document_summary": state.document_summary.model_dump(mode="json") if state.document_summary else None,
+                "document_summary_path": f"{state.production_session.root_dir}/document_summary.json",
+                "document_summary_markdown_path": f"{state.production_session.root_dir}/document_summary.md",
+            }
+        )
+    elif view_type == "template_summary":
+        base.update(
+            {
+                "template_summary": state.template_summary.model_dump(mode="json") if state.template_summary else None,
+                "template_summary_path": f"{state.production_session.root_dir}/template_summary.json",
+                "template_summary_markdown_path": f"{state.production_session.root_dir}/template_summary.md",
+            }
+        )
     elif view_type == "outline":
         base.update({"outline": state.outline.model_dump(mode="json") if state.outline else None, "outline_path": f"{state.production_session.root_dir}/outline.json", "outline_markdown_path": f"{state.production_session.root_dir}/outline.md"})
     elif view_type == "deck_spec":
@@ -923,6 +989,66 @@ def _base_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
         "state_ref": f"{state.production_session.root_dir}/state.json",
         "project_root": state.production_session.root_dir,
     }
+
+
+def _document_summary_markdown(summary: DocumentSummary) -> str:
+    lines = [
+        "# PPT Document Summary",
+        "",
+        f"Status: {summary.status}",
+        "",
+        summary.summary or "No source-document summary is available.",
+        "",
+    ]
+    if summary.salient_facts:
+        lines.append("## Salient Facts")
+        lines.append("")
+        lines.extend(f"- {fact}" for fact in summary.salient_facts)
+        lines.append("")
+    if summary.warnings:
+        lines.append("## Warnings")
+        lines.append("")
+        lines.extend(f"- {warning}" for warning in summary.warnings)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _template_summary_markdown(summary: TemplateSummary) -> str:
+    lines = [
+        "# PPT Template Summary",
+        "",
+        f"Status: {summary.status}",
+        "",
+        summary.summary or "No template summary is available.",
+        "",
+    ]
+    lines.extend([
+        "## Detected Structure",
+        "",
+        f"- Slides: {summary.slide_count}",
+        f"- Layouts: {summary.layout_count}",
+        f"- Masters: {summary.master_count}",
+        f"- Themes: {summary.theme_count}",
+        f"- Media assets: {summary.media_count}",
+        "",
+    ])
+    if summary.detected_fonts:
+        lines.append(f"Fonts: {', '.join(summary.detected_fonts)}")
+        lines.append("")
+    if summary.detected_colors:
+        lines.append(f"Colors: {', '.join(summary.detected_colors)}")
+        lines.append("")
+    if summary.sample_text:
+        lines.append("## Sample Text")
+        lines.append("")
+        lines.extend(f"- {item}" for item in summary.sample_text)
+        lines.append("")
+    if summary.warnings:
+        lines.append("## Warnings")
+        lines.append("")
+        lines.extend(f"- {warning}" for warning in summary.warnings)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _outline_markdown(state: PPTProductionState) -> str:
