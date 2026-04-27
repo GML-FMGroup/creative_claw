@@ -170,12 +170,17 @@ def _impacted_entries(state: PPTProductionState, matched: list[dict[str, str]], 
             {"kind": "quality", "id": state.quality_report.report_id if state.quality_report else "", "would_change": "rerun"},
         ]
     if "deck_slide" in target_kinds:
-        return [
-            {"kind": "deck_slide", "id": item.get("id", ""), "would_change": "edit_deck_slide_and_regenerate_downstream"}
+        deck_slide_impacts = [
+            {"kind": "deck_slide", "id": item.get("id", ""), "would_change": "edit_deck_slide"}
             for item in matched
             if item.get("kind") == "deck_slide"
-        ] + [
-            {"kind": "previews", "id": "slide_previews", "would_change": "regenerate"},
+        ]
+        preview_impacts = [
+            {"kind": "slide_preview", "id": item.get("id", ""), "would_change": "mark_stale"}
+            for item in matched
+            if item.get("kind") == "deck_slide"
+        ]
+        return deck_slide_impacts + preview_impacts + [
             {"kind": "final", "id": state.final_artifact.pptx_path if state.final_artifact else "", "would_change": "regenerate"},
             {"kind": "quality", "id": state.quality_report.report_id if state.quality_report else "", "would_change": "rerun"},
         ]
@@ -187,7 +192,7 @@ def _stale_items_from_impacted(impacted: list[dict[str, Any]]) -> list[str]:
     for item in impacted:
         kind = str(item.get("kind", "") or "")
         identifier = str(item.get("id", "") or "")
-        if kind in {"outline_entry", "deck_slide"} and identifier:
+        if kind in {"outline_entry", "deck_slide", "slide_preview"} and identifier:
             stale_items.append(f"{kind}:{identifier}")
         elif kind == "previews":
             stale_items.append(identifier or "slide_previews")

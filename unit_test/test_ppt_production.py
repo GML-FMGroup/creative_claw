@@ -326,7 +326,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(impact.view["matched_targets"][0]["kind"], "deck_slide")
         self.assertEqual(impact.view["matched_targets"][0]["id"], expected_slide_id)
         self.assertIn(f"deck_slide:{expected_slide_id}", impact.view["stale_items"])
-        self.assertIn("slide_previews", impact.view["stale_items"])
+        self.assertIn(f"slide_preview:{expected_slide_id}", impact.view["stale_items"])
         self.assertEqual(impact.view["state_mutation"], "none")
 
     def test_apply_revision_updates_targeted_deck_slide_only(self) -> None:
@@ -379,13 +379,29 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(payload["deck_spec"]["status"], "draft")
         self.assertIn("Revision note: Make the risk narrative more concrete.", slides[target_slide_id]["bullets"])
         self.assertNotIn("Revision note: Make the risk narrative more concrete.", slides[untouched_slide_id]["bullets"])
-        self.assertEqual(payload["slide_previews"], [])
+        previews = {preview["slide_id"]: preview for preview in payload["slide_previews"]}
+        self.assertEqual(previews[target_slide_id]["status"], "stale")
+        self.assertEqual(previews[untouched_slide_id]["status"], "generated")
         self.assertIsNone(payload["final_artifact"])
-        self.assertEqual(payload["artifacts"], [])
+        self.assertFalse(any(artifact["name"] == "final.pptx" for artifact in payload["artifacts"]))
+        self.assertTrue(any("Stale preview" in artifact["description"] for artifact in payload["artifacts"]))
         self.assertIn(f"deck_slide:{target_slide_id}", payload["stale_items"])
-        self.assertIn("slide_previews", payload["stale_items"])
+        self.assertIn(f"slide_preview:{target_slide_id}", payload["stale_items"])
         self.assertIn("final", payload["stale_items"])
         self.assertIn("quality", payload["stale_items"])
+        review_items = {item["id"]: item for item in applied.review_payload.items}
+        self.assertEqual(review_items[target_slide_id]["preview_status"], "stale")
+        self.assertEqual(review_items[untouched_slide_id]["preview_status"], "generated")
+
+        overview = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="overview",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(overview.view["counts"]["stale_previews"], 1)
+        self.assertIn(f"slide_preview:{target_slide_id}", overview.view["stale_items"])
 
     def test_apply_revision_updates_targeted_outline_entry(self) -> None:
         state = _adk_state("session_ppt_revision_outline_entry")
