@@ -209,6 +209,7 @@ The main LLM orchestrator can call these tool groups directly:
 - **Workspace file tools**: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`.
 - **Deterministic media tools**: `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`.
 - **Runtime and web tools**: `exec_command`, `process_session`, `web_search`, `web_fetch`, `list_session_files`.
+- **PPT production tool**: `run_ppt_production` for durable PPT P0 flows with outline review, editable native `.pptx` generation, slide previews, quality report views, input recording, revision impact analysis, and final artifact tracking.
 - **Production tool**: `run_short_video_production` for durable short-video P1e flows with storyboard review, asset-plan review, generated shot-segment review, targeted segment revision, partial segment regeneration, explicit provider/runtime selection, quality report views, reference asset updates, and final artifact tracking.
 - **Expert dispatch**: `invoke_agent` routes structured requests to expert agents such as `ImageGenerationAgent`, `ImageEditingAgent`, `ImageUnderstandingAgent`, `VideoGenerationAgent`, `SpeechRecognitionExpert`, `SpeechSynthesisExpert`, `MusicGenerationExpert`, and `3DGeneration`.
 
@@ -303,6 +304,7 @@ In practice, you only need this skill when you explicitly want MiniMax-specific 
 ## 📚 More Docs
 
 - [docs/development.md](docs/development.md): architecture, environment, credentials, tests, and development notes
+- [docs/ppt_production_zh.md](docs/ppt_production_zh.md): PPT P0 usage, outline review, native editable PPTX generation, previews, quality report, fallback behavior, and P1 boundaries
 - [docs/short_video_production_zh.md](docs/short_video_production_zh.md): short-video P1e usage, storyboard-first review, asset-plan review, shot review, targeted segment regeneration, Seedance 2.0/fast and Veo+TTS routing, basic quality reporting, and Feishu acceptance checklist
 - [docs/short_video_p0_completion_zh.md](docs/short_video_p0_completion_zh.md): short-video P0 completion status, verification, known limits, and P1 boundary
 - [docs/model_and_token_map.md](docs/model_and_token_map.md): model names, mapped experts, and token application links

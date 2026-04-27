@@ -294,7 +294,7 @@ def _summarize_list_session_files_result(result_text: str) -> str:
 
 def summarize_tool_result(tool_name: str, result: Any) -> tuple[str, str]:
     """Summarize one tool result into status plus short preview."""
-    if tool_name == "run_short_video_production":
+    if tool_name in {"run_short_video_production", "run_ppt_production"}:
         status = "success"
         if isinstance(result, dict) and str(result.get("status", "")).strip().lower() == "failed":
             status = "error"
