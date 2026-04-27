@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import unittest
 import zipfile
@@ -47,6 +48,13 @@ def _adk_state(sid="session_ppt_test"):
         "files_history": [],
         "final_file_paths": [],
     }
+
+
+def _load_state_payload(result) -> dict:
+    state_ref = result.state_ref
+    if not state_ref:
+        raise AssertionError("Production result did not include state_ref")
+    return json.loads((workspace_root() / state_ref).read_text(encoding="utf-8"))
 
 
 def _write_minimal_docx(path: Path, paragraphs: list[str]) -> None:
@@ -284,6 +292,140 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(completed.stage, "completed")
         self.assertTrue(state["final_file_paths"])
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+
+    def test_revision_impact_prefers_deck_slide_for_slide_number(self) -> None:
+        state = _adk_state("session_ppt_revision_impact_slide_number")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 3 页的产品策略更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 3},
+                adk_state=state,
+            )
+        )
+        deck_spec_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        impact = asyncio.run(
+            manager.analyze_revision_impact(
+                production_session_id=started.production_session_id,
+                user_response={"notes": "强化第二页的风险说明。", "slide_number": 2},
+                adk_state=state,
+            )
+        )
+
+        expected_slide_id = deck_spec_review.review_payload.items[1]["id"]
+        self.assertEqual(impact.view["matched_targets"][0]["kind"], "deck_slide")
+        self.assertEqual(impact.view["matched_targets"][0]["id"], expected_slide_id)
+        self.assertIn(f"deck_slide:{expected_slide_id}", impact.view["stale_items"])
+        self.assertIn("slide_previews", impact.view["stale_items"])
+        self.assertEqual(impact.view["state_mutation"], "none")
+
+    def test_apply_revision_updates_targeted_deck_slide_only(self) -> None:
+        state = _adk_state("session_ppt_revision_deck_slide")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 3 页的产品策略更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 3},
+                adk_state=state,
+            )
+        )
+        deck_spec_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        target_slide_id = deck_spec_review.review_payload.items[1]["id"]
+        untouched_slide_id = deck_spec_review.review_payload.items[0]["id"]
+        preview_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        self.assertTrue(preview_review.artifacts)
+
+        applied = asyncio.run(
+            manager.apply_revision(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "notes": "Make the risk narrative more concrete.",
+                    "target_kind": "deck_slide",
+                    "target_id": target_slide_id,
+                },
+                adk_state=state,
+            )
+        )
+        payload = _load_state_payload(applied)
+        slides = {slide["slide_id"]: slide for slide in payload["deck_spec"]["slides"]}
+
+        self.assertEqual(applied.status, "needs_user_review")
+        self.assertEqual(applied.stage, "deck_spec_review")
+        self.assertEqual(payload["deck_spec"]["status"], "draft")
+        self.assertIn("Revision note: Make the risk narrative more concrete.", slides[target_slide_id]["bullets"])
+        self.assertNotIn("Revision note: Make the risk narrative more concrete.", slides[untouched_slide_id]["bullets"])
+        self.assertEqual(payload["slide_previews"], [])
+        self.assertIsNone(payload["final_artifact"])
+        self.assertEqual(payload["artifacts"], [])
+        self.assertIn(f"deck_slide:{target_slide_id}", payload["stale_items"])
+        self.assertIn("slide_previews", payload["stale_items"])
+        self.assertIn("final", payload["stale_items"])
+        self.assertIn("quality", payload["stale_items"])
+
+    def test_apply_revision_updates_targeted_outline_entry(self) -> None:
+        state = _adk_state("session_ppt_revision_outline_entry")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 3 页的客户成功复盘。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 3},
+                adk_state=state,
+            )
+        )
+        target_entry_id = started.review_payload.items[0]["id"]
+        untouched_entry_id = started.review_payload.items[1]["id"]
+
+        applied = asyncio.run(
+            manager.apply_revision(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "notes": "Add a clearer customer retention metric.",
+                    "target_kind": "outline_entry",
+                    "target_id": target_entry_id,
+                },
+                adk_state=state,
+            )
+        )
+        payload = _load_state_payload(applied)
+        entries = {entry["slide_id"]: entry for entry in payload["outline"]["entries"]}
+
+        self.assertEqual(applied.status, "needs_user_review")
+        self.assertEqual(applied.stage, "outline_review")
+        self.assertIn("Revision note: Add a clearer customer retention metric.", entries[target_entry_id]["bullet_points"])
+        self.assertNotIn("Revision note: Add a clearer customer retention metric.", entries[untouched_entry_id]["bullet_points"])
+        self.assertIsNone(payload["deck_spec"])
+        self.assertEqual(payload["slide_previews"], [])
+        self.assertIn(f"outline_entry:{target_entry_id}", payload["stale_items"])
+        self.assertIn("deck_spec", payload["stale_items"])
+        self.assertIn("slide_previews", payload["stale_items"])
 
     def test_manager_can_skip_deck_spec_review(self) -> None:
         state = _adk_state("session_ppt_skip_deck_spec_review")

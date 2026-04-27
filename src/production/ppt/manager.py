@@ -247,7 +247,7 @@ class PPTProductionManager:
             return self._result_from_state(state, message="PPT production was cancelled.")
 
         if decision == "revise":
-            return self._revise_outline_and_pause(state, user_response=response, adk_state=adk_state)
+            return self._revise_active_breakpoint_and_pause(state, user_response=response, adk_state=adk_state)
 
         if decision != "approve":
             state.production_events.append(
@@ -412,7 +412,7 @@ class PPTProductionManager:
                 view=impact_view,
                 error=ProductionErrorInfo(code="ppt_revision_target_unmatched", message="Revision target was not found."),
             )
-        return self._apply_revision_notes_and_pause(state, notes=notes, user_response=response, adk_state=adk_state)
+        return self._apply_revision_by_impact(state, notes=notes, user_response=response, impact_view=impact_view, adk_state=adk_state)
 
     def _load_state_or_not_found(self, production_session_id: str | None, adk_state) -> PPTProductionState | ProductionRunResult:
         context = _context_from_adk_state(adk_state)
@@ -439,20 +439,37 @@ class PPTProductionManager:
                 ),
             )
 
-    def _revise_outline_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+    def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         notes = _revision_notes_from_response(user_response)
         if notes:
-            return self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
+            impact_view = build_revision_impact_view(state, user_response)
+            return self._apply_revision_by_impact(state, notes=notes, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
         state.production_events.append(
             ProductionEvent(
-                event_type="outline_revision_notes_required",
+                event_type="revision_notes_required",
                 stage=state.stage,
-                message="Outline revision requested without concrete notes.",
+                message="Revision requested without concrete notes.",
                 metadata={"user_response": user_response},
             )
         )
         self.store.save_state(state)
-        return self._result_from_state(state, message="Please provide revision notes for the PPT outline.")
+        return self._result_from_state(state, message="Please provide revision notes for the PPT review.")
+
+    def _apply_revision_by_impact(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        matched_targets = impact_view.get("matched_targets") or []
+        if _has_only_target_kind(matched_targets, "deck_slide") and state.deck_spec is not None:
+            return self._apply_deck_slide_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
+        if _has_only_target_kind(matched_targets, "outline_entry") and state.outline is not None:
+            return self._apply_outline_entry_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
+        return self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
 
     def _apply_revision_notes_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         state.brief_summary = _append_revision_note(state.brief_summary, notes)
@@ -486,6 +503,83 @@ class PPTProductionManager:
         self.store.save_state(state)
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="PPT revision was applied. Please review the updated outline.")
+
+    def _apply_outline_entry_revision_and_pause(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        matched_targets: list[dict[str, Any]],
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        target_ids = _target_ids(matched_targets, "outline_entry")
+        for entry in state.outline.entries if state.outline is not None else []:
+            if entry.slide_id in target_ids:
+                _append_revision_to_outline_entry(entry, notes)
+        state.deck_spec = None
+        state.slide_previews = []
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = []
+        state.stale_items = impact_view.get("stale_items") or ["deck_spec", "slide_previews", "final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "matched_targets": matched_targets})
+        state.status = "needs_user_review"
+        state.stage = "outline_review"
+        state.progress_percent = max(20, min(state.progress_percent, 45))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_outline_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_outline_entry_revision_applied",
+                stage=state.stage,
+                message="Applied targeted outline revision and paused at outline review.",
+                metadata={"target_ids": target_ids, "user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT outline revision was applied. Please review the updated outline.")
+
+    def _apply_deck_slide_revision_and_pause(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        matched_targets: list[dict[str, Any]],
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        target_ids = _target_ids(matched_targets, "deck_slide")
+        for slide in state.deck_spec.slides if state.deck_spec is not None else []:
+            if slide.slide_id in target_ids:
+                _append_revision_to_deck_slide(slide, notes)
+        if state.deck_spec is not None:
+            state.deck_spec.status = "draft"
+        state.slide_previews = []
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = []
+        state.stale_items = impact_view.get("stale_items") or ["slide_previews", "final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "matched_targets": matched_targets})
+        state.status = "needs_user_review"
+        state.stage = "deck_spec_review"
+        state.progress_percent = max(42, min(state.progress_percent, 70))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_deck_spec_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_deck_slide_revision_applied",
+                stage=state.stage,
+                message="Applied targeted deck slide revision and paused at deck spec review.",
+                metadata={"target_ids": target_ids, "user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT deck slide revision was applied. Please review the updated deck spec.")
 
     def _build_deck_spec_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
         """Build an executable deck spec and pause for user review."""
@@ -804,6 +898,38 @@ def _apply_input_context_to_outline(
                     target.source_refs.append(source_id)
     elif any(item.role == "source_doc" for item in inputs):
         entries[0].bullet_points.append("Source documents are attached, but no supported text was extracted yet.")
+
+
+def _has_only_target_kind(matched_targets: list[dict[str, Any]], kind: str) -> bool:
+    kinds = {str(item.get("kind", "") or "") for item in matched_targets}
+    return bool(kinds) and kinds == {kind}
+
+
+def _target_ids(matched_targets: list[dict[str, Any]], kind: str) -> set[str]:
+    return {str(item.get("id", "") or "") for item in matched_targets if item.get("kind") == kind and item.get("id")}
+
+
+def _append_revision_to_outline_entry(entry: PPTOutlineEntry, notes: str) -> None:
+    bullet = _revision_bullet(notes)
+    if bullet not in entry.bullet_points:
+        entry.bullet_points.append(bullet)
+    entry.speaker_notes = _append_revision_note(entry.speaker_notes, notes)
+    entry.status = "draft"
+
+
+def _append_revision_to_deck_slide(slide: DeckSlide, notes: str) -> None:
+    bullet = _revision_bullet(notes)
+    if bullet not in slide.bullets:
+        slide.bullets.append(bullet)
+    slide.speaker_notes = _append_revision_note(slide.speaker_notes, notes)
+    slide.status = "draft"
+
+
+def _revision_bullet(notes: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(notes or "").strip())
+    if len(cleaned) > 180:
+        cleaned = cleaned[:177].rstrip() + "..."
+    return f"Revision note: {cleaned or 'Update requested.'}"
 
 
 def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
