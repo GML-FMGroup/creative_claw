@@ -641,8 +641,9 @@ class PPTProductionManager:
     def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         notes = _revision_notes_from_response(user_response)
         if notes:
-            impact_view = build_revision_impact_view(state, user_response)
-            return self._apply_revision_by_impact(state, notes=notes, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
+            scoped_response = _scope_page_preview_revision_response(state, user_response)
+            impact_view = build_revision_impact_view(state, scoped_response)
+            return self._apply_revision_by_impact(state, notes=notes, user_response=scoped_response, impact_view=impact_view, adk_state=adk_state)
         state.production_events.append(
             ProductionEvent(
                 event_type="revision_notes_required",
@@ -1201,6 +1202,51 @@ def _review_payload_slide_ids(payload: ReviewPayload | None) -> set[str]:
         if slide_id:
             slide_ids.add(slide_id)
     return slide_ids
+
+
+def _scope_page_preview_revision_response(state: PPTProductionState, response: dict[str, Any]) -> dict[str, Any]:
+    """Default page-preview revise requests to the slide(s) currently under review."""
+    if state.active_breakpoint is None or state.active_breakpoint.stage != "page_preview_review":
+        return response
+    if _has_explicit_revision_target(response):
+        return response
+    targets = _review_payload_deck_slide_targets(state.active_breakpoint.review_payload)
+    if not targets:
+        return response
+    scoped = dict(response)
+    scoped["targets"] = targets
+    return scoped
+
+
+def _has_explicit_revision_target(response: dict[str, Any]) -> bool:
+    if response.get("targets"):
+        return True
+    target_fields = (
+        "target_id",
+        "id",
+        "target_kind",
+        "kind",
+        "target_label",
+        "label",
+        "slide_number",
+        "slide",
+        "sequence_index",
+        "slide_index",
+    )
+    return any(str(response.get(field, "") or "").strip() for field in target_fields)
+
+
+def _review_payload_deck_slide_targets(payload: ReviewPayload) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    for item in payload.items:
+        slide_id = str(item.get("slide_id") or item.get("id") or "").strip()
+        if not slide_id:
+            continue
+        sequence_index = str(item.get("sequence_index", "") or "").strip()
+        title = str(item.get("title", "") or "").strip()
+        label = f"Deck slide {sequence_index}: {title}".strip()
+        targets.append({"kind": "deck_slide", "id": slide_id, "label": label})
+    return targets
 
 
 def _approve_page_previews(state: PPTProductionState, slide_ids: set[str]) -> None:
