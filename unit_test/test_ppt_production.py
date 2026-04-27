@@ -279,6 +279,15 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any(artifact.name == "final.pptx" for artifact in preview_review.artifacts))
         final_artifact = next(artifact for artifact in preview_review.artifacts if artifact.name == "final.pptx")
         self.assertTrue((workspace_root() / final_artifact.path).is_file())
+        segment_paths = [item["segment_path"] for item in preview_review.review_payload.items]
+        self.assertEqual(len(segment_paths), 3)
+        self.assertTrue(all(path.endswith(".pptx") for path in segment_paths))
+        for segment_path in segment_paths:
+            resolved_segment = workspace_root() / segment_path
+            self.assertTrue(resolved_segment.is_file())
+            with zipfile.ZipFile(resolved_segment) as package:
+                slide_xml = [name for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
+            self.assertEqual(len(slide_xml), 1)
 
         completed = asyncio.run(
             manager.resume(
@@ -292,6 +301,7 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(completed.stage, "completed")
         self.assertTrue(state["final_file_paths"])
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+        self.assertFalse(any("/segments/" in path for path in state["final_file_paths"]))
 
     def test_revision_impact_prefers_deck_slide_for_slide_number(self) -> None:
         state = _adk_state("session_ppt_revision_impact_slide_number")
@@ -382,6 +392,8 @@ class PPTProductionTests(unittest.TestCase):
         previews = {preview["slide_id"]: preview for preview in payload["slide_previews"]}
         self.assertEqual(previews[target_slide_id]["status"], "stale")
         self.assertEqual(previews[untouched_slide_id]["status"], "generated")
+        self.assertTrue(previews[target_slide_id]["segment_path"].endswith(".pptx"))
+        self.assertTrue((workspace_root() / previews[target_slide_id]["segment_path"]).is_file())
         self.assertIsNone(payload["final_artifact"])
         self.assertFalse(any(artifact["name"] == "final.pptx" for artifact in payload["artifacts"]))
         self.assertTrue(any("Stale preview" in artifact["description"] for artifact in payload["artifacts"]))
@@ -402,6 +414,89 @@ class PPTProductionTests(unittest.TestCase):
         )
         self.assertEqual(overview.view["counts"]["stale_previews"], 1)
         self.assertIn(f"slide_preview:{target_slide_id}", overview.view["stale_items"])
+
+    def test_regenerate_stale_segments_refreshes_target_preview_only(self) -> None:
+        state = _adk_state("session_ppt_regenerate_stale_segments")
+        manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="做一份 3 页的产品策略更新。",
+                input_files=[],
+                placeholder_assets=False,
+                render_settings={"target_pages": 3},
+                adk_state=state,
+            )
+        )
+        deck_spec_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        target_slide_id = deck_spec_review.review_payload.items[1]["id"]
+        untouched_slide_id = deck_spec_review.review_payload.items[0]["id"]
+        preview_review = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        original_items = {item["slide_id"]: item for item in preview_review.review_payload.items}
+        original_untouched_preview = original_items[untouched_slide_id]["preview_path"]
+        original_untouched_segment = original_items[untouched_slide_id]["segment_path"]
+
+        applied = asyncio.run(
+            manager.apply_revision(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "notes": "Make the risk narrative more concrete.",
+                    "target_kind": "deck_slide",
+                    "target_id": target_slide_id,
+                },
+                adk_state=state,
+            )
+        )
+        self.assertEqual(applied.review_payload.items[1]["preview_status"], "stale")
+
+        regenerated = asyncio.run(
+            manager.regenerate_stale_segments(
+                production_session_id=started.production_session_id,
+                adk_state=state,
+            )
+        )
+        payload = _load_state_payload(regenerated)
+        previews = {preview["slide_id"]: preview for preview in payload["slide_previews"]}
+        review_items = {item["id"]: item for item in regenerated.review_payload.items}
+
+        self.assertEqual(regenerated.status, "needs_user_review")
+        self.assertEqual(regenerated.stage, "deck_spec_review")
+        self.assertEqual(previews[target_slide_id]["status"], "generated")
+        self.assertEqual(previews[untouched_slide_id]["status"], "generated")
+        self.assertTrue((workspace_root() / previews[target_slide_id]["preview_path"]).is_file())
+        self.assertTrue((workspace_root() / previews[target_slide_id]["segment_path"]).is_file())
+        self.assertEqual(previews[untouched_slide_id]["preview_path"], original_untouched_preview)
+        self.assertEqual(previews[untouched_slide_id]["segment_path"], original_untouched_segment)
+        self.assertIsNone(payload["final_artifact"])
+        self.assertIsNone(payload["quality_report"])
+        self.assertNotIn(f"slide_preview:{target_slide_id}", payload["stale_items"])
+        self.assertIn(f"deck_slide:{target_slide_id}", payload["stale_items"])
+        self.assertIn("final", payload["stale_items"])
+        self.assertIn("quality", payload["stale_items"])
+        self.assertEqual(review_items[target_slide_id]["preview_status"], "generated")
+        self.assertTrue(review_items[target_slide_id]["segment_path"].endswith(".pptx"))
+        self.assertFalse(any(artifact["name"] == "final.pptx" for artifact in payload["artifacts"]))
+
+        overview = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="overview",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(overview.view["counts"]["stale_previews"], 0)
 
     def test_apply_revision_updates_targeted_outline_entry(self) -> None:
         state = _adk_state("session_ppt_revision_outline_entry")

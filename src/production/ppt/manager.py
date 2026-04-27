@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -415,6 +416,172 @@ class PPTProductionManager:
             )
         return self._apply_revision_by_impact(state, notes=notes, user_response=response, impact_view=impact_view, adk_state=adk_state)
 
+    async def regenerate_stale_segments(self, *, production_session_id: str | None, adk_state) -> ProductionRunResult:
+        """Regenerate stale slide segment PPTX files and preview PNGs without rebuilding the final deck."""
+        state_or_result = self._load_state_or_not_found(production_session_id, adk_state)
+        if isinstance(state_or_result, ProductionRunResult):
+            return state_or_result
+        state = state_or_result
+        if state.deck_spec is None:
+            return self._result_from_state(
+                state,
+                message="PPT deck spec is required before regenerating stale slide segments.",
+                error=ProductionErrorInfo(
+                    code="ppt_deck_spec_required",
+                    message="PPT deck spec is required before regenerating stale slide segments.",
+                ),
+            )
+        target_slide_ids = _stale_preview_slide_ids(state)
+        if not target_slide_ids:
+            return self._result_from_state(
+                state,
+                message="No stale PPT slide previews need regeneration.",
+                view=_build_production_view(state, "previews"),
+            )
+        target_slides = _slides_matching_ids(state.deck_spec, target_slide_ids)
+        if not target_slides:
+            return self._result_from_state(
+                state,
+                message="No matching stale PPT deck slides were found for regeneration.",
+                error=ProductionErrorInfo(
+                    code="ppt_stale_slide_not_found",
+                    message="No matching stale PPT deck slides were found for regeneration.",
+                ),
+            )
+        try:
+            session_root = self.store.session_root(state.production_session)
+            state.stage = "slide_segment_regeneration"
+            state.progress_percent = max(state.progress_percent, 74)
+            _publish_ppt_progress(
+                adk_state,
+                state,
+                title="Regenerating stale PPT slides",
+                detail=f"Refreshing {len(target_slide_ids)} stale slide preview/segment artifact(s).",
+            )
+            regenerated_ids = self._regenerate_slide_segment_previews(
+                state,
+                slides=target_slides,
+                session_root=session_root,
+            )
+            state.final_artifact = None
+            state.quality_report = None
+            state.artifacts = _artifact_refs(state)
+            state.stale_items = _ensure_stale_items(
+                _remove_slide_preview_stale_items(state.stale_items, set(regenerated_ids)),
+                ["final", "quality"],
+            )
+            state.status = "needs_user_review"
+            state.stage = "deck_spec_review"
+            state.progress_percent = max(state.progress_percent, 76)
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_deck_spec_review_payload(state),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_stale_slide_segments_regenerated",
+                    stage=state.stage,
+                    message="Regenerated stale PPT slide segment artifacts and preview images.",
+                    metadata={"slide_ids": regenerated_ids, "remaining_stale_items": state.stale_items},
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(
+                state,
+                message=f"Regenerated {len(regenerated_ids)} stale PPT slide preview/segment artifact(s). Please review the updated deck spec.",
+            )
+        except Exception as exc:
+            state.status = "failed"
+            state.stage = "failed"
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_stale_slide_regeneration_failed",
+                    stage=state.stage,
+                    message=f"PPT stale slide regeneration failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            return self._result_from_state(
+                state,
+                message="PPT stale slide regeneration failed.",
+                error=ProductionErrorInfo(
+                    code="ppt_stale_slide_regeneration_failed",
+                    message=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+
+    def _regenerate_slide_segment_previews(
+        self,
+        state: PPTProductionState,
+        *,
+        slides: list[DeckSlide],
+        session_root: Path,
+    ) -> list[str]:
+        regenerated_ids: list[str] = []
+        for slide in slides:
+            updated_preview = self._regenerate_slide_segment_preview(
+                state,
+                slide=slide,
+                session_root=session_root,
+            )
+            _replace_preview_for_slide(state.slide_previews, updated_preview)
+            regenerated_ids.append(slide.slide_id)
+        return regenerated_ids
+
+    def _regenerate_slide_segment_preview(
+        self,
+        state: PPTProductionState,
+        *,
+        slide: DeckSlide,
+        session_root: Path,
+    ) -> SlidePreview:
+        segment_spec = DeckSpec(
+            title=state.deck_spec.title if state.deck_spec else "PPT Slide Segment",
+            slides=[slide.model_copy(deep=True)],
+        )
+        segment_paths = self.deck_builder.build_slide_segments(
+            deck_spec=segment_spec,
+            render_settings=state.render_settings,
+            output_dir=session_root / "segments",
+        )
+        segment_path = segment_paths.get(slide.slide_id, "")
+        temp_preview_dir = session_root / "preview" / "_stale_segments" / f"slide-{slide.sequence_index:02d}"
+        shutil.rmtree(temp_preview_dir, ignore_errors=True)
+        rendered_previews = self.preview_renderer.render(
+            pptx_path=segment_path,
+            deck_spec=segment_spec,
+            render_settings=state.render_settings,
+            output_dir=temp_preview_dir,
+        )
+        if not rendered_previews:
+            raise RuntimeError(f"No preview was rendered for stale slide {slide.sequence_index}.")
+        rendered_preview = rendered_previews[0]
+        stable_preview_path = session_root / "preview" / f"slide-{slide.sequence_index:02d}.png"
+        stable_preview_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(resolve_workspace_path(rendered_preview.preview_path), stable_preview_path)
+        shutil.rmtree(temp_preview_dir, ignore_errors=True)
+
+        existing = _preview_by_slide_id(state).get(slide.slide_id)
+        metadata = dict(rendered_preview.metadata)
+        metadata.update(
+            {
+                "regenerated_from": "stale_slide_segment",
+                "temporary_preview_path": rendered_preview.preview_path,
+            }
+        )
+        return SlidePreview(
+            preview_id=existing.preview_id if existing is not None else rendered_preview.preview_id,
+            slide_id=slide.slide_id,
+            sequence_index=slide.sequence_index,
+            preview_path=workspace_relative_path(stable_preview_path),
+            segment_path=segment_path,
+            status="generated",
+            metadata=metadata,
+        )
+
     def _load_state_or_not_found(self, production_session_id: str | None, adk_state) -> PPTProductionState | ProductionRunResult:
         context = _context_from_adk_state(adk_state)
         session_id = _resolve_requested_session_id(production_session_id, adk_state)
@@ -654,6 +821,12 @@ class PPTProductionManager:
                 render_settings=state.render_settings,
                 output_dir=session_root / "preview",
             )
+            segment_paths = self.deck_builder.build_slide_segments(
+                deck_spec=state.deck_spec,
+                render_settings=state.render_settings,
+                output_dir=session_root / "segments",
+            )
+            _attach_segment_paths(state.slide_previews, segment_paths)
             state.final_artifact.preview_paths = [item.preview_path for item in state.slide_previews]
             state.stage = "quality_check"
             state.progress_percent = 90
@@ -939,8 +1112,48 @@ def _mark_target_previews_stale(state: PPTProductionState, target_ids: set[str])
             preview.status = "stale"
 
 
+def _attach_segment_paths(previews: list[SlidePreview], segment_paths: dict[str, str]) -> None:
+    for preview in previews:
+        preview.segment_path = segment_paths.get(preview.slide_id, "")
+
+
 def _preview_by_slide_id(state: PPTProductionState) -> dict[str, SlidePreview]:
     return {preview.slide_id: preview for preview in state.slide_previews}
+
+
+def _replace_preview_for_slide(previews: list[SlidePreview], updated_preview: SlidePreview) -> None:
+    for index, preview in enumerate(previews):
+        if preview.slide_id == updated_preview.slide_id:
+            previews[index] = updated_preview
+            return
+    previews.append(updated_preview)
+    previews.sort(key=lambda preview: preview.sequence_index)
+
+
+def _stale_preview_slide_ids(state: PPTProductionState) -> set[str]:
+    slide_ids = {preview.slide_id for preview in state.slide_previews if preview.status == "stale"}
+    for item in state.stale_items:
+        prefix, _, identifier = str(item).partition(":")
+        if prefix == "slide_preview" and identifier:
+            slide_ids.add(identifier)
+    return slide_ids
+
+
+def _slides_matching_ids(deck_spec: DeckSpec, slide_ids: set[str]) -> list[DeckSlide]:
+    return [slide for slide in deck_spec.slides if slide.slide_id in slide_ids]
+
+
+def _remove_slide_preview_stale_items(stale_items: list[str], regenerated_slide_ids: set[str]) -> list[str]:
+    stale_preview_markers = {f"slide_preview:{slide_id}" for slide_id in regenerated_slide_ids}
+    return [item for item in stale_items if item not in stale_preview_markers]
+
+
+def _ensure_stale_items(stale_items: list[str], required_items: list[str]) -> list[str]:
+    merged = list(stale_items)
+    for item in required_items:
+        if item not in merged:
+            merged.append(item)
+    return merged
 
 
 def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
@@ -1133,6 +1346,7 @@ def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
                     "status": slide.status,
                     "preview_status": preview.status if preview is not None else "",
                     "preview_path": preview.preview_path if preview is not None else "",
+                    "segment_path": preview.segment_path if preview is not None else "",
                 }
             )
     return ReviewPayload(

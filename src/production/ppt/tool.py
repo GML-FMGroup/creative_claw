@@ -20,6 +20,7 @@ async def run_ppt_production(
         "add_inputs",
         "analyze_revision_impact",
         "apply_revision",
+        "regenerate_stale_segments",
     ],
     user_prompt: str = "",
     production_session_id: str | None = None,
@@ -96,6 +97,11 @@ async def run_ppt_production(
         result = await manager.apply_revision(
             production_session_id=production_session_id,
             user_response=user_response,
+            adk_state=state,
+        )
+    elif action == "regenerate_stale_segments":
+        result = await manager.regenerate_stale_segments(
+            production_session_id=production_session_id,
             adk_state=state,
         )
     else:
