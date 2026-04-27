@@ -37,7 +37,7 @@ from src.production.models import (
 )
 from src.production.projection import get_active_production_session_id
 from src.production.session_store import ProductionSessionStore
-from src.runtime.workspace import workspace_relative_path
+from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
 _VIEW_TYPES = ("overview", "brief", "design_system", "layout", "preview", "quality", "events", "artifacts")
@@ -226,20 +226,13 @@ class DesignProductionManager:
             self.store.project_to_adk_state(adk_state, state)
             return self._result_from_state(state, message="Design production was cancelled.")
         if decision == "revise":
-            state.revision_history.append(response)
-            state.production_events.append(
-                ProductionEvent(
-                    event_type="design_direction_revised",
-                    stage=state.stage,
-                    message="User requested design revisions; returning to design direction review.",
-                    metadata={"user_response": response},
+            if state.active_breakpoint.stage == "preview_review":
+                return await self._apply_revision_and_rebuild(
+                    state,
+                    revision_request=normalize_revision_request(response),
+                    adk_state=adk_state,
                 )
-            )
-            return self._pause_for_design_direction_review(
-                state,
-                message="Design revision notes were captured. Review the updated direction before rebuilding.",
-                adk_state=adk_state,
-            )
+            return self._capture_direction_revision(state, response=response, adk_state=adk_state)
         if decision != "approve":
             return self._result_from_state(state, message="Please respond with decision=approve, revise, or cancel.")
 
@@ -320,27 +313,26 @@ class DesignProductionManager:
             return loaded
         state = loaded
         revision_request = normalize_revision_request(user_response)
-        impact_view = build_revision_impact_view(state, revision_request)
+        if state.html_artifacts:
+            return await self._apply_revision_and_rebuild(
+                state,
+                revision_request=revision_request,
+                adk_state=adk_state,
+            )
         state.revision_history.append(revision_request)
-        for artifact in state.html_artifacts:
-            artifact.status = "stale"
-            artifact.stale_reason = "Revision applied; P0 rebuilds the full page."
-        if state.layout_plan is not None:
-            for page in state.layout_plan.pages:
-                page.status = "stale"
         state.production_events.append(
             ProductionEvent(
-                event_type="revision_applied",
+                event_type="design_direction_revised",
                 stage=state.stage,
-                message="Design revision was applied; returning to design direction review.",
-                metadata={"impact": impact_view},
+                message="Revision was captured before HTML generation; returning to design direction review.",
+                metadata={"user_response": revision_request},
             )
         )
         return self._pause_for_design_direction_review(
             state,
-            message="Revision applied. Review the updated direction before rebuilding the page.",
+            message="Revision captured. Review the updated direction before building the page.",
             adk_state=adk_state,
-            view=impact_view,
+            view=build_revision_impact_view(state, revision_request),
         )
 
     def _load_state_or_error(self, production_session_id: str | None, adk_state) -> DesignProductionState | ProductionRunResult:
@@ -404,6 +396,29 @@ class DesignProductionManager:
         self.store.save_state(state)
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message=message, view=view)
+
+    def _capture_direction_revision(
+        self,
+        state: DesignProductionState,
+        *,
+        response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Capture direction-level revision notes before HTML generation."""
+        state.revision_history.append(response)
+        state.production_events.append(
+            ProductionEvent(
+                event_type="design_direction_revised",
+                stage=state.stage,
+                message="User requested design revisions; returning to design direction review.",
+                metadata={"user_response": response},
+            )
+        )
+        return self._pause_for_design_direction_review(
+            state,
+            message="Design revision notes were captured. Review the updated direction before rebuilding.",
+            adk_state=adk_state,
+        )
 
     async def _build_and_complete_placeholder(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
         await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
@@ -472,9 +487,98 @@ class DesignProductionManager:
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="Generated HTML design is ready for review.")
 
+    async def _apply_revision_and_rebuild(
+        self,
+        state: DesignProductionState,
+        *,
+        revision_request: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        """Apply a preview-stage revision by rebuilding the P0 single-page HTML."""
+        impact_view = build_revision_impact_view(state, revision_request)
+        revision_entry = dict(revision_request)
+        revision_entry["revision_id"] = impact_view.get("revision_id", "")
+        revision_entry["impact"] = {
+            key: value
+            for key, value in impact_view.items()
+            if key not in {"available_targets", "revision_request"}
+        }
+        state.revision_history.append(revision_entry)
+        stale_reason = _revision_stale_reason(revision_entry)
+        for artifact in state.html_artifacts:
+            if artifact.status != "failed":
+                artifact.status = "stale"
+                artifact.stale_reason = stale_reason
+        state.artifacts = []
+        state.status = "running"
+        state.stage = "revision_applying"
+        state.progress_percent = max(state.progress_percent, 70)
+        state.active_breakpoint = None
+        state.production_events.append(
+            ProductionEvent(
+                event_type="revision_applied",
+                stage=state.stage,
+                message="Design revision was applied; rebuilding the full P0 HTML page.",
+                metadata={"impact": impact_view},
+            )
+        )
+        try:
+            await self._build_html_validation_preview_and_qc(
+                state,
+                builder_mode="revision",
+                revision_request=revision_entry,
+                revision_impact=impact_view,
+            )
+        except Exception as exc:
+            state.status = "failed"
+            state.stage = "failed"
+            state.active_breakpoint = None
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="html_revision_failed",
+                    stage=state.stage,
+                    message=f"Design revision build failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(
+                state,
+                message="Design revision build failed.",
+                view=impact_view,
+                error=ProductionErrorInfo(
+                    code="design_html_revision_failed",
+                    message=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+        state.status = "needs_user_review"
+        state.stage = "preview_review"
+        state.progress_percent = 85
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_preview_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="revision_preview_review_ready",
+                stage=state.stage,
+                message="Rebuilt HTML design is ready for review.",
+                metadata={"revision_id": revision_entry.get("revision_id", "")},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Rebuilt HTML design is ready for review.",
+            view=impact_view,
+        )
+
     def _approve_preview_and_complete(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
         for artifact in state.html_artifacts:
-            if artifact.status == "draft":
+            if artifact.status in {"draft", "valid"}:
                 artifact.status = "approved"
         state.status = "completed"
         state.stage = "completed"
@@ -536,13 +640,21 @@ class DesignProductionManager:
         state: DesignProductionState,
         *,
         builder_mode: str,
+        revision_request: dict[str, Any] | None = None,
+        revision_impact: dict[str, Any] | None = None,
     ) -> None:
         session_root = self.store.session_root(state.production_session)
         _ensure_design_dirs(session_root)
         state.stage = "html_building"
         state.progress_percent = max(state.progress_percent, 55)
-        if builder_mode == "expert":
-            artifact = await self._build_expert_html_artifact(session_root=session_root, state=state)
+        if builder_mode in {"expert", "revision"}:
+            artifact = await self._build_expert_html_artifact(
+                session_root=session_root,
+                state=state,
+                builder_mode=builder_mode,
+                revision_request=revision_request,
+                revision_impact=revision_impact,
+            )
         else:
             artifact = self.placeholder_builder.build(session_root=session_root, state=state)
         state.html_artifacts.append(artifact)
@@ -590,29 +702,46 @@ class DesignProductionManager:
             )
         )
 
-    async def _build_expert_html_artifact(self, *, session_root: Path, state: DesignProductionState) -> HtmlArtifact:
-        """Build and persist one baseline HTML artifact with HtmlBuilderExpert."""
+    async def _build_expert_html_artifact(
+        self,
+        *,
+        session_root: Path,
+        state: DesignProductionState,
+        builder_mode: str,
+        revision_request: dict[str, Any] | None = None,
+        revision_impact: dict[str, Any] | None = None,
+    ) -> HtmlArtifact:
+        """Build and persist one HTML artifact with HtmlBuilderExpert."""
         if state.brief is None or state.design_system is None or state.layout_plan is None or not state.layout_plan.pages:
             raise ValueError("brief, design_system, and layout_plan are required before expert HTML generation")
         page = state.layout_plan.pages[0]
         output_dir = session_root / "artifacts"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / _normalize_page_path(page.path)
+        output_path = output_dir / _html_output_filename(
+            page.path,
+            revision=builder_mode == "revision",
+            next_version=len(state.html_artifacts) + 1,
+        )
         html_output = await self.expert_runtime.build_html(
             brief=state.brief,
             design_system=state.design_system,
             layout_plan=state.layout_plan,
             reference_assets=state.reference_assets,
+            build_mode="revision" if builder_mode == "revision" else "baseline",
+            revision_request=revision_request,
+            revision_impact=revision_impact,
+            previous_html=_read_latest_html(state) if builder_mode == "revision" else "",
         )
         output_path.write_text(html_output.html, encoding="utf-8")
         section_fragments = html_output.section_fragments or {
             section.section_id: section.title
             for section in page.sections
         }
+        builder_name = "HtmlBuilderExpert.variant" if builder_mode == "revision" else "HtmlBuilderExpert.baseline"
         return HtmlArtifact(
             page_id=page.page_id,
             path=workspace_relative_path(output_path),
-            builder="HtmlBuilderExpert.baseline",
+            builder=builder_name,
             section_fragments=section_fragments,
             depends_on=[asset.asset_id for asset in state.reference_assets if asset.status == "valid"],
             status="draft",
@@ -620,6 +749,8 @@ class DesignProductionManager:
                 "page_title": html_output.title or page.title,
                 "expert_notes": html_output.notes,
                 "model_name": getattr(self.expert_runtime, "model_name", ""),
+                "build_mode": "revision" if builder_mode == "revision" else "baseline",
+                "revision_id": (revision_request or {}).get("revision_id", ""),
             },
         )
 
@@ -767,6 +898,37 @@ def _normalize_page_path(path: str | None) -> str:
     if candidate.suffix.lower() != ".html":
         return "index.html"
     return candidate.name
+
+
+def _html_output_filename(path: str | None, *, revision: bool, next_version: int) -> str:
+    """Return the artifact filename for a baseline or revision HTML build."""
+    safe_name = _normalize_page_path(path)
+    if not revision:
+        return safe_name
+    candidate = Path(safe_name)
+    version = max(int(next_version or 2), 2)
+    return f"{candidate.stem}_v{version}{candidate.suffix}"
+
+
+def _read_latest_html(state: DesignProductionState) -> str:
+    """Read the latest generated HTML artifact for revision context."""
+    if not state.html_artifacts:
+        return ""
+    latest_path = state.html_artifacts[-1].path
+    if not latest_path:
+        return ""
+    try:
+        return resolve_workspace_path(latest_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _revision_stale_reason(revision_request: dict[str, Any]) -> str:
+    """Return a concise stale reason for artifacts replaced by a revision."""
+    notes = str(revision_request.get("notes") or "").strip()
+    if not notes:
+        return "Revision applied; P0 rebuilt the full page."
+    return f"Revision applied; P0 rebuilt the full page. Notes: {notes[:160]}"
 
 
 def _status_message(state: DesignProductionState) -> str:
