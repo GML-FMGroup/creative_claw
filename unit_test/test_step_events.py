@@ -92,6 +92,42 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Status: started", self.messages[0].text)
         self.assertIn("stage=asset_plan_review", self.messages[1].text)
 
+    async def test_plugin_publishes_design_production_progress(self) -> None:
+        plugin = CreativeClawStepEventPlugin()
+        invocation = SimpleNamespace(invocation_id="inv-design")
+        tool = SimpleNamespace(name="run_design_production")
+        tool_context = SimpleNamespace(
+            invocation_id="inv-design",
+            session=SimpleNamespace(id="session-design", state={"turn_index": 5}),
+        )
+
+        with route_context("web", "chat-design"):
+            await plugin.before_run_callback(invocation_context=invocation)
+            await plugin.before_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_design": True},
+                tool_context=tool_context,
+            )
+            await plugin.after_tool_callback(
+                tool=tool,
+                tool_args={"action": "start", "placeholder_design": True},
+                tool_context=tool_context,
+                result={
+                    "status": "completed",
+                    "capability": "design",
+                    "stage": "completed",
+                    "progress_percent": 100,
+                    "message": "Design production completed.",
+                },
+            )
+            await plugin.after_run_callback(invocation_context=invocation)
+
+        self.assertEqual(len(self.messages), 2)
+        self.assertEqual(self.messages[0].metadata["stage"], "design_processing")
+        self.assertEqual(self.messages[0].metadata["stage_title"], "run_design_production")
+        self.assertIn("Status: started", self.messages[0].text)
+        self.assertIn("design status=completed", self.messages[1].text)
+
     async def test_plugin_ignores_unknown_tool_names(self) -> None:
         plugin = CreativeClawStepEventPlugin()
         invocation = SimpleNamespace(invocation_id="inv-2")
