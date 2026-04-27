@@ -137,15 +137,23 @@ class DesignExpertRuntime:
         design_system: DesignSystemSpec,
         layout_plan: LayoutPlan,
         reference_assets: list[ReferenceAssetEntry],
+        build_mode: str = "baseline",
+        revision_request: dict[str, Any] | None = None,
+        revision_impact: dict[str, Any] | None = None,
+        previous_html: str = "",
     ) -> HtmlBuildOutput:
-        """Generate the baseline single-file HTML artifact."""
+        """Generate a baseline or revision single-file HTML artifact."""
         prompt = render_prompt_template(
             "html_builder_expert",
             {
+                "build_mode": build_mode,
                 "brief_json": brief.model_dump_json(indent=2),
                 "design_system_json": design_system.model_dump_json(indent=2),
                 "layout_plan_json": layout_plan.model_dump_json(indent=2),
                 "reference_assets_json": _json_dump([asset.model_dump(mode="json") for asset in reference_assets]),
+                "revision_request_json": _json_dump(revision_request or {}),
+                "revision_impact_json": _json_dump(revision_impact or {}),
+                "previous_html_summary": _summarize_previous_html(previous_html),
             },
         )
         output = await self._run_structured_agent(
@@ -276,3 +284,13 @@ def _strip_json_fence(text: str) -> str:
 def _json_dump(value: Any) -> str:
     """Dump prompt variables as stable JSON."""
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _summarize_previous_html(html_text: str, *, max_chars: int = 6000) -> str:
+    """Compress previous HTML enough for revision prompts."""
+    text = " ".join(str(html_text or "").split())
+    if not text:
+        return "(none)"
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()} ... [truncated]"

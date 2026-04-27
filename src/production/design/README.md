@@ -21,6 +21,10 @@ When `placeholder_design=false`, `start` now uses internal structured Design exp
 
 The internal experts are encapsulated behind `DesignProductionManager`; they are not top-level orchestrator experts and do not own production state.
 
+## P0b-B Revision Flow
+
+At `preview_review`, a `decision=revise` response now runs revision impact analysis from `DesignProductionState`, marks previous HTML artifacts stale, and asks `HtmlBuilderExpert` for a full-page revision build. P0 keeps section-aware impact metadata, but still rebuilds the single-page HTML artifact instead of assembling section fragments. The rebuilt artifact uses `HtmlBuilderExpert.variant`, then runs validator, preview, and deterministic QC before returning to `preview_review`.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.

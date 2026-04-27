@@ -65,6 +65,9 @@ class _FakePreviewRenderer:
 
 
 class _FakeDesignExpertRuntime:
+    def __init__(self) -> None:
+        self.build_calls = []
+
     @property
     def model_name(self) -> str:
         return "fake/design-model"
@@ -133,26 +136,48 @@ class _FakeDesignExpertRuntime:
             notes="fake direction",
         )
 
-    async def build_html(self, *, brief, design_system, layout_plan, reference_assets):
+    async def build_html(
+        self,
+        *,
+        brief,
+        design_system,
+        layout_plan,
+        reference_assets,
+        build_mode="baseline",
+        revision_request=None,
+        revision_impact=None,
+        previous_html="",
+    ):
+        self.build_calls.append(
+            {
+                "build_mode": build_mode,
+                "revision_request": revision_request or {},
+                "revision_impact": revision_impact or {},
+                "previous_html": previous_html,
+            }
+        )
+        revised = build_mode == "revision"
+        heading = "Expert revised HTML design" if revised else "Expert generated HTML design"
+        body = "Revision applied: make the hero more product-led." if revised else "Monitor GMV, inventory, and alerts in one place."
         return HtmlBuildOutput(
-            title="Expert Dashboard Design",
-            html="""<!doctype html>
+            title="Expert Revised Dashboard Design" if revised else "Expert Dashboard Design",
+            html=f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Expert Dashboard Design</title>
+  <title>{"Expert Revised Dashboard Design" if revised else "Expert Dashboard Design"}</title>
   <style>
-    body { margin: 0; font-family: Inter, system-ui, sans-serif; color: #111827; background: #f8fafc; }
-    main { width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0; }
-    section { background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 24px; margin: 16px 0; }
-    h1 { font-size: 44px; line-height: 1.08; margin: 0; }
-    @media (max-width: 720px) { h1 { font-size: 34px; } section { padding: 18px; } }
+    body {{ margin: 0; font-family: Inter, system-ui, sans-serif; color: #111827; background: #f8fafc; }}
+    main {{ width: min(1040px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0; }}
+    section {{ background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 24px; margin: 16px 0; }}
+    h1 {{ font-size: 44px; line-height: 1.08; margin: 0; }}
+    @media (max-width: 720px) {{ h1 {{ font-size: 34px; }} section {{ padding: 18px; }} }}
   </style>
 </head>
 <body>
   <main>
-    <section id="hero"><h1>Expert generated HTML design</h1><p>Monitor GMV, inventory, and alerts in one place.</p></section>
+    <section id="hero"><h1>{heading}</h1><p>{body}</p></section>
     <section id="workflow"><h2>Workflow</h2><p>Prioritize exceptions and route next actions.</p></section>
   </main>
 </body>
@@ -262,6 +287,146 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.stage, "completed")
         self.assertIn(html_path, state["final_file_paths"])
+
+    def test_manager_revision_impact_marks_target_section(self) -> None:
+        state = _adk_state("session_design_revision_impact")
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=_FakeDesignExpertRuntime(),
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        result = asyncio.run(
+            manager.analyze_revision_impact(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "notes": "Make the hero more product-led.",
+                    "targets": [{"type": "section", "id": "hero"}],
+                },
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.view["view_type"], "revision_impact")
+        self.assertIn("hero", result.view["affected_section_ids"])
+        self.assertTrue(result.view["affected_page_ids"])
+        self.assertEqual(result.view["recommended_action"], "rebuild_page")
+
+    def test_manager_preview_review_revise_rebuilds_variant_html(self) -> None:
+        state = _adk_state("session_design_revision_rebuild")
+        runtime = _FakeDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        first_state = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        first_html_path = first_state["html_artifacts"][0]["path"]
+
+        revised = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "decision": "revise",
+                    "notes": "Make the hero more product-led.",
+                    "targets": [{"type": "section", "id": "hero"}],
+                },
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(revised.status, "needs_user_review")
+        self.assertEqual(revised.stage, "preview_review")
+        self.assertEqual(revised.view["view_type"], "revision_impact")
+        self.assertIn("hero", revised.view["affected_section_ids"])
+        persisted = json.loads(resolve_workspace_path(revised.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(persisted["html_artifacts"]), 2)
+        old_artifact, new_artifact = persisted["html_artifacts"]
+        self.assertEqual(old_artifact["status"], "stale")
+        self.assertIn("Make the hero", old_artifact["stale_reason"])
+        self.assertEqual(new_artifact["builder"], "HtmlBuilderExpert.variant")
+        self.assertEqual(new_artifact["status"], "valid")
+        self.assertNotEqual(first_html_path, new_artifact["path"])
+        self.assertIn("Expert revised HTML design", resolve_workspace_path(new_artifact["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(runtime.build_calls[-1]["build_mode"], "revision")
+        self.assertIn("Expert generated HTML design", runtime.build_calls[-1]["previous_html"])
+        self.assertIn("hero", runtime.build_calls[-1]["revision_impact"]["affected_section_ids"])
+        self.assertEqual(persisted["revision_history"][0]["impact"]["recommended_action"], "rebuild_page")
+
+        completed = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(completed.status, "completed")
+        self.assertIn(new_artifact["path"], state["final_file_paths"])
+        self.assertNotIn(first_html_path, state["final_file_paths"])
+
+    def test_manager_apply_revision_rebuilds_existing_html(self) -> None:
+        state = _adk_state("session_design_apply_revision")
+        runtime = _FakeDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+        asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        result = asyncio.run(
+            manager.apply_revision(
+                production_session_id=started.production_session_id,
+                user_response="Make the hero more product-led.",
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(result.stage, "preview_review")
+        persisted = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["html_artifacts"][0]["status"], "stale")
+        self.assertEqual(persisted["html_artifacts"][1]["builder"], "HtmlBuilderExpert.variant")
+        self.assertEqual(runtime.build_calls[-1]["revision_request"]["notes"], "Make the hero more product-led.")
 
     def test_manager_view_is_read_only(self) -> None:
         state = _adk_state("session_design_view")
