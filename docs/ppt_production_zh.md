@@ -115,6 +115,7 @@ P1d/P1e/P1f/P1g 页面级 stale 语义：targeted deck slide 修改后，`slide_
 - `analyze_revision_impact` 返回 `matched_targets`、`unmatched_targets`、`impacted` 和 `stale_items`，不会修改状态。
 - deck slide 级修改只更新对应 `DeckSlide` 的 bullets / speaker notes，保留已有 preview 记录，把目标页 preview 标记为 `stale`，清空 final artifact 和 quality report，并暂停回 `deck_spec_review`。
 - `regenerate_stale_segments` 只清理已重建页面的 `slide_preview:<id>` stale 标记，保留 `deck_slide:<id>`、`final` 和 `quality` stale 标记。用户 approve `page_preview_review` 后，已审阅页面的 `deck_slide:<id>` stale 标记会被清理，但 `final` / `quality` 仍保留；这是为了避免用户误以为完整 PPTX 已更新。
+- 在 `page_preview_review` 上选择 revise 时，如果用户没有显式提供 `target_id` / `slide_number` / `targets`，系统会默认把修改作用于当前正在审阅的页面，避免退化成整套 outline 重建。
 - outline entry 级修改只更新对应 `PPTOutlineEntry`，清空 deck spec、previews、final artifact 和 quality report，并暂停回 `outline_review`。
 - 未指定目标或目标不够明确时，沿用安全 fallback：把 revision notes 追加到 brief，重建 outline，并清空所有下游产物。
 
