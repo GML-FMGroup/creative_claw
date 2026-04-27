@@ -44,6 +44,7 @@ from src.runtime.workspace import (
     workspace_relative_path,
 )
 from src.production.design.tool import run_design_production as run_design_production_tool
+from src.production.ppt.tool import run_ppt_production as run_ppt_production_tool
 from src.production.short_video.tool import run_short_video_production as run_short_video_production_tool
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
@@ -77,6 +78,7 @@ _PLUGIN_MANAGED_TOOL_NAMES = {
     "web_search",
     "web_fetch",
     "run_design_production",
+    "run_ppt_production",
     "run_short_video_production",
 }
 
@@ -100,6 +102,7 @@ _DISPLAY_TOOL_TITLES = {
     "read_skill": "Read Skill",
     "list_session_files": "List Session Files",
     "run_design_production": "Design Production",
+    "run_ppt_production": "PPT Production",
     "run_short_video_production": "Short Video Production",
 }
 
@@ -390,6 +393,7 @@ class Orchestrator:
                 self.web_fetch,
                 self.list_session_files,
                 self.run_design_production,
+                self.run_ppt_production,
                 self.run_short_video_production,
                 self.invoke_agent,
             ],
@@ -444,6 +448,13 @@ Rules:
 - Use `run_design_production(action="view", view_type=...)` when the user asks to inspect the Design brief, design system, layout, preview, quality report, events, or artifacts. Supported view types are `overview`, `brief`, `design_system`, `layout`, `preview`, `quality`, `events`, and `artifacts`.
 - Use `run_design_production(action="analyze_revision_impact", user_response=...)` before applying targeted design revisions when the user asks what will change. Use `apply_revision` only after the user confirms the revision.
 - When `run_design_production` returns completed artifacts, include those artifact paths in `final_file_paths`.
+- For PPT, slides, PowerPoint, deck, presentation, 演示文稿, 汇报, or converting a brief/source/template into slides, use `run_ppt_production` instead of manually chaining text/image/file tools. PPT production is for durable, reviewable `.pptx` outputs.
+- Current PPT production supports P0 native editable PPTX generation from a text brief, unified input recording, outline review, generated slide previews, a quality report, status/view actions, and revision impact analysis. Template files, source documents, and reference images are recorded in P0 but template editing and document extraction are P1 capabilities.
+- Start PPT production with `run_ppt_production(action="start", user_prompt=..., input_files=..., render_settings=...)`. The first gated review is `outline_review`; call `resume` with `decision="approve"` only after the user approves the outline. The next gated review is `final_preview_review`; approving it completes the production and projects final artifacts into session state.
+- Use `run_ppt_production(action="view", view_type=...)` when the user asks for PPT status, inputs, outline, deck spec, previews, quality, events, or artifacts. Use `view_type="quality"` for QC, validation, or delivery readiness.
+- Use `run_ppt_production(action="add_inputs", input_files=...)` when the user adds a PPT template, source document, or visual reference to the current PPT production. This keeps the same production session and returns to outline review.
+- Use `run_ppt_production(action="analyze_revision_impact", user_response=...)` before applying targeted PPT changes when the user asks what would be affected. Use `apply_revision` only after the user confirms the change.
+- When `run_ppt_production` returns completed artifacts, include those artifact paths in `final_file_paths`.
 - For short-video production workflows that need durable state, review/resume, generated artifacts, or future iteration, use `run_short_video_production` instead of manually chaining video experts in the orchestrator.
 - Current short-video production supports P0a placeholder rendering and P1e gated shot-segment review with partial segment regeneration, explicit provider selection, and final quality reporting for `product_ad`, `cartoon_short_drama`, and `social_media_short`. Use `action="start"` with `placeholder_assets=true` when validating the production framework. For real short-video production, use `action="start"` with `placeholder_assets=false`; every gated review returns `needs_user_review`, the first review is `storyboard_review`, the second gated review is `asset_plan_review`, and approving the asset plan generates one provider shot segment before returning `shot_review`. Continue with `action="resume"` only after each user approval; a `shot_review` approval either generates the next segment or finalizes completed artifacts with a quality report.
 - When starting short-video production from uploaded reference files, pass the uploaded workspace file records or workspace-relative path strings in `input_files`; do not describe the upload only in `user_prompt`.
@@ -1284,6 +1295,46 @@ Expert parameter contracts:
             allowed = ", ".join(payload_by_section.keys())
             return f"Error: Unsupported section `{section}`. Allowed: {allowed}"
         return json.dumps(payload_by_section[normalized_section], ensure_ascii=False, indent=2)
+
+    async def run_ppt_production(
+        self,
+        action: str,
+        user_prompt: str = "",
+        production_session_id: str | None = None,
+        view_type: str = "overview",
+        input_files: list[Any] | str | None = None,
+        placeholder_assets: bool = False,
+        render_settings: dict[str, Any] | None = None,
+        user_response: dict[str, Any] | str | None = None,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Run, inspect, resume, view, update, revise, or analyze PPT production."""
+        return await self._run_async_tool_with_events(
+            tool_context=tool_context,
+            tool_name="run_ppt_production",
+            stage="ppt_processing",
+            args={
+                "action": action,
+                "user_prompt": user_prompt,
+                "production_session_id": production_session_id,
+                "view_type": view_type,
+                "input_files": input_files,
+                "placeholder_assets": placeholder_assets,
+                "render_settings": render_settings,
+                "user_response": user_response,
+            },
+            runner=lambda: run_ppt_production_tool(
+                action=action,  # type: ignore[arg-type]
+                user_prompt=user_prompt,
+                production_session_id=production_session_id,
+                view_type=view_type,  # type: ignore[arg-type]
+                input_files=input_files,
+                placeholder_assets=placeholder_assets,
+                render_settings=render_settings,
+                user_response=user_response,
+                tool_context=tool_context,
+            ),
+        )
 
     async def run_short_video_production(
         self,

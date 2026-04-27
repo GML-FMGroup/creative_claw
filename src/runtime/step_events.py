@@ -38,6 +38,7 @@ _BUILTIN_TOOL_STAGES = {
     "web_search": "research",
     "web_fetch": "research",
     "run_design_production": "design_processing",
+    "run_ppt_production": "ppt_processing",
     "run_short_video_production": "video_processing",
 }
 
