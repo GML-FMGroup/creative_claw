@@ -34,6 +34,7 @@ async def run_ppt_production(
         "deck_spec",
         "previews",
         "quality",
+        "manifest",
         "events",
         "artifacts",
     ] = "overview",

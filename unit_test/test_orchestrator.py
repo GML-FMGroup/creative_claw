@@ -132,6 +132,8 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("outline_review", instruction)
         self.assertIn("deck_spec_review", instruction)
         self.assertIn("page_preview_review", instruction)
+        self.assertIn("render manifest", instruction)
+        self.assertIn("view_type=\"manifest\"", instruction)
         self.assertIn("slide_number", instruction)
         self.assertIn("target_kind", instruction)
         self.assertIn("target_id", instruction)

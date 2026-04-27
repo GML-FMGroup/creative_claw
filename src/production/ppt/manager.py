@@ -55,6 +55,7 @@ _VIEW_TYPES = (
     "deck_spec",
     "previews",
     "quality",
+    "manifest",
     "events",
     "artifacts",
 )
@@ -1058,6 +1059,12 @@ class PPTProductionManager:
         if state.quality_report is not None:
             (root / "quality_report.json").write_text(state.quality_report.model_dump_json(indent=2), encoding="utf-8")
         (root / "quality_report.md").write_text(quality_report_markdown(state.quality_report), encoding="utf-8")
+        manifest = _render_manifest(state)
+        (root / "render_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (root / "render_manifest.md").write_text(_render_manifest_markdown(manifest), encoding="utf-8")
 
 
 def _context_from_adk_state(adk_state) -> dict[str, Any]:
@@ -1489,7 +1496,146 @@ def _artifact_refs(state: PPTProductionState) -> list[WorkspaceFileRef]:
                 source="ppt",
             )
         )
+    if _has_render_manifest_outputs(state):
+        root = state.production_session.root_dir
+        artifacts.append(
+            WorkspaceFileRef(
+                name="render_manifest.md",
+                path=f"{root}/render_manifest.md",
+                description="PPT delivery manifest with final, preview, segment, and quality paths.",
+                source="ppt",
+            )
+        )
     return artifacts
+
+
+def _has_render_manifest_outputs(state: PPTProductionState) -> bool:
+    return bool(state.final_artifact is not None or state.slide_previews or state.quality_report is not None)
+
+
+def _render_manifest(state: PPTProductionState) -> dict[str, Any]:
+    final_pptx_path = state.final_artifact.pptx_path if state.final_artifact is not None else ""
+    quality_report_path = (
+        state.quality_report.report_path
+        if state.quality_report is not None and state.quality_report.report_path
+        else f"{state.production_session.root_dir}/quality_report.json"
+    )
+    deck_slides = {slide.slide_id: slide for slide in state.deck_spec.slides} if state.deck_spec is not None else {}
+    slides = []
+    for preview in sorted(state.slide_previews, key=lambda item: item.sequence_index):
+        slide = deck_slides.get(preview.slide_id)
+        slides.append(
+            {
+                "slide_id": preview.slide_id,
+                "sequence_index": preview.sequence_index,
+                "title": slide.title if slide is not None else "",
+                "layout_type": slide.layout_type if slide is not None else "",
+                "deck_slide_status": slide.status if slide is not None else "",
+                "preview_status": preview.status,
+                "preview_path": preview.preview_path,
+                "segment_path": preview.segment_path,
+            }
+        )
+
+    return {
+        "manifest_version": "0.1.0",
+        "production_session_id": state.production_session.production_session_id,
+        "capability": state.production_session.capability,
+        "status": state.status,
+        "stage": state.stage,
+        "progress_percent": state.progress_percent,
+        "state_ref": f"{state.production_session.root_dir}/state.json",
+        "manifest_path": f"{state.production_session.root_dir}/render_manifest.json",
+        "manifest_markdown_path": f"{state.production_session.root_dir}/render_manifest.md",
+        "brief_summary": state.brief_summary,
+        "render_settings": state.render_settings.model_dump(mode="json"),
+        "inputs": [item.model_dump(mode="json") for item in state.inputs],
+        "document_summary": _review_summary_state(state.document_summary),
+        "template_summary": _review_summary_state(state.template_summary),
+        "outline": _outline_manifest(state),
+        "deck_spec": _deck_spec_manifest(state),
+        "delivery": {
+            "final_pptx_path": final_pptx_path,
+            "preview_count": len(state.slide_previews),
+            "segment_count": len([preview for preview in state.slide_previews if preview.segment_path]),
+            "quality_report_path": quality_report_path if state.quality_report is not None else "",
+            "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md",
+            "quality_status": state.quality_report.status if state.quality_report is not None else "",
+        },
+        "slides": slides,
+        "stale_items": state.stale_items,
+        "warnings": state.warnings,
+        "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+    }
+
+
+def _outline_manifest(state: PPTProductionState) -> dict[str, Any] | None:
+    if state.outline is None:
+        return None
+    return {
+        "outline_id": state.outline.outline_id,
+        "title": state.outline.title,
+        "target_pages": state.outline.target_pages,
+        "slide_count": len(state.outline.entries),
+        "status": state.outline.status,
+        "path": f"{state.production_session.root_dir}/outline.json",
+        "markdown_path": f"{state.production_session.root_dir}/outline.md",
+    }
+
+
+def _deck_spec_manifest(state: PPTProductionState) -> dict[str, Any] | None:
+    if state.deck_spec is None:
+        return None
+    return {
+        "deck_spec_id": state.deck_spec.deck_spec_id,
+        "title": state.deck_spec.title,
+        "slide_count": len(state.deck_spec.slides),
+        "status": state.deck_spec.status,
+        "path": f"{state.production_session.root_dir}/deck_spec.json",
+        "markdown_path": f"{state.production_session.root_dir}/deck_spec.md",
+    }
+
+
+def _render_manifest_markdown(manifest: dict[str, Any]) -> str:
+    delivery = manifest.get("delivery") or {}
+    lines = [
+        "# PPT Render Manifest",
+        "",
+        f"Session: {manifest.get('production_session_id', '')}",
+        f"Status: {manifest.get('status', '')}",
+        f"Stage: {manifest.get('stage', '')}",
+        "",
+        "## Delivery",
+        "",
+        f"- Final PPTX: {delivery.get('final_pptx_path') or 'Not generated yet'}",
+        f"- Preview count: {delivery.get('preview_count', 0)}",
+        f"- Segment count: {delivery.get('segment_count', 0)}",
+        f"- Quality report: {delivery.get('quality_report_path') or 'Not generated yet'}",
+        f"- Quality status: {delivery.get('quality_status') or 'Not generated yet'}",
+        "",
+    ]
+    slides = manifest.get("slides") or []
+    if slides:
+        lines.extend(["## Slides", ""])
+        for slide in slides:
+            lines.append(
+                "- "
+                f"{slide.get('sequence_index')}. {slide.get('title') or slide.get('slide_id')} "
+                f"preview={slide.get('preview_status') or 'none'} "
+                f"segment={slide.get('segment_path') or 'none'}"
+            )
+        lines.append("")
+    stale_items = manifest.get("stale_items") or []
+    if stale_items:
+        lines.extend(["## Stale Items", ""])
+        lines.extend(f"- {item}" for item in stale_items)
+        lines.append("")
+    warnings = manifest.get("warnings") or []
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        lines.extend(f"- {warning}" for warning in warnings)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
@@ -1690,6 +1836,8 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
         base.update({"previews": [item.model_dump(mode="json") for item in state.slide_previews], "preview_index_path": f"{state.production_session.root_dir}/preview/index.json"})
     elif view_type == "quality":
         base.update({"quality_report": state.quality_report.model_dump(mode="json") if state.quality_report else None, "quality_report_path": f"{state.production_session.root_dir}/quality_report.json", "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md"})
+    elif view_type == "manifest":
+        base.update({"manifest": _render_manifest(state), "manifest_path": f"{state.production_session.root_dir}/render_manifest.json", "manifest_markdown_path": f"{state.production_session.root_dir}/render_manifest.md"})
     elif view_type == "events":
         base.update({"events": [item.model_dump(mode="json") for item in state.production_events], "events_path": f"{state.production_session.root_dir}/events.jsonl"})
     elif view_type == "artifacts":

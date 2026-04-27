@@ -327,6 +327,8 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any(artifact.name == "final.pptx" for artifact in preview_review.artifacts))
         final_artifact = next(artifact for artifact in preview_review.artifacts if artifact.name == "final.pptx")
         self.assertTrue((workspace_root() / final_artifact.path).is_file())
+        manifest_artifact = next(artifact for artifact in preview_review.artifacts if artifact.name == "render_manifest.md")
+        self.assertTrue((workspace_root() / manifest_artifact.path).is_file())
         segment_paths = [item["segment_path"] for item in preview_review.review_payload.items]
         self.assertEqual(len(segment_paths), 3)
         self.assertTrue(all(path.endswith(".pptx") for path in segment_paths))
@@ -336,6 +338,24 @@ class PPTProductionTests(unittest.TestCase):
             with zipfile.ZipFile(resolved_segment) as package:
                 slide_xml = [name for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
             self.assertEqual(len(slide_xml), 1)
+
+        manifest_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="manifest",
+                adk_state=state,
+            )
+        )
+        manifest = manifest_view.view["manifest"]
+        self.assertEqual(manifest["delivery"]["final_pptx_path"], final_artifact.path)
+        self.assertEqual(manifest["delivery"]["preview_count"], 3)
+        self.assertEqual(manifest["delivery"]["segment_count"], 3)
+        self.assertEqual(manifest["delivery"]["quality_status"], "pass")
+        self.assertEqual(len(manifest["slides"]), 3)
+        self.assertEqual([slide["segment_path"] for slide in manifest["slides"]], segment_paths)
+        manifest_json = workspace_root() / manifest_view.view["manifest_path"]
+        self.assertTrue(manifest_json.is_file())
+        self.assertEqual(json.loads(manifest_json.read_text(encoding="utf-8"))["delivery"]["final_pptx_path"], final_artifact.path)
 
         completed = asyncio.run(
             manager.resume(
