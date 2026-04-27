@@ -34,6 +34,7 @@ User
 - `analyze_revision_impact` 只读分析修改影响范围，支持 `target_kind` / `target_id` / `slide_number` 定位。
 - `apply_revision` 在用户确认后应用修改：outline item 修改回到 `outline_review`，deck spec slide 修改回到 `deck_spec_review`，并把目标页 preview 标记为 stale；无法确定目标时回到整套 outline review。
 - `regenerate_stale_segments` 只重建 stale 页面的 preview PNG 和单页 `.pptx` segment，随后进入 `page_preview_review`，不直接更新最终 `final.pptx`。
+- `render_manifest` 投影把 final PPTX、preview、单页 segment、quality report、输入、设置和 stale 状态集中成一份交付清单。
 - 产物写入 production session 目录，并通过共享 projection 投影最终文件。
 
 当前暂不支持：
@@ -87,7 +88,7 @@ apply_revision
 | --- | --- | --- |
 | `start` | 是 | 创建 PPT production session；默认进入 `outline_review`，当 `render_settings.brief_review=true` 时先进入 `brief_review`。 |
 | `status` | 否 | 返回当前阶段、进度和 active production 指针。 |
-| `view` | 否 | 查看 `overview`、`brief`、`inputs`、`document_summary`、`template_summary`、`outline`、`deck_spec`、`previews`、`quality`、`events`、`artifacts`。 |
+| `view` | 否 | 查看 `overview`、`brief`、`inputs`、`document_summary`、`template_summary`、`outline`、`deck_spec`、`previews`、`manifest`、`quality`、`events`、`artifacts`。 |
 | `resume` | 是 | 对 active review 执行 `approve`、`revise` 或 `cancel`；当前 review 可能是 `brief_review`、`outline_review`、`deck_spec_review`、`page_preview_review` 或 `final_preview_review`。 |
 | `add_inputs` | 是 | 追加模板、源文档或参考图，标记下游 stale，并回到 outline review。 |
 | `analyze_revision_impact` | 否 | 只读分析用户修改会影响哪些对象。 |
@@ -169,13 +170,15 @@ generated/{adk_session_id}/production/{ppt_session_id}/
     slide-01.pptx
   final/
     final.pptx
+  render_manifest.md
+  render_manifest.json
   quality_report.md
   quality_report.json
 ```
 
-`state.json` 是事实源；Markdown/JSON 视图和 preview 是投影。
+`state.json` 是事实源；Markdown/JSON 视图、preview 和 render manifest 都是投影，可由 state 重建。`view_type="manifest"` 会返回同一份结构化清单，适合 App 或 CLI 一次性读取交付路径。
 
-P1e/P1f/P1g segment 产物是中间产物：`SlidePreview.segment_path` 会记录每页单独的可编辑 `.pptx`，`regenerate_stale_segments` 会覆盖 stale 页面的 segment，并通过 `page_preview_review` 暴露给用户确认，但它们不会作为最终交付文件写入 `final_file_paths`。用户需要检查页面级状态时，通过 `view_type="previews"` 查看。
+P1e/P1f/P1g segment 产物是中间产物：`SlidePreview.segment_path` 会记录每页单独的可编辑 `.pptx`，`regenerate_stale_segments` 会覆盖 stale 页面的 segment，并通过 `page_preview_review` 暴露给用户确认，但它们不会作为最终交付文件写入 `final_file_paths`。用户需要检查页面级状态时，通过 `view_type="previews"` 查看；需要同时查看 final、preview、segment 和 quality 路径时，通过 `view_type="manifest"` 查看。
 
 ## 环境与降级
 
