@@ -13,10 +13,12 @@ from src.production.design.models import (
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
+    HtmlArtifact,
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
 )
+from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.placeholders import PlaceholderHtmlBuilder
 from src.production.design.quality import build_quality_report, quality_report_markdown
 from src.production.design.tools.asset_ingestor import AssetIngestor
@@ -35,6 +37,7 @@ from src.production.models import (
 )
 from src.production.projection import get_active_production_session_id
 from src.production.session_store import ProductionSessionStore
+from src.runtime.workspace import workspace_relative_path
 
 
 _VIEW_TYPES = ("overview", "brief", "design_system", "layout", "preview", "quality", "events", "artifacts")
@@ -53,6 +56,7 @@ class DesignProductionManager:
         html_validator: HtmlValidator | None = None,
         preview_renderer: HtmlPreviewRenderer | None = None,
         placeholder_builder: PlaceholderHtmlBuilder | None = None,
+        expert_runtime: DesignExpertRuntime | None = None,
     ) -> None:
         """Initialize the Design production manager."""
         self.store = store or ProductionSessionStore()
@@ -60,6 +64,7 @@ class DesignProductionManager:
         self.html_validator = html_validator or HtmlValidator()
         self.preview_renderer = preview_renderer or HtmlPreviewRenderer()
         self.placeholder_builder = placeholder_builder or PlaceholderHtmlBuilder()
+        self.expert_runtime = expert_runtime or DesignExpertRuntime()
 
     async def start(
         self,
@@ -102,14 +107,27 @@ class DesignProductionManager:
                 input_files=input_files,
                 turn_index=context["turn_index"],
             )
-            _prepare_placeholder_planning_state(state, user_prompt=user_prompt, design_settings=design_settings or {})
-            if not placeholder_design:
-                return self._pause_for_design_direction_review(
-                    state,
-                    message="Design direction is ready for review before HTML generation.",
-                    adk_state=adk_state,
-                )
-            return await self._build_and_complete_placeholder(state, adk_state=adk_state)
+            if placeholder_design:
+                _prepare_placeholder_planning_state(state, user_prompt=user_prompt, design_settings=design_settings or {})
+                return await self._build_and_complete_placeholder(state, adk_state=adk_state)
+
+            await self._prepare_expert_direction_state(
+                state,
+                user_prompt=user_prompt,
+                design_settings=design_settings or {},
+            )
+            if state.brief is not None:
+                state.brief.confirmed = False
+            if state.layout_plan is not None:
+                for page in state.layout_plan.pages:
+                    page.status = "draft"
+            if state.design_system is not None:
+                state.design_system.source = "generated" if state.design_system.source == "placeholder" else state.design_system.source
+            return self._pause_for_design_direction_review(
+                state,
+                message="Design direction is ready for review before HTML generation.",
+                adk_state=adk_state,
+            )
         except Exception as exc:
             state.status = "failed"
             state.stage = "failed"
@@ -388,7 +406,7 @@ class DesignProductionManager:
         return self._result_from_state(state, message=message, view=view)
 
     async def _build_and_complete_placeholder(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
-        await self._build_html_validation_preview_and_qc(state)
+        await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -412,7 +430,29 @@ class DesignProductionManager:
         if state.layout_plan is not None:
             for page in state.layout_plan.pages:
                 page.status = "approved"
-        await self._build_html_validation_preview_and_qc(state)
+        try:
+            await self._build_html_validation_preview_and_qc(state, builder_mode="expert")
+        except Exception as exc:
+            state.status = "failed"
+            state.stage = "failed"
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="html_build_failed",
+                    stage=state.stage,
+                    message=f"Design HTML build failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(
+                state,
+                message="Design HTML build failed.",
+                error=ProductionErrorInfo(
+                    code="design_html_build_failed",
+                    message=f"{type(exc).__name__}: {exc}",
+                ),
+            )
         state.status = "needs_user_review"
         state.stage = "preview_review"
         state.progress_percent = 85
@@ -453,12 +493,58 @@ class DesignProductionManager:
         self.store.project_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="Design production completed.")
 
-    async def _build_html_validation_preview_and_qc(self, state: DesignProductionState) -> None:
+    async def _prepare_expert_direction_state(
+        self,
+        state: DesignProductionState,
+        *,
+        user_prompt: str,
+        design_settings: dict[str, Any],
+    ) -> None:
+        """Prepare brief, design system, and layout with internal structured experts."""
+        state.stage = "brief_preparing"
+        state.progress_percent = max(state.progress_percent, 12)
+        direction = await self.expert_runtime.plan_direction(
+            user_prompt=user_prompt,
+            design_genre=state.design_genre or _infer_design_genre(user_prompt, design_settings),
+            design_settings=design_settings,
+            reference_assets=state.reference_assets,
+        )
+        if not direction.layout_plan.pages:
+            raise ValueError("LayoutPlannerExpert returned no pages.")
+        for page in direction.layout_plan.pages:
+            page.path = _normalize_page_path(page.path)
+        state.brief = direction.brief
+        state.design_genre = direction.brief.design_genre
+        state.design_system = direction.design_system
+        state.layout_plan = direction.layout_plan
+        state.stage = "layout_prepared"
+        state.progress_percent = max(state.progress_percent, 35)
+        state.production_events.append(
+            ProductionEvent(
+                event_type="expert_direction_prepared",
+                stage=state.stage,
+                message="Prepared Design brief, design system, and layout plan with internal structured experts.",
+                metadata={
+                    "model_name": getattr(self.expert_runtime, "model_name", ""),
+                    "notes": direction.notes,
+                },
+            )
+        )
+
+    async def _build_html_validation_preview_and_qc(
+        self,
+        state: DesignProductionState,
+        *,
+        builder_mode: str,
+    ) -> None:
         session_root = self.store.session_root(state.production_session)
         _ensure_design_dirs(session_root)
         state.stage = "html_building"
         state.progress_percent = max(state.progress_percent, 55)
-        artifact = self.placeholder_builder.build(session_root=session_root, state=state)
+        if builder_mode == "expert":
+            artifact = await self._build_expert_html_artifact(session_root=session_root, state=state)
+        else:
+            artifact = self.placeholder_builder.build(session_root=session_root, state=state)
         state.html_artifacts.append(artifact)
 
         state.stage = "html_validation"
@@ -502,6 +588,39 @@ class DesignProductionManager:
                     "qc_status": qc_report.status,
                 },
             )
+        )
+
+    async def _build_expert_html_artifact(self, *, session_root: Path, state: DesignProductionState) -> HtmlArtifact:
+        """Build and persist one baseline HTML artifact with HtmlBuilderExpert."""
+        if state.brief is None or state.design_system is None or state.layout_plan is None or not state.layout_plan.pages:
+            raise ValueError("brief, design_system, and layout_plan are required before expert HTML generation")
+        page = state.layout_plan.pages[0]
+        output_dir = session_root / "artifacts"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / _normalize_page_path(page.path)
+        html_output = await self.expert_runtime.build_html(
+            brief=state.brief,
+            design_system=state.design_system,
+            layout_plan=state.layout_plan,
+            reference_assets=state.reference_assets,
+        )
+        output_path.write_text(html_output.html, encoding="utf-8")
+        section_fragments = html_output.section_fragments or {
+            section.section_id: section.title
+            for section in page.sections
+        }
+        return HtmlArtifact(
+            page_id=page.page_id,
+            path=workspace_relative_path(output_path),
+            builder="HtmlBuilderExpert.baseline",
+            section_fragments=section_fragments,
+            depends_on=[asset.asset_id for asset in state.reference_assets if asset.status == "valid"],
+            status="draft",
+            metadata={
+                "page_title": html_output.title or page.title,
+                "expert_notes": html_output.notes,
+                "model_name": getattr(self.expert_runtime, "model_name", ""),
+            },
         )
 
     def _finalize_artifacts(self, state: DesignProductionState) -> None:
@@ -637,6 +756,17 @@ def _resolve_requested_session_id(production_session_id: str | None, adk_state) 
 def _normalize_view_type(view_type: str | None) -> str | None:
     value = str(view_type or "overview").strip().lower() or "overview"
     return value if value in _VIEW_TYPES else None
+
+
+def _normalize_page_path(path: str | None) -> str:
+    """Return a safe single-file HTML artifact path."""
+    value = str(path or "").strip() or "index.html"
+    candidate = Path(value)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return "index.html"
+    if candidate.suffix.lower() != ".html":
+        return "index.html"
+    return candidate.name
 
 
 def _status_message(state: DesignProductionState) -> str:

@@ -15,9 +15,11 @@ Design production is intentionally separate from one-shot image generation, edit
 7. Deterministic QC summarizes validator and preview results.
 8. Final HTML, screenshots when available, and QC report are projected to ADK state.
 
-## Non-placeholder Skeleton
+## P0b-A Non-placeholder Flow
 
-When `placeholder_design=false`, `start` currently prepares a `design_direction_review` breakpoint. Approving that breakpoint builds the placeholder HTML and returns `preview_review`. P0b should replace the deterministic planning and placeholder HTML with internal structured Design experts while preserving the same state machine and review contracts.
+When `placeholder_design=false`, `start` now uses internal structured Design experts to prepare the brief, design system, and layout plan, then pauses at `design_direction_review`. Approving that breakpoint calls `HtmlBuilderExpert` to generate a baseline single-file HTML artifact, then runs the same static validation, optional browser preview, and deterministic QC before pausing at `preview_review`.
+
+The internal experts are encapsulated behind `DesignProductionManager`; they are not top-level orchestrator experts and do not own production state.
 
 ## Package Responsibilities
 
@@ -25,6 +27,8 @@ When `placeholder_design=false`, `start` currently prepares a `design_direction_
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, and QC report models.
 - `placeholders.py`: deterministic P0a HTML builder.
+- `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction and baseline HTML generation.
+- `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
 - `quality.py`: deterministic P0 quality report generation.
 - `impact.py`: read-only P0 revision impact analysis.
 - `tools/asset_ingestor.py`: reference asset registration and copying.
