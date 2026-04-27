@@ -43,6 +43,7 @@ from src.runtime.workspace import (
     resolve_workspace_path,
     workspace_relative_path,
 )
+from src.production.design.tool import run_design_production as run_design_production_tool
 from src.production.short_video.tool import run_short_video_production as run_short_video_production_tool
 from src.skills import get_skill_registry
 from src.tools.builtin_tools import (
@@ -75,6 +76,7 @@ _PLUGIN_MANAGED_TOOL_NAMES = {
     "process_session",
     "web_search",
     "web_fetch",
+    "run_design_production",
     "run_short_video_production",
 }
 
@@ -97,6 +99,7 @@ _DISPLAY_TOOL_TITLES = {
     "list_skills": "List Skills",
     "read_skill": "Read Skill",
     "list_session_files": "List Session Files",
+    "run_design_production": "Design Production",
     "run_short_video_production": "Short Video Production",
 }
 
@@ -386,6 +389,7 @@ class Orchestrator:
                 self.web_search,
                 self.web_fetch,
                 self.list_session_files,
+                self.run_design_production,
                 self.run_short_video_production,
                 self.invoke_agent,
             ],
@@ -434,6 +438,12 @@ Rules:
 - Prefer direct execution over abstract planning.
 - Use built-in tools for local workspace work: `list_dir`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`, `image_crop`, `image_rotate`, `image_flip`, `image_info`, `image_resize`, `image_convert`, `video_info`, `video_extract_frame`, `video_trim`, `video_concat`, `video_convert`, `audio_info`, `audio_trim`, `audio_concat`, `audio_convert`, `exec_command`, `process_session`, `web_search`, `web_fetch`.
 - Use `list_session_files(section=...)` when you need the exact normalized workspace paths already tracked in the current session state.
+- For HTML-centered design work such as UI mockups, dashboards, landing pages, product detail pages, one-pagers, wireframes, or lightweight interactive HTML prototypes, use `run_design_production` instead of manually chaining file writes, image generation, screenshots, and validation in the orchestrator.
+- Current Design production supports a P0a placeholder HTML pipeline through `run_design_production(action="start", placeholder_design=true)`. Use this mode when validating the production framework. For non-placeholder Design production, `action="start"` currently prepares a design direction review before HTML generation.
+- Design production's core artifact is HTML. Route pure image/poster/cover generation away from Design unless the image is only an embedded asset for an HTML design. Route editable PPTX generation away from Design and to the PPT product line when that exists.
+- Use `run_design_production(action="view", view_type=...)` when the user asks to inspect the Design brief, design system, layout, preview, quality report, events, or artifacts. Supported view types are `overview`, `brief`, `design_system`, `layout`, `preview`, `quality`, `events`, and `artifacts`.
+- Use `run_design_production(action="analyze_revision_impact", user_response=...)` before applying targeted design revisions when the user asks what will change. Use `apply_revision` only after the user confirms the revision.
+- When `run_design_production` returns completed artifacts, include those artifact paths in `final_file_paths`.
 - For short-video production workflows that need durable state, review/resume, generated artifacts, or future iteration, use `run_short_video_production` instead of manually chaining video experts in the orchestrator.
 - Current short-video production supports P0a placeholder rendering and P1e gated shot-segment review with partial segment regeneration, explicit provider selection, and final quality reporting for `product_ad`, `cartoon_short_drama`, and `social_media_short`. Use `action="start"` with `placeholder_assets=true` when validating the production framework. For real short-video production, use `action="start"` with `placeholder_assets=false`; every gated review returns `needs_user_review`, the first review is `storyboard_review`, the second gated review is `asset_plan_review`, and approving the asset plan generates one provider shot segment before returning `shot_review`. Continue with `action="resume"` only after each user approval; a `shot_review` approval either generates the next segment or finalizes completed artifacts with a quality report.
 - When starting short-video production from uploaded reference files, pass the uploaded workspace file records or workspace-relative path strings in `input_files`; do not describe the upload only in `user_prompt`.
@@ -1310,6 +1320,46 @@ Expert parameter contracts:
                 input_files=input_files,
                 placeholder_assets=placeholder_assets,
                 render_settings=render_settings,
+                user_response=user_response,
+                tool_context=tool_context,
+            ),
+        )
+
+    async def run_design_production(
+        self,
+        action: str,
+        user_prompt: str = "",
+        production_session_id: str | None = None,
+        view_type: str = "overview",
+        input_files: list[Any] | str | None = None,
+        placeholder_design: bool = False,
+        design_settings: dict[str, Any] | None = None,
+        user_response: dict[str, Any] | str | None = None,
+        tool_context: ToolContext | None = None,
+    ) -> dict[str, Any]:
+        """Run, inspect, resume, view, update, revise, or analyze Design production."""
+        return await self._run_async_tool_with_events(
+            tool_context=tool_context,
+            tool_name="run_design_production",
+            stage="design_processing",
+            args={
+                "action": action,
+                "user_prompt": user_prompt,
+                "production_session_id": production_session_id,
+                "view_type": view_type,
+                "input_files": input_files,
+                "placeholder_design": placeholder_design,
+                "design_settings": design_settings,
+                "user_response": user_response,
+            },
+            runner=lambda: run_design_production_tool(
+                action=action,  # type: ignore[arg-type]
+                user_prompt=user_prompt,
+                production_session_id=production_session_id,
+                view_type=view_type,  # type: ignore[arg-type]
+                input_files=input_files,
+                placeholder_design=placeholder_design,
+                design_settings=design_settings,
                 user_response=user_response,
                 tool_context=tool_context,
             ),

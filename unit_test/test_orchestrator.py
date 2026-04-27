@@ -40,6 +40,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("read_skill", instruction)
         self.assertIn("web_fetch", instruction)
         self.assertIn("web_search", instruction)
+        self.assertIn("run_design_production", instruction)
         self.assertIn("run_short_video_production", instruction)
         self.assertIn("image_crop", instruction)
         self.assertIn("image_rotate", instruction)

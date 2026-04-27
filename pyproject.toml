@@ -10,6 +10,7 @@ packages = [
 ]
 include = [
     "conf/jsons/*.json",
+    "playbooks/design/*.md",
     "skills/**/*",
     "src/production/short_video/prompts/*.md",
     "src/webchat/static/**/*",
