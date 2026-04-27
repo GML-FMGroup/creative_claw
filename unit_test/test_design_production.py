@@ -8,6 +8,8 @@ from src.production.design.expert_runtime import DesignDirectionPlan, HtmlBuildO
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
     DesignBrief,
+    DesignQcFinding,
+    DesignQcReport,
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
@@ -65,8 +67,10 @@ class _FakePreviewRenderer:
 
 
 class _FakeDesignExpertRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_quality: bool = False) -> None:
         self.build_calls = []
+        self.quality_calls = []
+        self.fail_quality = fail_quality
 
     @property
     def model_name(self) -> str:
@@ -187,6 +191,42 @@ class _FakeDesignExpertRuntime:
             notes="fake html",
         )
 
+    async def assess_quality(
+        self,
+        *,
+        brief,
+        design_system,
+        layout_plan,
+        artifact,
+        validation_report,
+        preview_reports,
+        html,
+    ):
+        self.quality_calls.append(
+            {
+                "artifact_id": artifact.artifact_id,
+                "validation_status": validation_report.status,
+                "preview_count": len(preview_reports),
+                "html": html,
+            }
+        )
+        if self.fail_quality:
+            raise RuntimeError("fake qc unavailable")
+        return DesignQcReport(
+            artifact_ids=[artifact.artifact_id],
+            status="pass",
+            summary="Fake expert QC passed.",
+            findings=[
+                DesignQcFinding(
+                    severity="info",
+                    category="brief_fit",
+                    target="hero",
+                    summary="Hero reflects the requested operational dashboard brief.",
+                    recommendation="Keep the primary dashboard value visible above the fold.",
+                )
+            ],
+        )
+
 
 class DesignProductionTests(unittest.TestCase):
     def test_manager_start_placeholder_completes_and_projects_artifacts(self) -> None:
@@ -275,6 +315,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(persisted["html_artifacts"][0]["builder"], "HtmlBuilderExpert.baseline")
         html_path = persisted["html_artifacts"][0]["path"]
         self.assertIn("Expert generated HTML design", resolve_workspace_path(html_path).read_text(encoding="utf-8"))
+        self.assertEqual(persisted["qc_reports"][0]["status"], "pass")
+        self.assertIn("Hero reflects the requested operational dashboard brief.", persisted["qc_reports"][0]["findings"][0]["summary"])
 
         completed = asyncio.run(
             manager.resume(
@@ -287,6 +329,39 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.stage, "completed")
         self.assertIn(html_path, state["final_file_paths"])
+
+    def test_manager_expert_quality_failure_becomes_warning(self) -> None:
+        state = _adk_state("session_design_expert_qc_fallback")
+        runtime = _FakeDesignExpertRuntime(fail_quality=True)
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.status, "needs_user_review")
+        self.assertEqual(preview.stage, "preview_review")
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(runtime.quality_calls), 1)
+        self.assertEqual(persisted["qc_reports"][0]["status"], "warning")
+        summaries = [finding["summary"] for finding in persisted["qc_reports"][0]["findings"]]
+        self.assertTrue(any("DesignQCExpert failed" in summary for summary in summaries))
 
     def test_manager_revision_impact_marks_target_section(self) -> None:
         state = _adk_state("session_design_revision_impact")
@@ -492,6 +567,7 @@ class DesignProductionTests(unittest.TestCase):
 
     def test_design_prompt_catalog_renders_packaged_templates(self) -> None:
         self.assertIn("html_builder_expert", available_prompt_templates())
+        self.assertIn("design_qc_expert", available_prompt_templates())
 
         rendered = render_prompt_template(
             "brief_expert",
@@ -505,6 +581,19 @@ class DesignProductionTests(unittest.TestCase):
         )
 
         self.assertIn("Design a launch page", rendered)
+        qc_rendered = render_prompt_template(
+            "design_qc_expert",
+            {
+                "brief_json": "{}",
+                "design_system_json": "{}",
+                "layout_plan_json": "{}",
+                "artifact_json": "{}",
+                "validation_report_json": "{}",
+                "preview_reports_json": "[]",
+                "html_summary": "<html></html>",
+            },
+        )
+        self.assertIn("Preview reports JSON", qc_rendered)
         with self.assertRaises(DesignPromptCatalogError):
             render_prompt_template("brief_expert", {"user_prompt": "missing variables"})
 

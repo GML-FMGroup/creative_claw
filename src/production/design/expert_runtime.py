@@ -16,8 +16,12 @@ from conf.llm import build_llm, resolve_llm_model_name
 from src.production.design.models import (
     DesignBrief,
     DesignGenre,
+    DesignQcReport,
     DesignSystemSpec,
+    HtmlArtifact,
+    HtmlValidationReport,
     LayoutPlan,
+    PreviewReport,
     ReferenceAssetEntry,
 )
 from src.production.design.prompt_catalog import render_prompt_template
@@ -169,6 +173,45 @@ class DesignExpertRuntime:
         output.html = normalize_generated_html(output.html)
         return output
 
+    async def assess_quality(
+        self,
+        *,
+        brief: DesignBrief | None,
+        design_system: DesignSystemSpec | None,
+        layout_plan: LayoutPlan | None,
+        artifact: HtmlArtifact,
+        validation_report: HtmlValidationReport,
+        preview_reports: list[PreviewReport],
+        html: str,
+    ) -> DesignQcReport:
+        """Assess generated HTML quality with a structured Design QC expert."""
+        prompt = render_prompt_template(
+            "design_qc_expert",
+            {
+                "brief_json": _model_json_or_null(brief),
+                "design_system_json": _model_json_or_null(design_system),
+                "layout_plan_json": _model_json_or_null(layout_plan),
+                "artifact_json": artifact.model_dump_json(indent=2),
+                "validation_report_json": validation_report.model_dump_json(indent=2),
+                "preview_reports_json": _json_dump([report.model_dump(mode="json") for report in preview_reports]),
+                "html_summary": _summarize_html(html, max_chars=8000),
+            },
+        )
+        report = await self._run_structured_agent(
+            agent_name="DesignQCExpert",
+            instruction=(
+                "You assess generated HTML design quality. "
+                "Use validator and preview facts as authoritative evidence."
+            ),
+            request_text=prompt,
+            output_schema=DesignQcReport,
+            output_key="design_qc_report",
+        )
+        report.artifact_ids = [artifact.artifact_id]
+        if not report.summary:
+            report.summary = "DesignQCExpert completed supplemental quality assessment."
+        return report
+
     async def _run_structured_agent(
         self,
         *,
@@ -286,8 +329,20 @@ def _json_dump(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
+def _model_json_or_null(value: BaseModel | None) -> str:
+    """Dump a Pydantic model as JSON, or null when it is absent."""
+    if value is None:
+        return "null"
+    return value.model_dump_json(indent=2)
+
+
 def _summarize_previous_html(html_text: str, *, max_chars: int = 6000) -> str:
     """Compress previous HTML enough for revision prompts."""
+    return _summarize_html(html_text, max_chars=max_chars)
+
+
+def _summarize_html(html_text: str, *, max_chars: int) -> str:
+    """Compress HTML into a prompt-sized single-line summary."""
     text = " ".join(str(html_text or "").split())
     if not text:
         return "(none)"

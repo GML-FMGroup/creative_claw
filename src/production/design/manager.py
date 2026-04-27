@@ -9,14 +9,18 @@ from typing import Any
 from src.production.design.impact import build_revision_impact_view, normalize_revision_request
 from src.production.design.models import (
     DesignBrief,
+    DesignQcFinding,
+    DesignQcReport,
     DesignProductionState,
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
     HtmlArtifact,
+    HtmlValidationReport,
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
+    PreviewReport,
 )
 from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.placeholders import PlaceholderHtmlBuilder
@@ -680,12 +684,21 @@ class DesignProductionManager:
         state.preview_reports.extend(preview_reports)
 
         state.stage = "quality_check"
+        expert_qc_report: DesignQcReport | None = None
+        if builder_mode in {"expert", "revision"}:
+            expert_qc_report = await self._assess_expert_quality(
+                state=state,
+                artifact=artifact,
+                validation_report=validation_report,
+                preview_reports=preview_reports,
+            )
         qc_report = build_quality_report(
             artifact=artifact,
             validation_report=validation_report,
             preview_reports=preview_reports,
             brief=state.brief,
             layout_plan=state.layout_plan,
+            expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
         state.progress_percent = max(state.progress_percent, 90)
@@ -698,9 +711,63 @@ class DesignProductionManager:
                     "artifact_id": artifact.artifact_id,
                     "validation_status": validation_report.status,
                     "qc_status": qc_report.status,
+                    "expert_qc_status": expert_qc_report.status if expert_qc_report is not None else "",
                 },
             )
         )
+
+    async def _assess_expert_quality(
+        self,
+        *,
+        state: DesignProductionState,
+        artifact: HtmlArtifact,
+        validation_report: HtmlValidationReport,
+        preview_reports: list[PreviewReport],
+    ) -> DesignQcReport:
+        """Run supplemental expert QC without making the production flow fragile."""
+        try:
+            report = await self.expert_runtime.assess_quality(
+                brief=state.brief,
+                design_system=state.design_system,
+                layout_plan=state.layout_plan,
+                artifact=artifact,
+                validation_report=validation_report,
+                preview_reports=preview_reports,
+                html=_read_artifact_html(artifact),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="expert_quality_assessed",
+                    stage=state.stage,
+                    message="DesignQCExpert completed supplemental quality assessment.",
+                    metadata={"artifact_id": artifact.artifact_id, "expert_qc_status": report.status},
+                )
+            )
+            return report
+        except Exception as exc:
+            message = f"DesignQCExpert failed: {type(exc).__name__}: {exc}"
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="expert_quality_failed",
+                    stage=state.stage,
+                    message=message,
+                    metadata={"artifact_id": artifact.artifact_id},
+                )
+            )
+            return DesignQcReport(
+                artifact_ids=[artifact.artifact_id],
+                status="warning",
+                summary="DesignQCExpert was unavailable; deterministic QC completed.",
+                findings=[
+                    DesignQcFinding(
+                        severity="warning",
+                        category="technical",
+                        target="DesignQCExpert",
+                        summary=message,
+                        recommendation="Review deterministic QC and rerun expert QC when the model runtime is available.",
+                    )
+                ],
+            )
 
     async def _build_expert_html_artifact(
         self,
@@ -919,6 +986,14 @@ def _read_latest_html(state: DesignProductionState) -> str:
         return ""
     try:
         return resolve_workspace_path(latest_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _read_artifact_html(artifact: HtmlArtifact) -> str:
+    """Read one HTML artifact for quality assessment context."""
+    try:
+        return resolve_workspace_path(artifact.path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
 
