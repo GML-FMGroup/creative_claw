@@ -12,6 +12,7 @@ from src.production.design.models import (
     DesignQcFinding,
     DesignQcReport,
     DesignProductionState,
+    DesignSystemAuditReport,
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
@@ -23,6 +24,7 @@ from src.production.design.models import (
     PdfExportReport,
     PreviewReport,
 )
+from src.production.design.design_system_audit import audit_design_system, design_system_audit_markdown
 from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.handoff import write_handoff_exports
 from src.production.design.placeholders import PlaceholderHtmlBuilder
@@ -139,6 +141,7 @@ class DesignProductionManager:
                     page.status = "draft"
             if state.design_system is not None:
                 state.design_system.source = "generated" if state.design_system.source == "placeholder" else state.design_system.source
+            _append_design_system_audit(state)
             return self._pause_for_design_direction_review(
                 state,
                 message="Design direction is ready for review before HTML generation.",
@@ -878,6 +881,17 @@ class DesignProductionManager:
                     source=self.capability,
                 )
             )
+        audit_path = f"{state.production_session.root_dir}/reports/design_system_audit.md"
+        if state.design_system_audit_reports:
+            state.design_system_audit_reports[-1].report_path = audit_path
+            final_artifacts.append(
+                WorkspaceFileRef(
+                    name="design_system_audit.md",
+                    path=audit_path,
+                    description="Design system audit report.",
+                    source=self.capability,
+                )
+            )
         for report in state.pdf_export_reports:
             if report.status == "exported" and report.pdf_path:
                 final_artifacts.append(
@@ -970,6 +984,21 @@ class DesignProductionManager:
                 ensure_ascii=False,
                 indent=2,
             ),
+            encoding="utf-8",
+        )
+        latest_audit = state.design_system_audit_reports[-1] if state.design_system_audit_reports else None
+        if latest_audit is not None:
+            latest_audit.report_path = f"{state.production_session.root_dir}/reports/design_system_audit.md"
+        (root / "reports" / "design_system_audit.json").write_text(
+            json.dumps(
+                [item.model_dump(mode="json") for item in state.design_system_audit_reports],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (root / "reports" / "design_system_audit.md").write_text(
+            design_system_audit_markdown(latest_audit),
             encoding="utf-8",
         )
         (root / "layout_plan.json").write_text(
@@ -1076,6 +1105,25 @@ def _read_artifact_html(artifact: HtmlArtifact) -> str:
         return resolve_workspace_path(artifact.path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _append_design_system_audit(state: DesignProductionState) -> DesignSystemAuditReport:
+    """Audit the current design system and store the report on production state."""
+    report = audit_design_system(state.design_system)
+    state.design_system_audit_reports.append(report)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="design_system_audited",
+            stage=state.stage,
+            message="Audited Design system tokens for handoff readiness.",
+            metadata={
+                "report_id": report.report_id,
+                "status": report.status,
+                "finding_counts": report.metrics.get("finding_counts", {}),
+            },
+        )
+    )
+    return report
 
 
 def _revision_stale_reason(revision_request: dict[str, Any]) -> str:
@@ -1202,6 +1250,7 @@ def _prepare_placeholder_planning_state(
         notes="P0a placeholder design system.",
     )
     state.layout_plan = _placeholder_layout_plan(genre=genre, brief=state.brief)
+    _append_design_system_audit(state)
     state.production_events.append(
         ProductionEvent(
             event_type="planning_state_prepared",
@@ -1575,6 +1624,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
             "counts": {
                 "reference_assets": len(state.reference_assets),
                 "html_artifacts": len(state.html_artifacts),
+                "design_system_audit_reports": len(state.design_system_audit_reports),
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
                 "qc_reports": len(state.qc_reports),
@@ -1599,6 +1649,8 @@ def _design_system_view(state: DesignProductionState) -> dict[str, Any]:
         {
             "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
             "design_system_path": f"{state.production_session.root_dir}/design_system.json",
+            "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
+            "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
         }
     )
     return view
@@ -1632,9 +1684,11 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
     view.update(
         {
             "html_validation_reports": [item.model_dump(mode="json") for item in state.html_validation_reports],
+            "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
+            "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }

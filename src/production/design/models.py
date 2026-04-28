@@ -100,6 +100,30 @@ class DesignSystemSpec(BaseModel):
     notes: str = ""
 
 
+class DesignSystemAuditFinding(BaseModel):
+    """One deterministic design-system audit finding."""
+
+    finding_id: str = Field(default_factory=lambda: new_id("design_system_audit_finding"))
+    severity: Literal["info", "warning", "error"]
+    category: Literal["coverage", "naming", "color", "typography", "spacing", "components"]
+    target: str = ""
+    summary: str
+    recommendation: str = ""
+
+
+class DesignSystemAuditReport(BaseModel):
+    """Deterministic audit report for a DesignSystemSpec."""
+
+    report_id: str = Field(default_factory=lambda: new_id("design_system_audit"))
+    design_system_id: str = ""
+    status: Literal["pass", "warning", "fail"] = "pass"
+    summary: str = ""
+    findings: list[DesignSystemAuditFinding] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class LayoutSection(BaseModel):
     """One stable design section that can later be regenerated independently."""
 
@@ -228,6 +252,7 @@ class DesignProductionState(ProductionState):
     brief: DesignBrief | None = None
     reference_assets: list[ReferenceAssetEntry] = Field(default_factory=list)
     design_system: DesignSystemSpec | None = None
+    design_system_audit_reports: list[DesignSystemAuditReport] = Field(default_factory=list)
     layout_plan: LayoutPlan | None = None
     variation_plan: dict[str, Any] | None = None
     html_artifacts: list[HtmlArtifact] = Field(default_factory=list)
