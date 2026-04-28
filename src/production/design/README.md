@@ -89,6 +89,10 @@ Design production can now process page-scoped HTML artifacts. The default remain
 
 Multi-page preview revisions now honor explicit page, section, and HTML artifact targets. A targeted revision marks only affected page artifacts stale, rebuilds those pages, keeps unaffected valid pages active, and records same-page replacement lineage. This preserves complete multi-page handoff readiness after revising one page.
 
+## P1o Browser Readiness
+
+Design preview and PDF export now share deterministic browser environment classification. Missing Playwright packages, missing Chromium browser binaries, and missing Chromium system dependencies are reported as non-blocking environment findings with actionable remediation, including `python -m playwright install chromium`. Preview review metadata and diagnostics metrics expose the same readiness status so clients can guide users without treating browser-dependent outputs as the source artifact.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -97,6 +101,7 @@ Multi-page preview revisions now honor explicit page, section, and HTML artifact
 - `accessibility.py`: deterministic static HTML accessibility lint and report rendering.
 - `artifact_lineage.py`: deterministic HTML artifact lineage reports linking revisions, artifacts, and derived report ids.
 - `browser_diagnostics.py`: deterministic diagnostics derived from browser preview and PDF export reports.
+- `browser_environment.py`: shared browser dependency classification and remediation hints.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.
 - `design_system_extractor.py`: deterministic design-system usage extraction from generated HTML/CSS.
 - `component_inventory.py`: deterministic component inventory extraction from state and generated HTML.
