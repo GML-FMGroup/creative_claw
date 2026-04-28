@@ -727,6 +727,93 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(persisted["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(persisted["page_handoff_reports"][0]["metrics"]["ready_item_count"], 2)
 
+    def test_manager_multi_html_revision_rebuilds_target_page_only(self) -> None:
+        state = _adk_state("session_design_expert_multi_revision")
+        runtime = _FakeDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        settings = {
+            "build_mode": "multi_html",
+            "pages": [
+                {"title": "Home", "path": "index.html"},
+                {"title": "Product", "path": "product.html"},
+            ],
+        }
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a multi-page product microsite",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=settings,
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        first_state = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        home_page_id = first_state["layout_plan"]["pages"][0]["page_id"]
+        product_page_id = first_state["layout_plan"]["pages"][1]["page_id"]
+        first_artifacts_by_page = {artifact["page_id"]: artifact for artifact in first_state["html_artifacts"]}
+
+        revised = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={
+                    "decision": "revise",
+                    "notes": "Make the product page hero more product-led.",
+                    "targets": [{"kind": "page", "id": product_page_id}],
+                },
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(revised.status, "needs_user_review")
+        self.assertEqual(revised.stage, "preview_review")
+        self.assertEqual(revised.view["affected_page_ids"], [product_page_id])
+        self.assertEqual(revised.view["affected_artifact_ids"], [first_artifacts_by_page[product_page_id]["artifact_id"]])
+        persisted = json.loads(resolve_workspace_path(revised.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(persisted["html_artifacts"]), 3)
+        home_artifact = next(artifact for artifact in persisted["html_artifacts"] if artifact["page_id"] == home_page_id)
+        product_artifacts = [artifact for artifact in persisted["html_artifacts"] if artifact["page_id"] == product_page_id]
+        old_product, revised_product = product_artifacts
+        self.assertEqual(home_artifact["status"], "valid")
+        self.assertEqual(old_product["status"], "stale")
+        self.assertEqual(revised_product["status"], "valid")
+        self.assertEqual(revised_product["builder"], "HtmlBuilderExpert.variant")
+        self.assertTrue(Path(revised_product["path"]).name.startswith("product_v"))
+        self.assertEqual(len(runtime.build_calls), 3)
+        self.assertEqual(runtime.build_calls[-1]["build_mode"], "revision")
+        self.assertEqual(runtime.build_calls[-1]["page_ids"], [product_page_id])
+        self.assertIn("Expert generated HTML design", runtime.build_calls[-1]["previous_html"])
+        self.assertEqual(persisted["page_handoff_reports"][0]["status"], "ready")
+        self.assertEqual(persisted["page_handoff_reports"][0]["metrics"]["ready_item_count"], 2)
+        lineage_items = {
+            item["artifact_id"]: item
+            for item in persisted["artifact_lineage_reports"][0]["items"]
+        }
+        self.assertEqual(lineage_items[old_product["artifact_id"]]["replaced_by_artifact_id"], revised_product["artifact_id"])
+        self.assertEqual(lineage_items[revised_product["artifact_id"]]["replaces_artifact_ids"], [old_product["artifact_id"]])
+        self.assertNotIn(home_artifact["artifact_id"], lineage_items[revised_product["artifact_id"]]["replaces_artifact_ids"])
+
+        completed = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(completed.status, "completed")
+        completed_html_names = {Path(path).name for path in state["final_file_paths"] if path.endswith(".html")}
+        self.assertEqual(completed_html_names, {"index.html", Path(revised_product["path"]).name})
+
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
         state = _adk_state("session_design_pdf_export")
         manager = DesignProductionManager(

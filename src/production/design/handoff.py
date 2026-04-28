@@ -186,8 +186,9 @@ def _handoff_manifest(
             "Browser diagnostics are derived from preview and PDF export reports.",
             "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
             "Page handoff readiness is derived from LayoutPlan pages, variants, generated HTML artifacts, and linked reports.",
+            "Multi-page revisions rebuild affected page artifacts while preserving unaffected active pages.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs remain outside P1m.",
+            "Figma and production-code handoff outputs remain outside P1n.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -435,8 +436,9 @@ def _design_spec_markdown(
             "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
             "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
             "- Page handoff readiness is deterministic and derived from layout pages, variants, and generated artifact reports.",
+            "- Multi-page revisions preserve unaffected active page artifacts.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs remain outside P1m.",
+            "- Figma and production-code handoff outputs remain outside P1n.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )

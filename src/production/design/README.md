@@ -23,7 +23,7 @@ The internal experts are encapsulated behind `DesignProductionManager`; they are
 
 ## P0b-B Revision Flow
 
-At `preview_review`, a `decision=revise` response now runs revision impact analysis from `DesignProductionState`, marks previous HTML artifacts stale, and asks `HtmlBuilderExpert` for a full-page revision build. P0 keeps section-aware impact metadata, but still rebuilds the single-page HTML artifact instead of assembling section fragments. The rebuilt artifact uses `HtmlBuilderExpert.variant`, then runs validator, preview, deterministic QC, and supplemental expert QC before returning to `preview_review`.
+At `preview_review`, a `decision=revise` response now runs revision impact analysis from `DesignProductionState`, marks affected HTML artifacts stale, and asks `HtmlBuilderExpert` for a page-level revision build. P0 keeps section-aware impact metadata, but still rebuilds whole affected pages instead of assembling section fragments. The rebuilt artifact uses `HtmlBuilderExpert.variant`, then runs validator, preview, deterministic QC, and supplemental expert QC before returning to `preview_review`.
 
 ## P0b-C Expert Quality Feedback
 
@@ -83,7 +83,11 @@ Design production now derives deterministic page and variant handoff readiness f
 
 ## P1m Multi-page Build Foundation
 
-Design production can now process page-scoped HTML artifacts. The default remains `single_html`, but explicit `design_settings.build_mode="multi_html"` makes the build pipeline generate, validate, preview, extract design-system usage, lint accessibility, run QC, and report handoff readiness for each planned page. This establishes the durable multi-page artifact flow while keeping revision behavior conservative.
+Design production can now process page-scoped HTML artifacts. The default remains `single_html`, but explicit `design_settings.build_mode="multi_html"` makes the build pipeline generate, validate, preview, extract design-system usage, lint accessibility, run QC, and report handoff readiness for each planned page. This establishes the durable multi-page artifact flow.
+
+## P1n Multi-page Revisions
+
+Multi-page preview revisions now honor explicit page, section, and HTML artifact targets. A targeted revision marks only affected page artifacts stale, rebuilds those pages, keeps unaffected valid pages active, and records same-page replacement lineage. This preserves complete multi-page handoff readiness after revising one page.
 
 ## Package Responsibilities
 
