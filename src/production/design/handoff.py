@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,13 @@ from src.production.design.models import (
     HtmlArtifact,
     HtmlValidationReport,
 )
+from src.production.design.quality import quality_report_markdown
 from src.production.models import WorkspaceFileRef, utc_now_iso
-from src.runtime.workspace import workspace_relative_path
+from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
+
+
+_BUNDLE_NAME = "design_handoff_bundle.zip"
+_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
 def write_handoff_exports(
@@ -27,6 +33,7 @@ def write_handoff_exports(
     export_dir.mkdir(parents=True, exist_ok=True)
     spec_path = export_dir / "design_spec.md"
     manifest_path = export_dir / "handoff_manifest.json"
+    bundle_path = export_dir / _BUNDLE_NAME
 
     spec_ref = WorkspaceFileRef(
         name="design_spec.md",
@@ -40,7 +47,13 @@ def write_handoff_exports(
         description="Machine-readable Design handoff manifest.",
         source=state.production_session.capability,
     )
-    handoff_refs = [spec_ref, manifest_ref]
+    bundle_ref = WorkspaceFileRef(
+        name=_BUNDLE_NAME,
+        path=workspace_relative_path(bundle_path),
+        description="Portable ZIP bundle containing Design handoff deliverables.",
+        source=state.production_session.capability,
+    )
+    handoff_refs = [spec_ref, manifest_ref, bundle_ref]
 
     spec_path.write_text(
         _design_spec_markdown(
@@ -57,6 +70,12 @@ def write_handoff_exports(
             indent=2,
         ),
         encoding="utf-8",
+    )
+    _write_handoff_bundle(
+        state=state,
+        bundle_path=bundle_path,
+        session_root=session_root,
+        artifacts=core_artifacts + [spec_ref, manifest_ref],
     )
     return handoff_refs
 
@@ -95,7 +114,7 @@ def _handoff_manifest(
         "handoff_artifacts": [item.model_dump(mode="json") for item in handoff_artifacts],
         "known_limits": [
             "The core Design deliverable is the approved HTML artifact.",
-            "P0b-E does not generate PDF, ZIP, Figma, or production-code handoff outputs.",
+            "P1a does not generate PDF, Figma, or production-code handoff outputs.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -191,11 +210,118 @@ def _design_spec_markdown(
             "## Known Limits",
             "",
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
-            "- PDF, ZIP, Figma, and production-code handoff outputs are intentionally outside P0b-E.",
+            "- PDF, Figma, and production-code handoff outputs are intentionally outside P1a.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_handoff_bundle(
+    *,
+    state: DesignProductionState,
+    bundle_path: Path,
+    session_root: Path,
+    artifacts: list[WorkspaceFileRef],
+) -> None:
+    """Write a stable ZIP containing available handoff deliverable files."""
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    entries = _bundle_entries(
+        state=state,
+        bundle_path=bundle_path,
+        session_root=session_root,
+        artifacts=artifacts,
+    )
+    with zipfile.ZipFile(bundle_path, "w") as archive:
+        for arcname, payload in entries:
+            info = zipfile.ZipInfo(arcname, date_time=_ZIP_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, payload)
+
+
+def _bundle_entries(
+    *,
+    state: DesignProductionState,
+    bundle_path: Path,
+    session_root: Path,
+    artifacts: list[WorkspaceFileRef],
+) -> list[tuple[str, bytes]]:
+    seen_paths: set[Path] = {bundle_path.resolve()}
+    seen_arcnames: set[str] = set()
+    entries: list[tuple[str, bytes]] = []
+    for artifact in artifacts:
+        entry = _bundle_entry_for_artifact(
+            state=state,
+            artifact=artifact,
+            session_root=session_root,
+            seen_paths=seen_paths,
+            seen_arcnames=seen_arcnames,
+        )
+        if entry is not None:
+            entries.append(entry)
+    return sorted(entries, key=lambda item: item[0])
+
+
+def _bundle_entry_for_artifact(
+    *,
+    state: DesignProductionState,
+    artifact: WorkspaceFileRef,
+    session_root: Path,
+    seen_paths: set[Path],
+    seen_arcnames: set[str],
+) -> tuple[str, bytes] | None:
+    try:
+        resolved = resolve_workspace_path(artifact.path)
+    except ValueError:
+        return None
+    resolved = resolved.resolve()
+    if resolved in seen_paths:
+        return None
+    arcname = _bundle_arcname(artifact, resolved=resolved, session_root=session_root)
+    arcname = _unique_arcname(arcname, seen_arcnames)
+    payload = _artifact_payload(state, artifact=artifact, resolved=resolved)
+    if payload is None:
+        return None
+    seen_paths.add(resolved)
+    seen_arcnames.add(arcname)
+    return arcname, payload
+
+
+def _artifact_payload(
+    state: DesignProductionState,
+    *,
+    artifact: WorkspaceFileRef,
+    resolved: Path,
+) -> bytes | None:
+    if resolved.exists() and resolved.is_file():
+        return resolved.read_bytes()
+    if artifact.name == "qc_report.md":
+        return quality_report_markdown(_latest_qc_report(state)).encode("utf-8")
+    return None
+
+
+def _bundle_arcname(artifact: WorkspaceFileRef, *, resolved: Path, session_root: Path) -> str:
+    try:
+        arcname = resolved.relative_to(session_root.resolve()).as_posix()
+    except ValueError:
+        arcname = Path(artifact.path).name
+    return arcname.lstrip("/") or artifact.name
+
+
+def _unique_arcname(arcname: str, seen_arcnames: set[str]) -> str:
+    if arcname not in seen_arcnames:
+        return arcname
+    path = Path(arcname)
+    parent = "" if str(path.parent) == "." else f"{path.parent.as_posix()}/"
+    stem = path.stem
+    suffix = path.suffix
+    index = 2
+    while True:
+        candidate = f"{parent}{stem}_{index}{suffix}"
+        if candidate not in seen_arcnames:
+            return candidate
+        index += 1
 
 
 def _latest_html_artifact(state: DesignProductionState) -> HtmlArtifact | None:
