@@ -53,11 +53,16 @@ Design production can now export the approved HTML artifact to `exports/design.p
 
 Final approval now exports `exports/design_tokens.json` and `exports/design_tokens.css` when a `DesignSystemSpec` exists. These files are deterministic handoff artifacts derived from the production design system: JSON preserves the structured token payload, while CSS exposes stable `--cc-*` custom properties for downstream implementation.
 
+## P1f Design System Audit
+
+Design production now runs a deterministic design-system audit whenever a Design system is prepared. The report checks token coverage, naming collisions, color values and contrast, typography roles, spacing/radius constraints, and component-token coverage. Audit output is non-blocking, persisted under `reports/design_system_audit.*`, exposed through Design system and quality views, and included in handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
+- `design_system_audit.py`: deterministic Design system audit rules and report rendering.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.

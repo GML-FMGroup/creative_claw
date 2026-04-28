@@ -10,9 +10,11 @@ from typing import Any
 from src.production.design.models import (
     DesignProductionState,
     DesignQcReport,
+    DesignSystemAuditReport,
     HtmlArtifact,
     HtmlValidationReport,
 )
+from src.production.design.design_system_audit import design_system_audit_markdown
 from src.production.design.quality import quality_report_markdown
 from src.production.design.source_refs import (
     latest_html_artifact,
@@ -123,6 +125,7 @@ def _handoff_manifest(
         "validation_status": latest_validation.status if latest_validation is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
+        "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
@@ -137,7 +140,7 @@ def _handoff_manifest(
             "The core Design deliverable is the approved HTML artifact.",
             "Design token JSON and CSS are derived from DesignSystemSpec.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1d.",
+            "Figma and production-code handoff outputs are intentionally outside P1f.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -236,6 +239,18 @@ def _design_spec_markdown(
     else:
         for artifact in token_artifacts:
             lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}")
+    lines.extend(["", "## Design System Audit", ""])
+    if not state.design_system_audit_reports:
+        lines.append("- No design system audit was generated.")
+    else:
+        latest_audit = state.design_system_audit_reports[-1]
+        lines.append(f"- Status: {latest_audit.status}")
+        lines.append(f"- Summary: {latest_audit.summary}")
+        lines.append("- Findings:")
+        if not latest_audit.findings:
+            lines.append("  - None.")
+        for finding in latest_audit.findings:
+            lines.append(f"  - [{finding.severity}] {finding.category}: {finding.summary}")
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -285,7 +300,7 @@ def _design_spec_markdown(
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1d.",
+            "- Figma and production-code handoff outputs are intentionally outside P1f.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -373,6 +388,8 @@ def _artifact_payload(
         return resolved.read_bytes()
     if artifact.name == "qc_report.md":
         return quality_report_markdown(_latest_qc_report(state)).encode("utf-8")
+    if artifact.name == "design_system_audit.md":
+        return design_system_audit_markdown(_latest_design_system_audit_report(state)).encode("utf-8")
     return None
 
 
@@ -401,6 +418,10 @@ def _unique_arcname(arcname: str, seen_arcnames: set[str]) -> str:
 
 def _latest_qc_report(state: DesignProductionState) -> DesignQcReport | None:
     return state.qc_reports[-1] if state.qc_reports else None
+
+
+def _latest_design_system_audit_report(state: DesignProductionState) -> DesignSystemAuditReport | None:
+    return state.design_system_audit_reports[-1] if state.design_system_audit_reports else None
 
 
 def _latest_validation_report(state: DesignProductionState) -> HtmlValidationReport | None:
