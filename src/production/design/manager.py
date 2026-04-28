@@ -31,6 +31,7 @@ from src.production.design.models import (
     DesignQcReport,
     DesignProductionState,
     DesignSystemAuditReport,
+    DesignSystemExtractionReport,
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
@@ -48,6 +49,11 @@ from src.production.design.component_inventory import (
     component_inventory_markdown,
 )
 from src.production.design.design_system_audit import audit_design_system, design_system_audit_markdown
+from src.production.design.design_system_extractor import (
+    build_design_system_extraction,
+    design_system_extraction_json,
+    design_system_extraction_markdown,
+)
 from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.handoff import write_handoff_exports
 from src.production.design.placeholders import PlaceholderHtmlBuilder
@@ -82,6 +88,7 @@ _VIEW_TYPES = (
     "overview",
     "brief",
     "design_system",
+    "design_system_extraction",
     "components",
     "accessibility",
     "layout",
@@ -741,6 +748,8 @@ class DesignProductionManager:
             raise RuntimeError("; ".join(validation_report.issues) or "HTML validation failed")
         artifact.status = "valid"
         _append_component_inventory(state, artifact)
+        state.stage = "design_system_extraction"
+        extraction_report = _append_design_system_extraction(state, artifact)
         state.stage = "accessibility_check"
         accessibility_report = _append_accessibility_report(state, artifact)
 
@@ -781,6 +790,7 @@ class DesignProductionManager:
                 metadata={
                     "artifact_id": artifact.artifact_id,
                     "validation_status": validation_report.status,
+                    "design_system_extraction_status": extraction_report.status,
                     "accessibility_status": accessibility_report.status,
                     "qc_status": qc_report.status,
                     "expert_qc_status": expert_qc_report.status if expert_qc_report is not None else "",
@@ -954,6 +964,26 @@ class DesignProductionManager:
                         name="component_inventory.json",
                         path=inventory_json_path,
                         description="Machine-readable component inventory report.",
+                        source=self.capability,
+                    ),
+                ]
+            )
+        extraction_md_path = f"{state.production_session.root_dir}/reports/design_system_extraction.md"
+        extraction_json_path = f"{state.production_session.root_dir}/reports/design_system_extraction.json"
+        if state.design_system_extraction_reports:
+            state.design_system_extraction_reports[-1].report_path = extraction_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="design_system_extraction.md",
+                        path=extraction_md_path,
+                        description="Extracted design-system usage report from generated HTML/CSS.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="design_system_extraction.json",
+                        path=extraction_json_path,
+                        description="Machine-readable extracted design-system usage report.",
                         source=self.capability,
                     ),
                 ]
@@ -1138,6 +1168,17 @@ class DesignProductionManager:
             component_inventory_markdown(latest_inventory),
             encoding="utf-8",
         )
+        latest_extraction = state.design_system_extraction_reports[-1] if state.design_system_extraction_reports else None
+        if latest_extraction is not None:
+            latest_extraction.report_path = f"{state.production_session.root_dir}/reports/design_system_extraction.md"
+        (root / "reports" / "design_system_extraction.json").write_text(
+            design_system_extraction_json(latest_extraction),
+            encoding="utf-8",
+        )
+        (root / "reports" / "design_system_extraction.md").write_text(
+            design_system_extraction_markdown(latest_extraction),
+            encoding="utf-8",
+        )
         latest_accessibility = state.accessibility_reports[-1] if state.accessibility_reports else None
         if latest_accessibility is not None:
             latest_accessibility.report_path = f"{state.production_session.root_dir}/reports/accessibility_report.md"
@@ -1314,6 +1355,27 @@ def _append_component_inventory(state: DesignProductionState, artifact: HtmlArti
                 "artifact_id": report.artifact_id,
                 "status": report.status,
                 "item_count": report.metrics.get("item_count", 0),
+            },
+        )
+    )
+    return report
+
+
+def _append_design_system_extraction(state: DesignProductionState, artifact: HtmlArtifact) -> DesignSystemExtractionReport:
+    """Build and store a design-system extraction report for one HTML artifact."""
+    report = build_design_system_extraction(state, artifact=artifact)
+    state.design_system_extraction_reports.append(report)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="design_system_extraction_built",
+            stage=state.stage,
+            message="Extracted Design system usage from generated HTML/CSS.",
+            metadata={
+                "report_id": report.report_id,
+                "artifact_id": report.artifact_id,
+                "status": report.status,
+                "token_count": report.metrics.get("token_count", 0),
+                "selector_count": report.metrics.get("selector_count", 0),
             },
         )
     )
@@ -1655,6 +1717,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
     preview_reports = _preview_reports_for_artifact(state, artifact_id)
     validation_report = _latest_validation_report_for_artifact(state, artifact_id)
     qc_report = _latest_qc_report_for_artifact(state, artifact_id)
+    extraction_report = _latest_design_system_extraction_report_for_artifact(state, artifact_id)
     accessibility_report = _latest_accessibility_report_for_artifact(state, artifact_id)
     diagnostics_report = _latest_browser_diagnostics_report_for_artifact(state, artifact_id)
     lineage_report = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
@@ -1684,8 +1747,15 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
                 if accessibility_report is not None
                 else ""
             ),
+            "design_system_extraction_status": extraction_report.status if extraction_report is not None else "",
+            "design_system_extraction_report_path": (
+                extraction_report.report_path or f"{state.production_session.root_dir}/reports/design_system_extraction.md"
+                if extraction_report is not None
+                else ""
+            ),
         },
         "preview": _preview_review_summary(preview_reports),
+        "design_system_extraction": _design_system_extraction_summary(extraction_report),
         "accessibility": _accessibility_summary(accessibility_report),
         "diagnostics": _browser_diagnostics_summary(diagnostics_report),
         "lineage": _artifact_lineage_summary(lineage_report),
@@ -1717,6 +1787,16 @@ def _latest_qc_report_for_artifact(
 ) -> DesignQcReport | None:
     for report in reversed(state.qc_reports):
         if not artifact_id or artifact_id in report.artifact_ids:
+            return report
+    return None
+
+
+def _latest_design_system_extraction_report_for_artifact(
+    state: DesignProductionState,
+    artifact_id: str,
+) -> DesignSystemExtractionReport | None:
+    for report in reversed(state.design_system_extraction_reports):
+        if not artifact_id or report.artifact_id == artifact_id:
             return report
     return None
 
@@ -1785,6 +1865,27 @@ def _layout_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "body_scroll_width": body_scroll_width,
         "body_scroll_height": metrics.get("bodyScrollHeight"),
         "horizontal_overflow_px": horizontal_overflow_px,
+    }
+
+
+def _design_system_extraction_summary(report: DesignSystemExtractionReport | None) -> dict[str, Any]:
+    """Build a compact design-system extraction summary for review metadata."""
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "report_path": "",
+            "token_count": 0,
+            "selector_count": 0,
+            "token_source_counts": {},
+        }
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "report_path": report.report_path or "",
+        "token_count": report.metrics.get("token_count", 0),
+        "selector_count": report.metrics.get("selector_count", 0),
+        "token_source_counts": report.metrics.get("token_source_counts", {}),
     }
 
 
@@ -1962,6 +2063,8 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _brief_view(state)
     if view_type == "design_system":
         return _design_system_view(state)
+    if view_type == "design_system_extraction":
+        return _design_system_extraction_view(state)
     if view_type == "components":
         return _components_view(state)
     if view_type == "accessibility":
@@ -2013,6 +2116,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "html_artifacts": len(state.html_artifacts),
                 "design_system_audit_reports": len(state.design_system_audit_reports),
                 "component_inventory_reports": len(state.component_inventory_reports),
+                "design_system_extraction_reports": len(state.design_system_extraction_reports),
                 "accessibility_reports": len(state.accessibility_reports),
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
@@ -2042,6 +2146,25 @@ def _design_system_view(state: DesignProductionState) -> dict[str, Any]:
             "design_system_path": f"{state.production_session.root_dir}/design_system.json",
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
+            "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
+            "design_system_extraction_report_path": f"{state.production_session.root_dir}/reports/design_system_extraction.md",
+        }
+    )
+    return view
+
+
+def _design_system_extraction_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "design_system_extraction")
+    view.update(
+        {
+            "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
+            "latest_design_system_extraction_report": (
+                state.design_system_extraction_reports[-1].model_dump(mode="json")
+                if state.design_system_extraction_reports
+                else None
+            ),
+            "design_system_extraction_report_path": f"{state.production_session.root_dir}/reports/design_system_extraction.md",
+            "design_system_extraction_json_path": f"{state.production_session.root_dir}/reports/design_system_extraction.json",
         }
     )
     return view
@@ -2094,6 +2217,8 @@ def _preview_view(state: DesignProductionState) -> dict[str, Any]:
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "preview_reports": [_preview_report_payload(state, item) for item in state.preview_reports],
             "preview_report_path": f"{state.production_session.root_dir}/reports/preview_report.json",
+            "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
+            "design_system_extraction_report_path": f"{state.production_session.root_dir}/reports/design_system_extraction.md",
             "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
             "accessibility_report_path": f"{state.production_session.root_dir}/reports/accessibility_report.md",
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
@@ -2148,6 +2273,7 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "html_validation_reports": [item.model_dump(mode="json") for item in state.html_validation_reports],
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+            "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
             "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
@@ -2156,6 +2282,7 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
             "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
+            "design_system_extraction_report_path": f"{state.production_session.root_dir}/reports/design_system_extraction.md",
             "accessibility_report_path": f"{state.production_session.root_dir}/reports/accessibility_report.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
@@ -2180,6 +2307,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+            "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
             "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],

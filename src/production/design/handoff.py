@@ -23,6 +23,11 @@ from src.production.design.component_inventory import (
     component_inventory_json,
     component_inventory_markdown,
 )
+from src.production.design.design_system_audit import design_system_audit_markdown
+from src.production.design.design_system_extractor import (
+    design_system_extraction_json,
+    design_system_extraction_markdown,
+)
 from src.production.design.models import (
     AccessibilityReport,
     ArtifactLineageReport,
@@ -31,10 +36,10 @@ from src.production.design.models import (
     DesignProductionState,
     DesignQcReport,
     DesignSystemAuditReport,
+    DesignSystemExtractionReport,
     HtmlArtifact,
     HtmlValidationReport,
 )
-from src.production.design.design_system_audit import design_system_audit_markdown
 from src.production.design.quality import quality_report_markdown
 from src.production.design.source_refs import (
     latest_html_artifact,
@@ -127,6 +132,7 @@ def _handoff_manifest(
     latest_html = latest_html_artifact(state)
     latest_qc = _latest_qc_report(state)
     latest_validation = _latest_validation_report(state)
+    latest_extraction = _latest_design_system_extraction_report(state)
     latest_accessibility = _latest_accessibility_report(state)
     latest_lineage = _latest_artifact_lineage_report(state)
     latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
@@ -145,12 +151,14 @@ def _handoff_manifest(
         "latest_source_ref_details": source_ref_details(state, latest_source_refs),
         "quality_status": latest_qc.status if latest_qc is not None else "",
         "validation_status": latest_validation.status if latest_validation is not None else "",
+        "design_system_extraction_status": latest_extraction.status if latest_extraction is not None else "",
         "accessibility_status": latest_accessibility.status if latest_accessibility is not None else "",
         "artifact_lineage_status": latest_lineage.status if latest_lineage is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
         "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+        "design_system_extraction_reports": [item.model_dump(mode="json") for item in state.design_system_extraction_reports],
         "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
         "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
         "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
@@ -168,11 +176,12 @@ def _handoff_manifest(
             "The core Design deliverable is the approved HTML artifact.",
             "Design token JSON and CSS are derived from DesignSystemSpec.",
             "Component inventory is derived from DesignProductionState and generated HTML.",
+            "Design-system extraction is derived from generated HTML/CSS and DesignSystemSpec.",
             "Accessibility reports are deterministic static checks over generated HTML.",
             "Browser diagnostics are derived from preview and PDF export reports.",
             "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1j.",
+            "Figma and production-code handoff outputs are intentionally outside P1k.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -296,6 +305,21 @@ def _design_spec_markdown(
         for item in latest_inventory.items:
             selector = f" ({item.selector})" if item.selector else ""
             lines.append(f"  - [{item.category}] {item.name}{selector}: {item.source}")
+    lines.extend(["", "## Design System Extraction", ""])
+    if not state.design_system_extraction_reports:
+        lines.append("- No design-system extraction report was generated.")
+    else:
+        latest_extraction = state.design_system_extraction_reports[-1]
+        lines.append(f"- Status: {latest_extraction.status}")
+        lines.append(f"- Summary: {latest_extraction.summary}")
+        lines.append(f"- Token count: {latest_extraction.metrics.get('token_count', 0)}")
+        lines.append(f"- Selector count: {latest_extraction.metrics.get('selector_count', 0)}")
+        lines.append("- Token sources:")
+        source_counts = latest_extraction.metrics.get("token_source_counts", {})
+        if not source_counts:
+            lines.append("  - None.")
+        for source, count in sorted(source_counts.items()):
+            lines.append(f"  - {source}: {count}")
     lines.extend(["", "## Accessibility", ""])
     if not state.accessibility_reports:
         lines.append("- No accessibility report was generated.")
@@ -383,11 +407,12 @@ def _design_spec_markdown(
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- Component inventory is deterministic handoff guidance derived from state and HTML structure.",
+            "- Design-system extraction deterministically summarizes generated CSS variables, selectors, and style values.",
             "- Accessibility lint is deterministic and derived from static HTML semantics.",
             "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
             "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1j.",
+            "- Figma and production-code handoff outputs are intentionally outside P1k.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -481,6 +506,10 @@ def _artifact_payload(
         return component_inventory_markdown(_latest_component_inventory_report(state)).encode("utf-8")
     if artifact.name == "component_inventory.json":
         return component_inventory_json(_latest_component_inventory_report(state)).encode("utf-8")
+    if artifact.name == "design_system_extraction.md":
+        return design_system_extraction_markdown(_latest_design_system_extraction_report(state)).encode("utf-8")
+    if artifact.name == "design_system_extraction.json":
+        return design_system_extraction_json(_latest_design_system_extraction_report(state)).encode("utf-8")
     if artifact.name == "accessibility_report.md":
         return accessibility_report_markdown(_latest_accessibility_report(state)).encode("utf-8")
     if artifact.name == "accessibility_report.json":
@@ -529,6 +558,10 @@ def _latest_design_system_audit_report(state: DesignProductionState) -> DesignSy
 
 def _latest_component_inventory_report(state: DesignProductionState) -> ComponentInventoryReport | None:
     return state.component_inventory_reports[-1] if state.component_inventory_reports else None
+
+
+def _latest_design_system_extraction_report(state: DesignProductionState) -> DesignSystemExtractionReport | None:
+    return state.design_system_extraction_reports[-1] if state.design_system_extraction_reports else None
 
 
 def _latest_accessibility_report(state: DesignProductionState) -> AccessibilityReport | None:

@@ -168,6 +168,46 @@ class ComponentInventoryReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class ExtractedDesignToken(BaseModel):
+    """One token or style fact extracted from generated Design HTML/CSS."""
+
+    token_id: str = Field(default_factory=lambda: new_id("design_system_token"))
+    name: str
+    category: Literal["css_variable", "color", "typography", "spacing", "radius", "shadow", "breakpoint"]
+    value: str
+    source: Literal["design_system", "html_css", "html_structure"]
+    usage_count: int = 0
+    selector_refs: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExtractedDesignSelector(BaseModel):
+    """One CSS selector summary extracted from generated Design HTML/CSS."""
+
+    selector_id: str = Field(default_factory=lambda: new_id("design_system_selector"))
+    selector: str
+    kind: Literal["class", "id", "element", "compound", "media_query"]
+    declaration_count: int = 0
+    token_refs: list[str] = Field(default_factory=list)
+    properties: list[str] = Field(default_factory=list)
+
+
+class DesignSystemExtractionReport(BaseModel):
+    """Deterministic design-system extraction report for one generated HTML artifact."""
+
+    report_id: str = Field(default_factory=lambda: new_id("design_system_extraction"))
+    artifact_id: str = ""
+    path: str = ""
+    design_system_id: str = ""
+    status: Literal["ready", "partial", "empty"] = "ready"
+    summary: str = ""
+    tokens: list[ExtractedDesignToken] = Field(default_factory=list)
+    selectors: list[ExtractedDesignSelector] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class AccessibilityFinding(BaseModel):
     """One deterministic accessibility finding for a generated HTML artifact."""
 
@@ -383,6 +423,7 @@ class DesignProductionState(ProductionState):
     design_system: DesignSystemSpec | None = None
     design_system_audit_reports: list[DesignSystemAuditReport] = Field(default_factory=list)
     component_inventory_reports: list[ComponentInventoryReport] = Field(default_factory=list)
+    design_system_extraction_reports: list[DesignSystemExtractionReport] = Field(default_factory=list)
     layout_plan: LayoutPlan | None = None
     variation_plan: dict[str, Any] | None = None
     html_artifacts: list[HtmlArtifact] = Field(default_factory=list)

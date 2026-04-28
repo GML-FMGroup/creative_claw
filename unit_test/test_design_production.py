@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from src.production.design.accessibility import build_accessibility_report
 from src.production.design.component_inventory import build_component_inventory
 from src.production.design.design_system_audit import audit_design_system
+from src.production.design.design_system_extractor import build_design_system_extraction
 from src.production.design.expert_runtime import DesignDirectionPlan, HtmlBuildOutput
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
@@ -285,6 +286,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_system_audit.md", artifact_names)
         self.assertIn("component_inventory.md", artifact_names)
         self.assertIn("component_inventory.json", artifact_names)
+        self.assertIn("design_system_extraction.md", artifact_names)
+        self.assertIn("design_system_extraction.json", artifact_names)
         self.assertIn("accessibility_report.md", artifact_names)
         self.assertIn("accessibility_report.json", artifact_names)
         self.assertIn("browser_diagnostics.md", artifact_names)
@@ -306,6 +309,9 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(payload["component_inventory_reports"][0]["status"], "ready")
         self.assertGreater(payload["component_inventory_reports"][0]["metrics"]["item_count"], 0)
+        self.assertEqual(payload["design_system_extraction_reports"][0]["status"], "ready")
+        self.assertGreater(payload["design_system_extraction_reports"][0]["metrics"]["token_count"], 0)
+        self.assertGreater(payload["design_system_extraction_reports"][0]["metrics"]["selector_count"], 0)
         self.assertEqual(payload["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(payload["accessibility_reports"][0]["metrics"]["h1_count"], 1)
         self.assertEqual(payload["browser_diagnostics_reports"][0]["status"], "ready")
@@ -317,6 +323,10 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(
             lineage["items"][0]["report_refs"]["accessibility_report_ids"],
             [payload["accessibility_reports"][0]["report_id"]],
+        )
+        self.assertEqual(
+            lineage["items"][0]["report_refs"]["design_system_extraction_report_ids"],
+            [payload["design_system_extraction_reports"][0]["report_id"]],
         )
         self.assertEqual(lineage["items"][0]["report_refs"]["preview_report_ids"], [item["report_id"] for item in payload["preview_reports"]])
         rebuilt_inventory = build_component_inventory(DesignProductionState.model_validate(payload))
@@ -330,7 +340,17 @@ class DesignProductionTests(unittest.TestCase):
             )
         )
         self.assertEqual(design_system_view.view["design_system_audit_reports"][0]["status"], "pass")
+        self.assertEqual(design_system_view.view["design_system_extraction_reports"][0]["status"], "ready")
         self.assertTrue(design_system_view.view["design_system_audit_report_path"].endswith("reports/design_system_audit.md"))
+        extraction_view = asyncio.run(
+            manager.view(
+                production_session_id=result.production_session_id,
+                view_type="design_system_extraction",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(extraction_view.view["latest_design_system_extraction_report"]["status"], "ready")
+        self.assertTrue(extraction_view.view["design_system_extraction_report_path"].endswith("reports/design_system_extraction.md"))
         quality_view = asyncio.run(
             manager.view(
                 production_session_id=result.production_session_id,
@@ -340,6 +360,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(quality_view.view["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(quality_view.view["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(quality_view.view["design_system_extraction_reports"][0]["status"], "ready")
         self.assertEqual(quality_view.view["accessibility_reports"][0]["status"], "pass")
         components_view = asyncio.run(
             manager.view(
@@ -395,6 +416,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(manifest["quality_status"], "pass")
         self.assertEqual(manifest["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(manifest["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(manifest["design_system_extraction_status"], "ready")
+        self.assertEqual(manifest["design_system_extraction_reports"][0]["status"], "ready")
         self.assertEqual(manifest["accessibility_status"], "pass")
         self.assertEqual(manifest["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(manifest["browser_diagnostics_reports"][0]["status"], "ready")
@@ -414,6 +437,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/design_system_audit.md", bundle_names)
         self.assertIn("reports/component_inventory.md", bundle_names)
         self.assertIn("reports/component_inventory.json", bundle_names)
+        self.assertIn("reports/design_system_extraction.md", bundle_names)
+        self.assertIn("reports/design_system_extraction.json", bundle_names)
         self.assertIn("reports/accessibility_report.md", bundle_names)
         self.assertIn("reports/accessibility_report.json", bundle_names)
         self.assertIn("reports/browser_diagnostics.md", bundle_names)
@@ -487,10 +512,14 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(review_metadata["delivery"]["html_validation_status"], "valid")
         self.assertEqual(review_metadata["delivery"]["qc_status"], "pass")
         self.assertTrue(review_metadata["delivery"]["qc_report_path"].endswith("reports/qc_report.md"))
+        self.assertEqual(review_metadata["delivery"]["design_system_extraction_status"], "ready")
+        self.assertTrue(review_metadata["delivery"]["design_system_extraction_report_path"].endswith("reports/design_system_extraction.md"))
         self.assertEqual(review_metadata["delivery"]["accessibility_status"], "pass")
         self.assertTrue(review_metadata["delivery"]["accessibility_report_path"].endswith("reports/accessibility_report.md"))
         self.assertEqual(review_metadata["preview"]["valid_count"], 2)
         self.assertEqual(review_metadata["preview"]["reports"][0]["layout"]["horizontal_overflow_px"], 0)
+        self.assertEqual(review_metadata["design_system_extraction"]["status"], "ready")
+        self.assertGreater(review_metadata["design_system_extraction"]["token_count"], 0)
         self.assertEqual(review_metadata["accessibility"]["status"], "pass")
         self.assertEqual(review_metadata["accessibility"]["finding_counts"]["warning"], 0)
         self.assertEqual(review_metadata["diagnostics"]["status"], "ready")
@@ -511,6 +540,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(overview_view.view["active_review"]["metadata"]["delivery"]["latest_html_path"], html_path)
         self.assertEqual(overview_view.view["active_review"]["metadata"]["quality"]["status"], "pass")
+        self.assertEqual(overview_view.view["counts"]["design_system_extraction_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["accessibility_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["browser_diagnostics_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["artifact_lineage_reports"], 1)
@@ -530,6 +560,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_system_audit.md", completed_names)
         self.assertIn("component_inventory.md", completed_names)
         self.assertIn("component_inventory.json", completed_names)
+        self.assertIn("design_system_extraction.md", completed_names)
+        self.assertIn("design_system_extraction.json", completed_names)
         self.assertIn("accessibility_report.md", completed_names)
         self.assertIn("accessibility_report.json", completed_names)
         self.assertIn("design_spec.md", completed_names)
@@ -542,6 +574,7 @@ class DesignProductionTests(unittest.TestCase):
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(completed_payload["design_system_audit_reports"][0]["status"], "warning")
         self.assertEqual(completed_payload["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(completed_payload["design_system_extraction_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["artifact_lineage_reports"][0]["status"], "ready")
@@ -1071,6 +1104,68 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(any("invalid hex" in summary for summary in summaries))
         self.assertTrue(any("Duplicate color token name" in summary for summary in summaries))
         self.assertEqual(report.metrics["finding_counts"]["error"], 2)
+
+    def test_design_system_extraction_reads_css_tokens_selectors_and_breakpoints(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_extraction" / "production" / "design_extraction"
+        artifacts_dir = session_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        html_path = artifacts_dir / "index.html"
+        html_path.write_text(
+            """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root { --primary: #123456; --gap: 12px; }
+    .card { color: var(--primary); gap: var(--gap); border-radius: 8px; font-family: Inter, sans-serif; }
+    #hero > .card { box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); padding: 24px; }
+    @media (max-width: 720px) { .card { padding: 16px; } }
+  </style>
+</head>
+<body><main id="hero"><section class="card"><h1>Design extraction</h1></section></main></body>
+</html>
+""",
+            encoding="utf-8",
+        )
+        artifact = HtmlArtifact(
+            page_id="page_extraction",
+            path=workspace_relative_path(html_path),
+            builder="placeholder",
+        )
+        state = DesignProductionState(
+            production_session=ProductionSession(
+                production_session_id="design_extraction",
+                capability="design",
+                adk_session_id="session_design_extraction",
+                turn_index=1,
+                root_dir=workspace_relative_path(session_root),
+                status="running",
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            ),
+            status="running",
+            stage="design_system_extraction_test",
+            design_system=DesignSystemSpec(
+                colors=[DesignTokenColor(name="primary", value="#123456")],
+                typography=[DesignTokenTypography(role="body", font_family="Inter, sans-serif")],
+                spacing={"gap": "12px"},
+                radii={"default": "8px"},
+                shadows={},
+            ),
+            html_artifacts=[artifact],
+        )
+
+        report = build_design_system_extraction(state, artifact=artifact)
+
+        self.assertEqual(report.status, "ready")
+        categories = {token.category for token in report.tokens}
+        self.assertTrue({"css_variable", "color", "typography", "spacing", "radius", "shadow", "breakpoint"}.issubset(categories))
+        variable_tokens = {token.name: token for token in report.tokens if token.category == "css_variable"}
+        self.assertEqual(variable_tokens["--primary"].value, "#123456")
+        self.assertGreaterEqual(variable_tokens["--primary"].usage_count, 1)
+        self.assertTrue(any(selector.selector == ".card" for selector in report.selectors))
+        self.assertTrue(any(selector.kind == "media_query" for selector in report.selectors))
+        self.assertGreater(report.metrics["selector_count"], 0)
 
     def test_accessibility_report_flags_static_html_issues(self) -> None:
         session_root = workspace_root() / "generated" / "session_design_accessibility" / "production" / "design_accessibility"
