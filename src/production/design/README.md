@@ -41,6 +41,10 @@ Final approval now also writes `exports/design_handoff_bundle.zip`, a portable b
 
 Design outputs now expose source reference details for user-provided reference assets. HTML artifacts, preview reports, read-only preview/artifacts views, `design_spec.md`, and `handoff_manifest.json` include source asset names, workspace-relative paths, kinds, and statuses where available. This keeps handoff output traceable without exposing local absolute paths.
 
+## P1c Review Quality Metadata
+
+The `preview_review` payload now uses shared `ReviewPayload.metadata` for compact delivery, preview, quality, and source-reference summaries. `view_type="overview"` exposes the same active review metadata, so runtime clients can show approval context without re-parsing full HTML artifact, preview report, or QC report payloads.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.

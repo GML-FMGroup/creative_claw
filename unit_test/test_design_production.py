@@ -339,6 +339,28 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("Expert generated HTML design", resolve_workspace_path(html_path).read_text(encoding="utf-8"))
         self.assertEqual(persisted["qc_reports"][0]["status"], "pass")
         self.assertIn("Hero reflects the requested operational dashboard brief.", persisted["qc_reports"][0]["findings"][0]["summary"])
+        review_metadata = preview.review_payload.metadata
+        self.assertEqual(review_metadata["delivery"]["latest_html_path"], html_path)
+        self.assertEqual(review_metadata["delivery"]["preview_count"], 2)
+        self.assertEqual(review_metadata["delivery"]["screenshot_count"], 2)
+        self.assertEqual(review_metadata["delivery"]["html_validation_status"], "valid")
+        self.assertEqual(review_metadata["delivery"]["qc_status"], "pass")
+        self.assertTrue(review_metadata["delivery"]["qc_report_path"].endswith("reports/qc_report.md"))
+        self.assertEqual(review_metadata["preview"]["valid_count"], 2)
+        self.assertEqual(review_metadata["preview"]["reports"][0]["layout"]["horizontal_overflow_px"], 0)
+        self.assertEqual(review_metadata["quality"]["status"], "pass")
+        self.assertEqual(review_metadata["quality"]["finding_counts"]["info"], 1)
+        self.assertEqual(review_metadata["quality"]["attention_findings"], [])
+
+        overview_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="overview",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(overview_view.view["active_review"]["metadata"]["delivery"]["latest_html_path"], html_path)
+        self.assertEqual(overview_view.view["active_review"]["metadata"]["quality"]["status"], "pass")
 
         completed = asyncio.run(
             manager.resume(
@@ -391,9 +413,13 @@ class DesignProductionTests(unittest.TestCase):
         html_review_items = next(item for item in review_items if item["kind"] == "html_artifacts")["artifacts"]
         preview_review_items = next(item for item in review_items if item["kind"] == "preview_reports")["reports"]
         asset_id = html_review_items[0]["source_refs"][0]
+        review_metadata = preview.review_payload.metadata
         self.assertEqual(html_review_items[0]["source_ref_details"][0]["name"], "brand.png")
         self.assertEqual(preview_review_items[0]["source_refs"], [asset_id])
         self.assertTrue(preview_review_items[0]["source_ref_details"][0]["path"].split("/")[-1].endswith("brand.png"))
+        self.assertEqual(review_metadata["source_refs"], [asset_id])
+        self.assertEqual(review_metadata["source_ref_details"][0]["name"], "brand.png")
+        self.assertNotIn(str(workspace_root()), json.dumps(review_metadata, ensure_ascii=False))
 
         preview_view = asyncio.run(
             manager.view(
@@ -476,6 +502,12 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(persisted["qc_reports"][0]["status"], "warning")
         summaries = [finding["summary"] for finding in persisted["qc_reports"][0]["findings"]]
         self.assertTrue(any("DesignQCExpert failed" in summary for summary in summaries))
+        review_metadata = preview.review_payload.metadata
+        self.assertEqual(review_metadata["quality"]["status"], "warning")
+        self.assertEqual(review_metadata["quality"]["finding_counts"]["warning"], 1)
+        self.assertTrue(
+            any("DesignQCExpert failed" in finding["summary"] for finding in review_metadata["quality"]["attention_findings"])
+        )
 
     def test_manager_revision_impact_marks_target_section(self) -> None:
         state = _adk_state("session_design_revision_impact")
