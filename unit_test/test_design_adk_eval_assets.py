@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import unittest
 from pathlib import Path
@@ -43,6 +44,19 @@ class DesignAdkEvalAssetsTests(unittest.TestCase):
             state = eval_case.session_input.state
             self.assertEqual(state["channel"], "eval")
             self.assertEqual(state["chat_id"], "design_p0")
+
+    def test_design_eval_agent_has_image_boundary_stub(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        agent_path = project_root / "tests" / "eval" / "creative_claw_orchestrator" / "agent.py"
+        spec = importlib.util.spec_from_file_location("creative_claw_design_eval_agent_test", agent_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        image_stub = module._orchestrator.expert_agents.get("ImageGenerationAgent")
+        self.assertIsNotNone(image_stub)
+        self.assertEqual(image_stub.name, "ImageGenerationAgent")
 
 
 if __name__ == "__main__":

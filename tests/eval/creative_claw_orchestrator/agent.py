@@ -11,6 +11,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from google.adk.artifacts import InMemoryArtifactService
+from google.adk.agents import BaseAgent
+from google.adk.events import Event, EventActions
 from google.adk.sessions import InMemorySessionService
 
 from src.agents.orchestrator.orchestrator_agent import Orchestrator
@@ -18,6 +20,27 @@ from src.runtime.workspace import workspace_root
 
 
 _EVAL_PRODUCT_SIZE = 320
+
+
+class _EvalStubExpertAgent(BaseAgent):
+    """Return deterministic expert output for routing-only ADK eval cases."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name, description="Eval-only stub expert.")
+
+    async def _run_async_impl(self, ctx):
+        yield Event(
+            author=self.name,
+            actions=EventActions(
+                state_delta={
+                    "current_output": {
+                        "status": "success",
+                        "message": f"{self.name} eval stub completed.",
+                        "output_text": f"{self.name} was selected for this non-Design eval path.",
+                    }
+                }
+            ),
+        )
 
 
 def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
@@ -71,7 +94,9 @@ _ensure_eval_product_fixture()
 _orchestrator = Orchestrator(
     session_service=InMemorySessionService(),
     artifact_service=InMemoryArtifactService(),
-    expert_agents={},
+    expert_agents={
+        "ImageGenerationAgent": _EvalStubExpertAgent(name="ImageGenerationAgent"),
+    },
 )
 
 root_agent = _orchestrator.agent
