@@ -118,13 +118,15 @@ def _handoff_manifest(
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
         "preview_reports": [_preview_report_manifest_item(state, item) for item in state.preview_reports],
+        "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
         "quality_reports": [item.model_dump(mode="json") for item in state.qc_reports],
         "revision_history": state.revision_history,
         "deliverables": [_workspace_file_manifest_item(state, item) for item in core_artifacts],
         "handoff_artifacts": [_workspace_file_manifest_item(state, item) for item in handoff_artifacts],
         "known_limits": [
             "The core Design deliverable is the approved HTML artifact.",
-            "P1a does not generate PDF, Figma, or production-code handoff outputs.",
+            "PDF is an optional export derived from the approved HTML artifact.",
+            "Figma and production-code handoff outputs are intentionally outside P1d.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -229,7 +231,14 @@ def _design_spec_markdown(
             for section in page.sections:
                 lines.append(f"  - {section.section_id}: {section.title} - {section.purpose}")
             lines.append("")
-    lines.extend(["## Quality", ""])
+    lines.extend(["## PDF Export", ""])
+    if not state.pdf_export_reports:
+        lines.append("- No PDF export was requested.")
+    else:
+        for report in state.pdf_export_reports:
+            detail = f"{report.status}: {report.pdf_path or '; '.join(report.issues)}"
+            lines.append(f"- {report.report_id}: {detail}")
+    lines.extend(["", "## Quality", ""])
     if latest_qc is None:
         lines.append("- No QC report was generated.")
     else:
@@ -256,7 +265,8 @@ def _design_spec_markdown(
             "## Known Limits",
             "",
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
-            "- PDF, Figma, and production-code handoff outputs are intentionally outside P1a.",
+            "- PDF export is optional and derived from the approved HTML artifact.",
+            "- Figma and production-code handoff outputs are intentionally outside P1d.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )

@@ -17,6 +17,7 @@ from src.production.design.models import (
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
+    PdfExportReport,
     PreviewReport,
 )
 from src.production.design.prompt_catalog import (
@@ -65,6 +66,28 @@ class _FakePreviewRenderer:
                 layout_metrics={"viewportWidth": 390, "bodyScrollWidth": 390, "bodyScrollHeight": 1200},
             ),
         ]
+
+
+class _FakePdfExporter:
+    async def export(self, *, artifact_id: str, html_path, output_path: Path) -> PdfExportReport:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"%PDF-1.4\n% fake design pdf\n")
+        return PdfExportReport(
+            artifact_id=artifact_id,
+            source_html_path=str(html_path),
+            pdf_path=workspace_relative_path(output_path),
+            status="exported",
+        )
+
+
+class _UnavailablePdfExporter:
+    async def export(self, *, artifact_id: str, html_path, output_path: Path) -> PdfExportReport:
+        return PdfExportReport(
+            artifact_id=artifact_id,
+            source_html_path=str(html_path),
+            status="unavailable",
+            issues=["Playwright is not available: ImportError"],
+        )
 
 
 class _FakeDesignExpertRuntime:
@@ -379,6 +402,116 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_handoff_bundle.zip", completed_names)
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(len(completed_payload["export_artifacts"]), 3)
+
+    def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
+        state = _adk_state("session_design_pdf_export")
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            pdf_exporter=_FakePdfExporter(),
+            expert_runtime=_FakeDesignExpertRuntime(),
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings={"exports": ["pdf"]},
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        completed = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.stage, "preview_review")
+        self.assertEqual(completed.status, "completed")
+        artifact_paths = {artifact.path for artifact in completed.artifacts}
+        pdf_path = next(path for path in artifact_paths if path.endswith("exports/design.pdf"))
+        self.assertTrue(resolve_workspace_path(pdf_path).is_file())
+        self.assertIn(pdf_path, state["final_file_paths"])
+
+        completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(completed_payload["requested_exports"], ["pdf"])
+        self.assertEqual(completed_payload["pdf_export_reports"][0]["status"], "exported")
+        self.assertEqual(completed_payload["pdf_export_reports"][0]["pdf_path"], pdf_path)
+        self.assertEqual(len(completed_payload["export_artifacts"]), 3)
+        pdf_report_path = f"{completed_payload['production_session']['root_dir']}/reports/pdf_export_report.json"
+        self.assertEqual(
+            json.loads(resolve_workspace_path(pdf_report_path).read_text(encoding="utf-8"))[0]["pdf_path"],
+            pdf_path,
+        )
+
+        manifest_path = next(
+            artifact["path"]
+            for artifact in completed_payload["export_artifacts"]
+            if artifact["name"] == "handoff_manifest.json"
+        )
+        manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["pdf_export_reports"][0]["pdf_path"], pdf_path)
+        self.assertTrue(any(item["path"] == pdf_path for item in manifest["deliverables"]))
+
+        bundle_path = next(
+            artifact["path"]
+            for artifact in completed_payload["export_artifacts"]
+            if artifact["name"] == "design_handoff_bundle.zip"
+        )
+        with zipfile.ZipFile(resolve_workspace_path(bundle_path)) as bundle:
+            self.assertIn("exports/design.pdf", set(bundle.namelist()))
+
+    def test_manager_pdf_export_failure_is_non_blocking(self) -> None:
+        state = _adk_state("session_design_pdf_unavailable")
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            pdf_exporter=_UnavailablePdfExporter(),
+            expert_runtime=_FakeDesignExpertRuntime(),
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        completed = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve", "exports": ["pdf"]},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.stage, "preview_review")
+        self.assertEqual(completed.status, "completed")
+        artifact_paths = {artifact.path for artifact in completed.artifacts}
+        self.assertFalse(any(path.endswith("exports/design.pdf") for path in artifact_paths))
+        completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(completed_payload["requested_exports"], ["pdf"])
+        self.assertEqual(completed_payload["pdf_export_reports"][0]["status"], "unavailable")
+        self.assertIn("Playwright is not available", completed_payload["pdf_export_reports"][0]["issues"][0])
+        event_types = [event["event_type"] for event in completed_payload["production_events"]]
+        self.assertIn("pdf_export_unavailable", event_types)
 
     def test_manager_source_ref_details_flow_to_preview_and_handoff(self) -> None:
         source_dir = workspace_root() / "test_inputs" / "design_source_refs"

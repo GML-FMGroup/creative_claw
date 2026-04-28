@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.production.design.models import DesignProductionState, HtmlArtifact, PreviewReport
+from src.production.design.models import DesignProductionState, HtmlArtifact, PdfExportReport, PreviewReport
 from src.production.models import WorkspaceFileRef
 
 
@@ -76,6 +76,9 @@ def workspace_file_source_refs(state: DesignProductionState, artifact: Workspace
     preview = _preview_report_by_screenshot_path(state, artifact.path)
     if preview is not None:
         return preview_report_source_refs(state, preview)
+    pdf_report = _pdf_export_report_by_path(state, artifact.path)
+    if pdf_report is not None:
+        return html_artifact_source_refs(state, pdf_report.artifact_id)
     if artifact.name in _DERIVED_HANDOFF_NAMES:
         latest = latest_html_artifact(state)
         return list(latest.depends_on) if latest is not None else []
@@ -111,6 +114,13 @@ def _html_artifact_by_path(state: DesignProductionState, path: str) -> HtmlArtif
 def _preview_report_by_screenshot_path(state: DesignProductionState, path: str) -> PreviewReport | None:
     for report in state.preview_reports:
         if report.screenshot_path == path:
+            return report
+    return None
+
+
+def _pdf_export_report_by_path(state: DesignProductionState, path: str) -> PdfExportReport | None:
+    for report in state.pdf_export_reports:
+        if report.pdf_path == path:
             return report
     return None
 
