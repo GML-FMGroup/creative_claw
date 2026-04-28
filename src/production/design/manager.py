@@ -27,6 +27,7 @@ from src.production.design.handoff import write_handoff_exports
 from src.production.design.placeholders import PlaceholderHtmlBuilder
 from src.production.design.quality import build_quality_report, quality_report_markdown
 from src.production.design.source_refs import (
+    latest_html_artifact,
     preview_report_source_refs,
     source_ref_details,
     workspace_file_source_refs,
@@ -1238,7 +1239,156 @@ def _preview_review_payload(state: DesignProductionState) -> ReviewPayload:
             {"id": "revise", "label": "Request changes"},
             {"id": "cancel", "label": "Cancel"},
         ],
+        metadata=_preview_review_metadata(state),
     )
+
+
+def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
+    """Return compact delivery, preview, quality, and source context for review."""
+    latest_html = latest_html_artifact(state)
+    artifact_id = latest_html.artifact_id if latest_html is not None else ""
+    preview_reports = _preview_reports_for_artifact(state, artifact_id)
+    validation_report = _latest_validation_report_for_artifact(state, artifact_id)
+    qc_report = _latest_qc_report_for_artifact(state, artifact_id)
+    source_refs = list(latest_html.depends_on) if latest_html is not None else []
+    return {
+        "delivery": {
+            "latest_html_artifact_id": artifact_id,
+            "latest_html_path": latest_html.path if latest_html is not None else "",
+            "html_status": latest_html.status if latest_html is not None else "",
+            "preview_count": len(preview_reports),
+            "screenshot_count": len([report for report in preview_reports if report.screenshot_path]),
+            "html_validation_status": validation_report.status if validation_report is not None else "",
+            "html_validation_report_path": (
+                f"{state.production_session.root_dir}/reports/html_validation.json"
+                if validation_report is not None
+                else ""
+            ),
+            "qc_status": qc_report.status if qc_report is not None else "",
+            "qc_report_path": (
+                qc_report.report_path or f"{state.production_session.root_dir}/reports/qc_report.md"
+                if qc_report is not None
+                else ""
+            ),
+        },
+        "preview": _preview_review_summary(preview_reports),
+        "quality": _quality_review_summary(qc_report),
+        "source_refs": source_refs,
+        "source_ref_details": source_ref_details(state, source_refs),
+    }
+
+
+def _preview_reports_for_artifact(state: DesignProductionState, artifact_id: str) -> list[PreviewReport]:
+    if not artifact_id:
+        return list(state.preview_reports)
+    return [report for report in state.preview_reports if report.artifact_id == artifact_id]
+
+
+def _latest_validation_report_for_artifact(
+    state: DesignProductionState,
+    artifact_id: str,
+) -> HtmlValidationReport | None:
+    for report in reversed(state.html_validation_reports):
+        if not artifact_id or report.artifact_id == artifact_id:
+            return report
+    return None
+
+
+def _latest_qc_report_for_artifact(
+    state: DesignProductionState,
+    artifact_id: str,
+) -> DesignQcReport | None:
+    for report in reversed(state.qc_reports):
+        if not artifact_id or artifact_id in report.artifact_ids:
+            return report
+    return None
+
+
+def _preview_review_summary(preview_reports: list[PreviewReport]) -> dict[str, Any]:
+    """Build a concise browser-preview summary for review metadata."""
+    attention_reports = []
+    reports = []
+    for report in preview_reports:
+        item = {
+            "report_id": report.report_id,
+            "viewport": report.viewport,
+            "valid": report.valid,
+            "screenshot_path": report.screenshot_path,
+            "issue_count": len(report.issues),
+            "console_error_count": len(report.console_errors),
+            "network_failure_count": len(report.network_failures),
+            "layout": _layout_metric_summary(report.layout_metrics),
+        }
+        reports.append(item)
+        if (
+            not report.valid
+            or report.issues
+            or report.console_errors
+            or report.network_failures
+        ):
+            attention_reports.append(item)
+    return {
+        "report_count": len(preview_reports),
+        "valid_count": len([report for report in preview_reports if report.valid]),
+        "screenshot_count": len([report for report in preview_reports if report.screenshot_path]),
+        "reports": reports,
+        "attention_reports": attention_reports,
+    }
+
+
+def _layout_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Return stable preview layout metrics without leaking browser internals."""
+    viewport_width = metrics.get("viewportWidth")
+    body_scroll_width = metrics.get("bodyScrollWidth")
+    horizontal_overflow_px = 0
+    if isinstance(viewport_width, int) and isinstance(body_scroll_width, int):
+        horizontal_overflow_px = max(0, body_scroll_width - viewport_width)
+    return {
+        "viewport_width": viewport_width,
+        "body_scroll_width": body_scroll_width,
+        "body_scroll_height": metrics.get("bodyScrollHeight"),
+        "horizontal_overflow_px": horizontal_overflow_px,
+    }
+
+
+def _quality_review_summary(report: DesignQcReport | None) -> dict[str, Any]:
+    """Build a concise QC summary for review metadata."""
+    finding_counts = {"info": 0, "warning": 0, "error": 0}
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "finding_counts": finding_counts,
+            "attention_findings": [],
+            "recommendations": [],
+        }
+
+    for finding in report.findings:
+        finding_counts[finding.severity] = finding_counts.get(finding.severity, 0) + 1
+    attention_findings = [
+        {
+            "finding_id": finding.finding_id,
+            "severity": finding.severity,
+            "category": finding.category,
+            "target": finding.target,
+            "summary": finding.summary,
+        }
+        for finding in report.findings
+        if finding.severity in {"warning", "error"}
+    ]
+    recommendations: list[str] = []
+    for finding in report.findings:
+        if finding.recommendation and finding.recommendation not in recommendations:
+            recommendations.append(finding.recommendation)
+        if len(recommendations) >= 3:
+            break
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "finding_counts": finding_counts,
+        "attention_findings": attention_findings,
+        "recommendations": recommendations,
+    }
 
 
 def _html_artifact_payload(state: DesignProductionState, artifact: HtmlArtifact) -> dict[str, Any]:
