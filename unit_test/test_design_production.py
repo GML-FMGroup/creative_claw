@@ -278,6 +278,8 @@ class DesignProductionTests(unittest.TestCase):
         artifact_names = {artifact.name for artifact in result.artifacts}
         self.assertIn("design_spec.md", artifact_names)
         self.assertIn("handoff_manifest.json", artifact_names)
+        self.assertIn("design_tokens.json", artifact_names)
+        self.assertIn("design_tokens.css", artifact_names)
         self.assertIn("design_handoff_bundle.zip", artifact_names)
         self.assertEqual(state["active_production_capability"], "design")
         self.assertEqual(state["active_production_status"], "completed")
@@ -289,12 +291,21 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
         export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
-        self.assertEqual(len(export_paths), 3)
+        self.assertEqual(len(export_paths), 5)
         self.assertTrue(any(path.endswith("exports/design_spec.md") for path in export_paths))
+        token_json_path = next(path for path in export_paths if path.endswith("exports/design_tokens.json"))
+        token_css_path = next(path for path in export_paths if path.endswith("exports/design_tokens.css"))
+        token_json = json.loads(resolve_workspace_path(token_json_path).read_text(encoding="utf-8"))
+        token_css = resolve_workspace_path(token_css_path).read_text(encoding="utf-8")
+        self.assertEqual(token_json["source"], "placeholder")
+        self.assertEqual(token_json["css_variables"]["--cc-color-primary"], "#165DFF")
+        self.assertIn("--cc-color-primary: #165DFF;", token_css)
         manifest_path = next(path for path in export_paths if path.endswith("exports/handoff_manifest.json"))
         manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
         self.assertEqual(manifest["latest_html_path"], html_paths[0])
         self.assertEqual(manifest["quality_status"], "pass")
+        self.assertTrue(any(item["name"] == "design_tokens.json" for item in manifest["design_token_artifacts"]))
+        self.assertTrue(any(item["name"] == "design_tokens.css" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_handoff_bundle.zip" for item in manifest["handoff_artifacts"]))
         bundle_path = next(path for path in export_paths if path.endswith("exports/design_handoff_bundle.zip"))
         with zipfile.ZipFile(resolve_workspace_path(bundle_path)) as bundle:
@@ -302,6 +313,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("artifacts/index.html", bundle_names)
         self.assertIn("exports/design_spec.md", bundle_names)
         self.assertIn("exports/handoff_manifest.json", bundle_names)
+        self.assertIn("exports/design_tokens.json", bundle_names)
+        self.assertIn("exports/design_tokens.css", bundle_names)
         self.assertIn("reports/qc_report.md", bundle_names)
         self.assertIn("previews/index_desktop.png", bundle_names)
         self.assertIn("previews/index_mobile.png", bundle_names)
@@ -399,9 +412,11 @@ class DesignProductionTests(unittest.TestCase):
         completed_names = {artifact.name for artifact in completed.artifacts}
         self.assertIn("design_spec.md", completed_names)
         self.assertIn("handoff_manifest.json", completed_names)
+        self.assertIn("design_tokens.json", completed_names)
+        self.assertIn("design_tokens.css", completed_names)
         self.assertIn("design_handoff_bundle.zip", completed_names)
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
-        self.assertEqual(len(completed_payload["export_artifacts"]), 3)
+        self.assertEqual(len(completed_payload["export_artifacts"]), 5)
 
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
         state = _adk_state("session_design_pdf_export")
@@ -446,7 +461,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["requested_exports"], ["pdf"])
         self.assertEqual(completed_payload["pdf_export_reports"][0]["status"], "exported")
         self.assertEqual(completed_payload["pdf_export_reports"][0]["pdf_path"], pdf_path)
-        self.assertEqual(len(completed_payload["export_artifacts"]), 3)
+        self.assertEqual(len(completed_payload["export_artifacts"]), 5)
         pdf_report_path = f"{completed_payload['production_session']['root_dir']}/reports/pdf_export_report.json"
         self.assertEqual(
             json.loads(resolve_workspace_path(pdf_report_path).read_text(encoding="utf-8"))[0]["pdf_path"],
@@ -868,7 +883,16 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.view["view_type"], "artifacts")
         export_names = {artifact["name"] for artifact in result.view["export_artifacts"]}
-        self.assertEqual(export_names, {"design_spec.md", "handoff_manifest.json", "design_handoff_bundle.zip"})
+        self.assertEqual(
+            export_names,
+            {
+                "design_spec.md",
+                "handoff_manifest.json",
+                "design_tokens.json",
+                "design_tokens.css",
+                "design_handoff_bundle.zip",
+            },
+        )
         final_names = {artifact["name"] for artifact in result.view["artifacts"]}
         self.assertTrue(export_names.issubset(final_names))
 

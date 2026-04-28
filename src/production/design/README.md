@@ -49,6 +49,10 @@ The `preview_review` payload now uses shared `ReviewPayload.metadata` for compac
 
 Design production can now export the approved HTML artifact to `exports/design.pdf` when PDF is explicitly requested through `design_settings.exports` or the final preview approval response. PDF remains a derived handoff artifact: HTML is still the durable source of truth, and missing browser export dependencies create a non-blocking PDF export report instead of failing production.
 
+## P1e Design Token Handoff
+
+Final approval now exports `exports/design_tokens.json` and `exports/design_tokens.css` when a `DesignSystemSpec` exists. These files are deterministic handoff artifacts derived from the production design system: JSON preserves the structured token payload, while CSS exposes stable `--cc-*` custom properties for downstream implementation.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -58,6 +62,7 @@ Design production can now export the approved HTML artifact to `exports/design.p
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.
 - `source_refs.py`: source-reference enrichment helpers for views, reviews, and handoff files.
+- `tokens.py`: deterministic JSON and CSS token handoff exports derived from `DesignSystemSpec`.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
 - `quality.py`: deterministic P0 quality report generation and supplemental expert finding merge.
 - `impact.py`: read-only P0 revision impact analysis.
