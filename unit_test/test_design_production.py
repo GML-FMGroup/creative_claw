@@ -282,6 +282,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_system_audit.md", artifact_names)
         self.assertIn("component_inventory.md", artifact_names)
         self.assertIn("component_inventory.json", artifact_names)
+        self.assertIn("browser_diagnostics.md", artifact_names)
+        self.assertIn("browser_diagnostics.json", artifact_names)
         self.assertIn("design_spec.md", artifact_names)
         self.assertIn("handoff_manifest.json", artifact_names)
         self.assertIn("design_tokens.json", artifact_names)
@@ -297,6 +299,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(payload["component_inventory_reports"][0]["status"], "ready")
         self.assertGreater(payload["component_inventory_reports"][0]["metrics"]["item_count"], 0)
+        self.assertEqual(payload["browser_diagnostics_reports"][0]["status"], "ready")
+        self.assertEqual(payload["browser_diagnostics_reports"][0]["metrics"]["preview_valid_count"], 2)
         rebuilt_inventory = build_component_inventory(DesignProductionState.model_validate(payload))
         self.assertEqual(rebuilt_inventory.status, "ready")
         self.assertTrue(any(item.source == "layout_plan" for item in rebuilt_inventory.items))
@@ -327,6 +331,15 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(components_view.view["component_inventory_reports"][0]["status"], "ready")
         self.assertTrue(components_view.view["component_inventory_report_path"].endswith("reports/component_inventory.md"))
+        diagnostics_view = asyncio.run(
+            manager.view(
+                production_session_id=result.production_session_id,
+                view_type="diagnostics",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(diagnostics_view.view["latest_browser_diagnostics"]["status"], "ready")
+        self.assertTrue(diagnostics_view.view["browser_diagnostics_report_path"].endswith("reports/browser_diagnostics.md"))
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
         export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
@@ -345,6 +358,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(manifest["quality_status"], "pass")
         self.assertEqual(manifest["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(manifest["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(manifest["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertTrue(any(item["name"] == "design_tokens.json" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_tokens.css" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_handoff_bundle.zip" for item in manifest["handoff_artifacts"]))
@@ -359,6 +373,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/design_system_audit.md", bundle_names)
         self.assertIn("reports/component_inventory.md", bundle_names)
         self.assertIn("reports/component_inventory.json", bundle_names)
+        self.assertIn("reports/browser_diagnostics.md", bundle_names)
+        self.assertIn("reports/browser_diagnostics.json", bundle_names)
         self.assertIn("reports/qc_report.md", bundle_names)
         self.assertIn("previews/index_desktop.png", bundle_names)
         self.assertIn("previews/index_mobile.png", bundle_names)
@@ -428,6 +444,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(review_metadata["delivery"]["qc_report_path"].endswith("reports/qc_report.md"))
         self.assertEqual(review_metadata["preview"]["valid_count"], 2)
         self.assertEqual(review_metadata["preview"]["reports"][0]["layout"]["horizontal_overflow_px"], 0)
+        self.assertEqual(review_metadata["diagnostics"]["status"], "ready")
+        self.assertEqual(review_metadata["diagnostics"]["finding_counts"]["warning"], 0)
         self.assertEqual(review_metadata["quality"]["status"], "pass")
         self.assertEqual(review_metadata["quality"]["finding_counts"]["info"], 1)
         self.assertEqual(review_metadata["quality"]["attention_findings"], [])
@@ -441,6 +459,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(overview_view.view["active_review"]["metadata"]["delivery"]["latest_html_path"], html_path)
         self.assertEqual(overview_view.view["active_review"]["metadata"]["quality"]["status"], "pass")
+        self.assertEqual(overview_view.view["counts"]["browser_diagnostics_reports"], 1)
 
         completed = asyncio.run(
             manager.resume(
@@ -465,6 +484,7 @@ class DesignProductionTests(unittest.TestCase):
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(completed_payload["design_system_audit_reports"][0]["status"], "warning")
         self.assertEqual(completed_payload["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
 
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
@@ -524,6 +544,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
         self.assertEqual(manifest["pdf_export_reports"][0]["pdf_path"], pdf_path)
+        self.assertEqual(manifest["browser_diagnostics_reports"][0]["metrics"]["pdf_exported_count"], 1)
         self.assertTrue(any(item["path"] == pdf_path for item in manifest["deliverables"]))
 
         bundle_path = next(
@@ -574,8 +595,15 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["requested_exports"], ["pdf"])
         self.assertEqual(completed_payload["pdf_export_reports"][0]["status"], "unavailable")
         self.assertIn("Playwright is not available", completed_payload["pdf_export_reports"][0]["issues"][0])
+        self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "warning")
+        diagnostic_summaries = [
+            finding["summary"]
+            for finding in completed_payload["browser_diagnostics_reports"][0]["findings"]
+        ]
+        self.assertTrue(any("PDF export is unavailable" in summary for summary in diagnostic_summaries))
         event_types = [event["event_type"] for event in completed_payload["production_events"]]
         self.assertIn("pdf_export_unavailable", event_types)
+        self.assertIn("browser_diagnostics_built", event_types)
 
     def test_manager_source_ref_details_flow_to_preview_and_handoff(self) -> None:
         source_dir = workspace_root() / "test_inputs" / "design_source_refs"
@@ -899,14 +927,14 @@ class DesignProductionTests(unittest.TestCase):
         result = asyncio.run(
             run_design_production(
                 action="view",
-                view_type="overview",
+                view_type="diagnostics",
                 tool_context=tool_context,
             )
         )
 
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["view"]["view_type"], "overview")
-        self.assertEqual(result["view"]["design_genre"], "landing_page")
+        self.assertEqual(result["view"]["view_type"], "diagnostics")
+        self.assertIn("browser_diagnostics_reports", result["view"])
 
     def test_manager_artifacts_view_includes_handoff_exports(self) -> None:
         state = _adk_state("session_design_artifacts_view")

@@ -61,11 +61,16 @@ Design production now runs a deterministic design-system audit whenever a Design
 
 Design production now derives an implementation-facing component inventory from `LayoutPlan`, `DesignSystemSpec`, and the generated HTML artifact. The report lists layout sections, tokenized components, and detected HTML component hooks with selectors, source refs, token refs, and implementation notes. Inventory output is persisted under `reports/component_inventory.*`, exposed through `view_type="components"`, and included in handoff exports.
 
+## P1h Browser Diagnostics
+
+Design production now derives deterministic browser diagnostics from preview and PDF export facts. The report separates environment issues, missing preview artifacts, browser console/network failures, responsive overflow, and PDF export failures without making browser-dependent outputs blocking. Diagnostics are persisted under `reports/browser_diagnostics.*`, exposed through `view_type="diagnostics"`, included in preview review metadata, and packaged in final handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
+- `browser_diagnostics.py`: deterministic diagnostics derived from browser preview and PDF export reports.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.
 - `component_inventory.py`: deterministic component inventory extraction from state and generated HTML.
 - `placeholders.py`: deterministic P0a HTML builder.

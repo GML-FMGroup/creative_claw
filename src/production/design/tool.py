@@ -23,7 +23,18 @@ async def run_design_production(
     ],
     user_prompt: str = "",
     production_session_id: str | None = None,
-    view_type: Literal["overview", "brief", "design_system", "layout", "preview", "quality", "events", "artifacts"] = "overview",
+    view_type: Literal[
+        "overview",
+        "brief",
+        "design_system",
+        "components",
+        "layout",
+        "preview",
+        "diagnostics",
+        "quality",
+        "events",
+        "artifacts",
+    ] = "overview",
     input_files: list[Any] | str | None = None,
     placeholder_design: bool = False,
     design_settings: dict[str, Any] | None = None,
@@ -36,7 +47,7 @@ async def run_design_production(
         action: Use start, status, resume, view, add_reference_assets, analyze_revision_impact, or apply_revision.
         user_prompt: User's Design brief when starting production.
         production_session_id: Existing production session id for status, resume, view, or impact analysis.
-        view_type: Read-only view to load when action is view. Allowed values are overview, brief, design_system, layout, preview, quality, events, and artifacts.
+        view_type: Read-only view to load when action is view. Allowed values are overview, brief, design_system, components, layout, preview, diagnostics, quality, events, and artifacts.
         input_files: Optional workspace file records or workspace-relative path strings to use as design reference assets.
         placeholder_design: Use true only for P0a placeholder HTML pipeline validation.
         design_settings: Optional genre, audience, primary_action, requested exports such as {"exports": ["pdf"]}, and future design settings.
