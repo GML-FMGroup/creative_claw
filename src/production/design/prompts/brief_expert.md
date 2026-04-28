@@ -18,7 +18,7 @@ Genre playbook:
 {{ playbook_text }}
 
 Requirements:
-- Keep the brief practical for a single-file HTML design artifact.
+- Keep the brief practical for HTML-centered design artifacts.
 - Preserve explicit user constraints.
 - Set device targets to desktop and mobile unless the request clearly says otherwise.
 - Do not invent unavailable brand assets.

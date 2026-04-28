@@ -93,6 +93,10 @@ Multi-page preview revisions now honor explicit page, section, and HTML artifact
 
 Design preview and PDF export now share deterministic browser environment classification. Missing Playwright packages, missing Chromium browser binaries, and missing Chromium system dependencies are reported as non-blocking environment findings with actionable remediation, including `python -m playwright install chromium`. Preview review metadata and diagnostics metrics expose the same readiness status so clients can guide users without treating browser-dependent outputs as the source artifact.
 
+## P1p Multi-page Expert Planning
+
+The internal `LayoutPlannerExpert` now receives the requested build mode, full design settings, and compact requested page specs. For `design_settings.build_mode="multi_html"`, the structured layout prompt asks the model to produce one `PageBlueprint` per requested page, or a small cohesive site map when no page specs are provided. The manager still owns durable state and invokes `HtmlBuilderExpert` once per target page.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.

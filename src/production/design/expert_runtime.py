@@ -115,13 +115,16 @@ class DesignExpertRuntime:
             {
                 "brief_json": brief.model_dump_json(indent=2),
                 "design_system_json": design_system.model_dump_json(indent=2),
+                "design_settings_json": _json_dump(design_settings),
+                "requested_build_mode": _requested_layout_build_mode(design_settings),
+                "requested_pages_json": _json_dump(_requested_page_specs(design_settings)),
                 "reference_assets_json": reference_assets_json,
                 "playbook_text": playbook_text,
             },
         )
         layout_plan = await self._run_structured_agent(
             agent_name="LayoutPlannerExpert",
-            instruction="You create single-page layout plans with stable HTML section ids.",
+            instruction="You create page-aware layout plans with stable HTML section ids.",
             request_text=layout_prompt,
             output_schema=LayoutPlan,
             output_key="layout_plan",
@@ -146,7 +149,7 @@ class DesignExpertRuntime:
         revision_impact: dict[str, Any] | None = None,
         previous_html: str = "",
     ) -> HtmlBuildOutput:
-        """Generate a baseline or revision single-file HTML artifact."""
+        """Generate a baseline or revision HTML artifact for one target page."""
         prompt = render_prompt_template(
             "html_builder_expert",
             {
@@ -163,7 +166,7 @@ class DesignExpertRuntime:
         output = await self._run_structured_agent(
             agent_name="HtmlBuilderExpert",
             instruction=(
-                "You build complete, portable, responsive single-file HTML. "
+                "You build complete, portable, responsive HTML for one target page. "
                 "Return only fields requested by the schema."
             ),
             request_text=prompt,
@@ -327,6 +330,41 @@ def _strip_json_fence(text: str) -> str:
 def _json_dump(value: Any) -> str:
     """Dump prompt variables as stable JSON."""
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _requested_layout_build_mode(design_settings: dict[str, Any]) -> str:
+    """Return the requested layout build mode for prompt conditioning."""
+    raw = str(
+        design_settings.get("build_mode")
+        or design_settings.get("html_build_mode")
+        or design_settings.get("output_mode")
+        or ""
+    ).strip().lower().replace("-", "_")
+    if raw in {"multi_html", "multi_page", "multipage", "multi"}:
+        return "multi_html"
+    if design_settings.get("multi_page") is True:
+        return "multi_html"
+    return "single_html"
+
+
+def _requested_page_specs(design_settings: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return compact requested page specs for layout planning prompts."""
+    raw_pages = design_settings.get("pages")
+    if not isinstance(raw_pages, list):
+        return []
+    page_specs: list[dict[str, Any]] = []
+    for page in raw_pages:
+        if not isinstance(page, dict):
+            continue
+        page_specs.append(
+            {
+                "title": str(page.get("title") or "").strip(),
+                "path": str(page.get("path") or "").strip(),
+                "purpose": str(page.get("purpose") or page.get("description") or "").strip(),
+                "sections": page.get("sections") if isinstance(page.get("sections"), list) else [],
+            }
+        )
+    return page_specs
 
 
 def _model_json_or_null(value: BaseModel | None) -> str:
