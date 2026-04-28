@@ -331,7 +331,7 @@ class PPTProductionTests(unittest.TestCase):
                     adk_state=state,
                 )
             )
-            asyncio.run(
+            deck_spec_review = asyncio.run(
                 manager.resume(
                     production_session_id=started.production_session_id,
                     user_response={"decision": "approve"},
@@ -352,15 +352,31 @@ class PPTProductionTests(unittest.TestCase):
                     adk_state=state,
                 )
             )
+            manifest_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="manifest",
+                    adk_state=state,
+                )
+            )
 
         payload = _load_state_payload(preview_review)
         checks = {check["check_id"]: check for check in payload["quality_report"]["checks"]}
         quality_checks = {check["check_id"]: check for check in quality_view.view["quality_report"]["checks"]}
+        source_input_ids = payload["document_summary"]["source_input_ids"]
+        deck_slides_with_refs = [slide for slide in payload["deck_spec"]["slides"] if slide["source_refs"]]
+        review_items_with_refs = [item for item in deck_spec_review.review_payload.items if item["source_refs"]]
+        manifest_slides_with_refs = [slide for slide in manifest_view.view["manifest"]["slides"] if slide["source_refs"]]
+        deck_spec_md = workspace_root() / f"{payload['production_session']['root_dir']}/deck_spec.md"
 
         self.assertEqual(preview_review.stage, "final_preview_review")
         self.assertEqual(checks["source_fact_coverage"]["status"], "pass")
         self.assertGreaterEqual(checks["source_fact_coverage"]["details"]["matched_fact_count"], 1)
         self.assertEqual(quality_checks["source_fact_coverage"]["status"], "pass")
+        self.assertEqual(deck_slides_with_refs[0]["source_refs"], source_input_ids)
+        self.assertEqual(review_items_with_refs[0]["source_refs"], source_input_ids)
+        self.assertEqual(manifest_slides_with_refs[0]["source_refs"], source_input_ids)
+        self.assertIn(f"Source refs: {source_input_ids[0]}", deck_spec_md.read_text(encoding="utf-8"))
 
     def test_quality_report_warns_when_source_facts_are_omitted(self) -> None:
         now = utc_now_iso()

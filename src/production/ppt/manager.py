@@ -1450,6 +1450,7 @@ def _build_deck_spec(outline: PPTOutline | None, settings: PPTRenderSettings) ->
             bullets=entry.bullet_points,
             visual_notes=_visual_note(entry.layout_type, settings.style_preset),
             speaker_notes=entry.speaker_notes,
+            source_refs=list(entry.source_refs),
         )
         for entry in outline.entries
     ]
@@ -1531,6 +1532,7 @@ def _render_manifest(state: PPTProductionState) -> dict[str, Any]:
                 "title": slide.title if slide is not None else "",
                 "layout_type": slide.layout_type if slide is not None else "",
                 "deck_slide_status": slide.status if slide is not None else "",
+                "source_refs": slide.source_refs if slide is not None else [],
                 "preview_status": preview.status,
                 "preview_path": preview.preview_path,
                 "segment_path": preview.segment_path,
@@ -1618,11 +1620,14 @@ def _render_manifest_markdown(manifest: dict[str, Any]) -> str:
     if slides:
         lines.extend(["## Slides", ""])
         for slide in slides:
+            source_refs = slide.get("source_refs") or []
+            source_text = f" source_refs={','.join(source_refs)}" if source_refs else ""
             lines.append(
                 "- "
                 f"{slide.get('sequence_index')}. {slide.get('title') or slide.get('slide_id')} "
                 f"preview={slide.get('preview_status') or 'none'} "
                 f"segment={slide.get('segment_path') or 'none'}"
+                f"{source_text}"
             )
         lines.append("")
     stale_items = manifest.get("stale_items") or []
@@ -1732,6 +1737,7 @@ def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
                     "bullets": slide.bullets,
                     "visual_notes": slide.visual_notes,
                     "speaker_notes": slide.speaker_notes,
+                    "source_refs": slide.source_refs,
                     "status": slide.status,
                     "preview_status": preview.status if preview is not None else "",
                     "preview_path": preview.preview_path if preview is not None else "",
@@ -1936,6 +1942,9 @@ def _deck_spec_markdown(state: PPTProductionState) -> str:
     lines = [f"# {state.deck_spec.title}", ""]
     for slide in state.deck_spec.slides:
         lines.extend([f"## {slide.sequence_index}. {slide.title}", "", f"Layout: {slide.layout_type}", f"Visual: {slide.visual_notes}", ""])
+        if slide.source_refs:
+            lines.append(f"Source refs: {', '.join(slide.source_refs)}")
+            lines.append("")
         lines.extend(f"- {bullet}" for bullet in slide.bullets)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

@@ -114,6 +114,7 @@ class DeckSlide(BaseModel):
     bullets: list[str] = Field(default_factory=list)
     visual_notes: str = ""
     speaker_notes: str = ""
+    source_refs: list[str] = Field(default_factory=list)
     status: Literal["draft", "approved", "generated", "stale"] = "draft"
 
 
