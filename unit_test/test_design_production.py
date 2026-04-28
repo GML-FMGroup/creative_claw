@@ -9,7 +9,7 @@ from src.production.design.accessibility import build_accessibility_report
 from src.production.design.component_inventory import build_component_inventory
 from src.production.design.design_system_audit import audit_design_system
 from src.production.design.design_system_extractor import build_design_system_extraction
-from src.production.design.expert_runtime import DesignDirectionPlan, HtmlBuildOutput
+from src.production.design.expert_runtime import DesignDirectionPlan, DesignExpertRuntime, HtmlBuildOutput
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
     DesignBrief,
@@ -314,6 +314,60 @@ class _FakeDesignExpertRuntime:
                 )
             ],
         )
+
+
+class _CapturingDesignExpertRuntime(DesignExpertRuntime):
+    def __init__(self) -> None:
+        super().__init__(model_reference="fake/design-model")
+        self.requests = []
+
+    async def _run_structured_agent(self, *, agent_name, instruction, request_text, output_schema, output_key):
+        self.requests.append(
+            {
+                "agent_name": agent_name,
+                "instruction": instruction,
+                "request_text": request_text,
+                "output_key": output_key,
+            }
+        )
+        if output_schema is DesignBrief:
+            return DesignBrief(
+                design_genre="landing_page",
+                goal="Design a multi-page microsite",
+                audience="buyers",
+                primary_action="Explore product",
+            )
+        if output_schema is DesignSystemSpec:
+            return DesignSystemSpec(source="generated")
+        if output_schema is LayoutPlan:
+            return LayoutPlan(
+                pages=[
+                    PageBlueprint(
+                        title="Home",
+                        path="index.html",
+                        sections=[
+                            LayoutSection(
+                                section_id="home-hero",
+                                title="Hero",
+                                purpose="Introduce the product.",
+                            )
+                        ],
+                    ),
+                    PageBlueprint(
+                        title="Product",
+                        path="product.html",
+                        sections=[
+                            LayoutSection(
+                                section_id="product-overview",
+                                title="Product Overview",
+                                purpose="Explain product value.",
+                            )
+                        ],
+                    ),
+                ],
+                global_notes="Captured multi-page plan.",
+            )
+        raise AssertionError(f"Unexpected schema for capture runtime: {output_schema!r}")
 
 
 class DesignProductionTests(unittest.TestCase):
@@ -1595,6 +1649,7 @@ class DesignProductionTests(unittest.TestCase):
     def test_design_prompt_catalog_renders_packaged_templates(self) -> None:
         self.assertIn("html_builder_expert", available_prompt_templates())
         self.assertIn("design_qc_expert", available_prompt_templates())
+        self.assertIn("layout_planner_expert", available_prompt_templates())
 
         rendered = render_prompt_template(
             "brief_expert",
@@ -1623,6 +1678,35 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("Preview reports JSON", qc_rendered)
         with self.assertRaises(DesignPromptCatalogError):
             render_prompt_template("brief_expert", {"user_prompt": "missing variables"})
+
+    def test_design_expert_runtime_layout_prompt_includes_multi_page_settings(self) -> None:
+        runtime = _CapturingDesignExpertRuntime()
+        settings = {
+            "build_mode": "multi_html",
+            "pages": [
+                {"title": "Home", "path": "index.html", "purpose": "Introduce the product"},
+                {"title": "Product", "path": "product.html", "purpose": "Show details"},
+            ],
+        }
+
+        plan = asyncio.run(
+            runtime.plan_direction(
+                user_prompt="Design a multi-page product microsite",
+                design_genre="landing_page",
+                design_settings=settings,
+                reference_assets=[],
+            )
+        )
+
+        layout_request = next(
+            item["request_text"]
+            for item in runtime.requests
+            if item["agent_name"] == "LayoutPlannerExpert"
+        )
+        self.assertEqual(len(plan.layout_plan.pages), 2)
+        self.assertIn("Requested build mode:\nmulti_html", layout_request)
+        self.assertIn('"path": "product.html"', layout_request)
+        self.assertIn("produce one `PageBlueprint` per requested page spec", layout_request)
 
     def test_html_validator_rejects_local_absolute_paths(self) -> None:
         session_root = workspace_root() / "generated" / "session_design_validator" / "production" / "design_validator"
