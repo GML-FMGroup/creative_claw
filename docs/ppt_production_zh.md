@@ -26,7 +26,7 @@ User
 - `outline_review`：审阅页数、每页标题、purpose、layout 和 bullet。
 - `deck_spec_review`：生成 PPTX 前审阅每页可执行内容，包括标题、正文、layout、visual notes 和 speaker notes。
 - `page_preview_review`：targeted deck slide 修改并局部重建后，只审阅被重建的页面 preview 和单页 PPTX segment。
-- `final_preview_review`：生成后审阅 preview PNG、每页可编辑 PPTX segment、slide 级 source refs 和质量报告。
+- `final_preview_review`：生成后审阅 preview PNG、每页可编辑 PPTX segment、slide 级 source refs 和质量报告；review payload 的 `metadata` 会附带 final/preview/segment 路径摘要、quality status、check 计数和 warning/fail check 摘要。
 - `status` / `view` 查询当前状态、中间结果、事件和产物。
 - `add_inputs` 追加 PPT 模板、源文档和参考图，并回到 outline review。
 - TXT/MD/DOCX/PDF 源文档轻量抽取，生成 `DocumentSummary`，把关键事实注入 outline，并把源文档 ref 透传到对应 deck slide；PDF 仅支持可抽取文本层，不包含 OCR 或复杂版面理解。
@@ -176,7 +176,7 @@ generated/{adk_session_id}/production/{ppt_session_id}/
   quality_report.json
 ```
 
-`state.json` 是事实源；Markdown/JSON 视图、preview 和 render manifest 都是投影，可由 state 重建。`view_type="manifest"` 会返回同一份结构化清单，适合 App 或 CLI 一次性读取交付路径。`deck_spec`、`deck_spec.md`、preview review payload、`view_type="previews"` 和 render manifest 会保留 slide 级 `source_refs`，并在投影里提供 `source_ref_details`（源文件名、路径、输入角色和状态），用于轻量追踪页面来自哪些源文档；这不是精确页码/段落引用。质量报告会做确定性结构/内容/交付检查；`quality_report.md` 会列出每个 check 的状态、摘要和关键 details。当源文档成功抽取出 `salient_facts` 时，还会检查至少有一个源事实进入 outline 或 deck spec，并在 `source_fact_coverage` details 里列出源文件 details、matched fact 样例和 unmatched fact 样例，未覆盖时给 warning，便于人工复核事实遗漏风险。
+`state.json` 是事实源；Markdown/JSON 视图、preview 和 render manifest 都是投影，可由 state 重建。`view_type="manifest"` 会返回同一份结构化清单，适合 App 或 CLI 一次性读取交付路径。`deck_spec`、`deck_spec.md`、preview review payload、`view_type="previews"` 和 render manifest 会保留 slide 级 `source_refs`，并在投影里提供 `source_ref_details`（源文件名、路径、输入角色和状态），用于轻量追踪页面来自哪些源文档；这不是精确页码/段落引用。最终预览 review payload 还会在 `metadata.delivery` 和 `metadata.quality` 中暴露交付路径摘要、质量状态、check 计数和需要关注的 warning/fail check，方便前端或 orchestrator 在用户审批前直接展示风险信号。质量报告会做确定性结构/内容/交付检查；`quality_report.md` 会列出每个 check 的状态、摘要和关键 details。当源文档成功抽取出 `salient_facts` 时，还会检查至少有一个源事实进入 outline 或 deck spec，并在 `source_fact_coverage` details 里列出源文件 details、matched fact 样例和 unmatched fact 样例，未覆盖时给 warning，便于人工复核事实遗漏风险。
 
 P1e/P1f/P1g segment 产物是中间产物：`SlidePreview.segment_path` 会记录每页单独的可编辑 `.pptx`，`regenerate_stale_segments` 会覆盖 stale 页面的 segment，并通过 `page_preview_review` 暴露给用户确认，但它们不会作为最终交付文件写入 `final_file_paths`。用户需要检查页面级状态时，通过 `view_type="previews"` 查看；需要同时查看 final、preview、segment 和 quality 路径时，通过 `view_type="manifest"` 查看。
 
