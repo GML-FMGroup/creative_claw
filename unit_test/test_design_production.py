@@ -57,8 +57,9 @@ def _adk_state(sid: str = "session_design_test") -> dict:
 class _FakePreviewRenderer:
     async def render(self, *, artifact_id: str, html_path, output_dir: Path, viewports=None):
         output_dir.mkdir(parents=True, exist_ok=True)
-        desktop_path = output_dir / "index_desktop.png"
-        mobile_path = output_dir / "index_mobile.png"
+        stem = Path(str(html_path)).stem
+        desktop_path = output_dir / f"{stem}_{artifact_id}_desktop.png"
+        mobile_path = output_dir / f"{stem}_{artifact_id}_mobile.png"
         desktop_path.write_bytes(b"fake-desktop-preview")
         mobile_path.write_bytes(b"fake-mobile-preview")
         return [
@@ -140,32 +141,49 @@ class _FakeDesignExpertRuntime:
             spacing={"section_y": "28px"},
             radii={"default": "8px"},
         )
-        layout_plan = LayoutPlan(
-            pages=[
+        pages = [
+            PageBlueprint(
+                title=page_title,
+                path="index.html",
+                sections=[
+                    LayoutSection(
+                        section_id="hero",
+                        title="Hero",
+                        purpose="Introduce the dashboard value.",
+                        content=["Monitor GMV, inventory, and alerts in one place."],
+                        responsive_notes="Stack summary metrics on mobile.",
+                    ),
+                    LayoutSection(
+                        section_id="workflow",
+                        title="Workflow",
+                        purpose="Show the operating loop.",
+                        content=["Prioritize exceptions and route next actions."],
+                        responsive_notes="Use a single-column timeline on mobile.",
+                    ),
+                ],
+                device_targets=["desktop", "mobile"],
+            )
+        ]
+        if design_settings.get("build_mode") == "multi_html":
+            pages = [
                 PageBlueprint(
-                    title=page_title,
-                    path="index.html",
+                    title=str(raw_page.get("title") or f"Page {index}"),
+                    path=str(raw_page.get("path") or f"page-{index}.html"),
                     sections=[
                         LayoutSection(
-                            section_id="hero",
+                            section_id=f"page-{index}-hero",
                             title="Hero",
-                            purpose="Introduce the dashboard value.",
-                            content=["Monitor GMV, inventory, and alerts in one place."],
-                            responsive_notes="Stack summary metrics on mobile.",
-                        ),
-                        LayoutSection(
-                            section_id="workflow",
-                            title="Workflow",
-                            purpose="Show the operating loop.",
-                            content=["Prioritize exceptions and route next actions."],
-                            responsive_notes="Use a single-column timeline on mobile.",
-                        ),
+                            purpose="Introduce the page value.",
+                            content=[f"Page-specific content for page {index}."],
+                            responsive_notes="Stack content on mobile.",
+                        )
                     ],
                     device_targets=["desktop", "mobile"],
                 )
-            ],
-            global_notes="Fake runtime layout.",
-        )
+                for index, raw_page in enumerate(design_settings.get("pages") or [], start=1)
+                if isinstance(raw_page, dict)
+            ] or pages
+        layout_plan = LayoutPlan(pages=pages, global_notes="Fake runtime layout.")
         return DesignDirectionPlan(
             brief=brief,
             design_system=design_system,
@@ -191,6 +209,7 @@ class _FakeDesignExpertRuntime:
                 "revision_request": revision_request or {},
                 "revision_impact": revision_impact or {},
                 "previous_html": previous_html,
+                "page_ids": [page.page_id for page in layout_plan.pages],
             }
         )
         revised = build_mode == "revision"
@@ -473,8 +492,57 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/page_handoff.md", bundle_names)
         self.assertIn("reports/page_handoff.json", bundle_names)
         self.assertIn("reports/qc_report.md", bundle_names)
-        self.assertIn("previews/index_desktop.png", bundle_names)
-        self.assertIn("previews/index_mobile.png", bundle_names)
+        self.assertTrue(any(name.startswith("previews/index_") and name.endswith("_desktop.png") for name in bundle_names))
+        self.assertTrue(any(name.startswith("previews/index_") and name.endswith("_mobile.png") for name in bundle_names))
+
+    def test_manager_start_placeholder_multi_html_generates_all_pages(self) -> None:
+        state = _adk_state("session_design_placeholder_multi")
+        manager = DesignProductionManager(preview_renderer=_FakePreviewRenderer())
+
+        result = asyncio.run(
+            manager.start(
+                user_prompt="Design a multi-page SaaS site for an AI support platform",
+                input_files=[],
+                placeholder_design=True,
+                design_settings={
+                    "build_mode": "multi_html",
+                    "pages": [
+                        {"title": "Home", "path": "index.html", "sections": ["Hero", "Feature System"]},
+                        {"title": "Pricing", "path": "pricing.html", "sections": ["Plans", "FAQ"]},
+                    ],
+                },
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(result.status, "completed")
+        payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(payload["build_mode"], "multi_html")
+        self.assertEqual(len(payload["layout_plan"]["pages"]), 2)
+        self.assertEqual(len(payload["html_artifacts"]), 2)
+        self.assertEqual({Path(item["path"]).name for item in payload["html_artifacts"]}, {"index.html", "pricing.html"})
+        self.assertEqual(len(payload["html_validation_reports"]), 2)
+        self.assertEqual(len(payload["preview_reports"]), 4)
+        self.assertEqual(len(payload["qc_reports"]), 2)
+        self.assertEqual(len(payload["accessibility_reports"]), 2)
+        self.assertEqual(len(payload["design_system_extraction_reports"]), 2)
+        page_handoff = payload["page_handoff_reports"][0]
+        self.assertEqual(page_handoff["status"], "ready")
+        self.assertEqual(page_handoff["metrics"]["planned_page_count"], 2)
+        self.assertEqual(page_handoff["metrics"]["ready_item_count"], 2)
+        final_html_names = {Path(path).name for path in state["final_file_paths"] if path.endswith(".html")}
+        self.assertEqual(final_html_names, {"index.html", "pricing.html"})
+        manifest_path = next(item["path"] for item in payload["export_artifacts"] if item["path"].endswith("exports/handoff_manifest.json"))
+        manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
+        manifest_deliverable_names = {item["name"] for item in manifest["deliverables"]}
+        self.assertIn("index.html", manifest_deliverable_names)
+        self.assertIn("pricing.html", manifest_deliverable_names)
+        self.assertEqual(manifest["page_handoff_reports"][0]["metrics"]["handoff_item_count"], 2)
+        bundle_path = next(item["path"] for item in payload["export_artifacts"] if item["path"].endswith("exports/design_handoff_bundle.zip"))
+        with zipfile.ZipFile(resolve_workspace_path(bundle_path)) as bundle:
+            bundle_names = set(bundle.namelist())
+        self.assertIn("artifacts/index.html", bundle_names)
+        self.assertIn("artifacts/pricing.html", bundle_names)
 
     def test_manager_start_real_path_returns_design_direction_review(self) -> None:
         state = _adk_state("session_design_direction_review")
@@ -614,6 +682,50 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["artifact_lineage_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
+
+    def test_manager_real_path_multi_html_builds_each_planned_page(self) -> None:
+        state = _adk_state("session_design_expert_multi")
+        runtime = _FakeDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        settings = {
+            "build_mode": "multi_html",
+            "pages": [
+                {"title": "Home", "path": "index.html"},
+                {"title": "Product", "path": "product.html"},
+            ],
+        }
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a multi-page product microsite",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=settings,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.status, "needs_user_review")
+        self.assertEqual(preview.stage, "preview_review")
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["build_mode"], "multi_html")
+        self.assertEqual(len(persisted["layout_plan"]["pages"]), 2)
+        self.assertEqual(len(persisted["html_artifacts"]), 2)
+        self.assertEqual({Path(item["path"]).name for item in persisted["html_artifacts"]}, {"index.html", "product.html"})
+        self.assertEqual(len(runtime.build_calls), 2)
+        self.assertTrue(all(len(call["page_ids"]) == 1 for call in runtime.build_calls))
+        self.assertEqual(persisted["page_handoff_reports"][0]["status"], "ready")
+        self.assertEqual(persisted["page_handoff_reports"][0]["metrics"]["ready_item_count"], 2)
 
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
         state = _adk_state("session_design_pdf_export")
