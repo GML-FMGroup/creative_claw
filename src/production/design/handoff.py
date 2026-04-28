@@ -14,6 +14,13 @@ from src.production.design.models import (
     HtmlValidationReport,
 )
 from src.production.design.quality import quality_report_markdown
+from src.production.design.source_refs import (
+    latest_html_artifact,
+    preview_report_source_refs,
+    source_ref_details,
+    source_refs_text,
+    workspace_file_source_refs,
+)
 from src.production.models import WorkspaceFileRef, utc_now_iso
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
@@ -86,9 +93,10 @@ def _handoff_manifest(
     core_artifacts: list[WorkspaceFileRef],
     handoff_artifacts: list[WorkspaceFileRef],
 ) -> dict[str, Any]:
-    latest_html = _latest_html_artifact(state)
+    latest_html = latest_html_artifact(state)
     latest_qc = _latest_qc_report(state)
     latest_validation = _latest_validation_report(state)
+    latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "schema_version": "0.1.0",
         "generated_at": utc_now_iso(),
@@ -100,24 +108,49 @@ def _handoff_manifest(
         "build_mode": state.build_mode,
         "latest_html_artifact_id": latest_html.artifact_id if latest_html is not None else "",
         "latest_html_path": latest_html.path if latest_html is not None else "",
+        "latest_source_refs": latest_source_refs,
+        "latest_source_ref_details": source_ref_details(state, latest_source_refs),
         "quality_status": latest_qc.status if latest_qc is not None else "",
         "validation_status": latest_validation.status if latest_validation is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
-        "html_artifacts": [item.model_dump(mode="json") for item in state.html_artifacts],
-        "preview_reports": [item.model_dump(mode="json") for item in state.preview_reports],
+        "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
+        "preview_reports": [_preview_report_manifest_item(state, item) for item in state.preview_reports],
         "quality_reports": [item.model_dump(mode="json") for item in state.qc_reports],
         "revision_history": state.revision_history,
-        "deliverables": [item.model_dump(mode="json") for item in core_artifacts],
-        "handoff_artifacts": [item.model_dump(mode="json") for item in handoff_artifacts],
+        "deliverables": [_workspace_file_manifest_item(state, item) for item in core_artifacts],
+        "handoff_artifacts": [_workspace_file_manifest_item(state, item) for item in handoff_artifacts],
         "known_limits": [
             "The core Design deliverable is the approved HTML artifact.",
             "P1a does not generate PDF, Figma, or production-code handoff outputs.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
+
+
+def _html_artifact_manifest_item(state: DesignProductionState, artifact: HtmlArtifact) -> dict[str, Any]:
+    payload = artifact.model_dump(mode="json")
+    payload["source_refs"] = list(artifact.depends_on)
+    payload["source_ref_details"] = source_ref_details(state, artifact.depends_on)
+    return payload
+
+
+def _preview_report_manifest_item(state: DesignProductionState, report) -> dict[str, Any]:
+    payload = report.model_dump(mode="json")
+    source_refs = preview_report_source_refs(state, report)
+    payload["source_refs"] = source_refs
+    payload["source_ref_details"] = source_ref_details(state, source_refs)
+    return payload
+
+
+def _workspace_file_manifest_item(state: DesignProductionState, artifact: WorkspaceFileRef) -> dict[str, Any]:
+    payload = artifact.model_dump(mode="json")
+    source_refs = workspace_file_source_refs(state, artifact)
+    payload["source_refs"] = source_refs
+    payload["source_ref_details"] = source_ref_details(state, source_refs)
+    return payload
 
 
 def _design_spec_markdown(
@@ -127,8 +160,9 @@ def _design_spec_markdown(
     handoff_artifacts: list[WorkspaceFileRef],
 ) -> str:
     brief = state.brief
-    latest_html = _latest_html_artifact(state)
+    latest_html = latest_html_artifact(state)
     latest_qc = _latest_qc_report(state)
+    latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
     lines = [
         "# Design Handoff Spec",
         "",
@@ -155,6 +189,14 @@ def _design_spec_markdown(
     lines.extend(_bullet_list(brief.selling_points if brief is not None else []))
     lines.extend(["", "### Constraints", ""])
     lines.extend(_bullet_list(brief.constraints if brief is not None else []))
+    lines.extend(["", "## Source References", ""])
+    if not state.reference_assets:
+        lines.append("- No reference assets were used.")
+    else:
+        lines.append(f"- Latest HTML sources: {source_refs_text(state, latest_source_refs) if latest_source_refs else 'None'}")
+        lines.append("- Reference assets:")
+        for asset in state.reference_assets:
+            lines.append(f"  - {asset.name} ({asset.asset_id}): {asset.path} - {asset.kind}, {asset.status}")
     lines.extend(["", "## Design System", ""])
     if state.design_system is None:
         lines.append("- No design system was generated.")
@@ -200,10 +242,14 @@ def _design_spec_markdown(
         )
     lines.extend(["", "## Deliverables", ""])
     for artifact in core_artifacts:
-        lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}")
+        source_refs = workspace_file_source_refs(state, artifact)
+        source_suffix = f" Sources: {source_refs_text(state, source_refs)}." if source_refs else ""
+        lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}{source_suffix}")
     lines.extend(["", "## Handoff Files", ""])
     for artifact in handoff_artifacts:
-        lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}")
+        source_refs = workspace_file_source_refs(state, artifact)
+        source_suffix = f" Sources: {source_refs_text(state, source_refs)}." if source_refs else ""
+        lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}{source_suffix}")
     lines.extend(
         [
             "",
@@ -322,17 +368,6 @@ def _unique_arcname(arcname: str, seen_arcnames: set[str]) -> str:
         if candidate not in seen_arcnames:
             return candidate
         index += 1
-
-
-def _latest_html_artifact(state: DesignProductionState) -> HtmlArtifact | None:
-    approved_or_valid = [
-        artifact
-        for artifact in state.html_artifacts
-        if artifact.status in {"approved", "valid"}
-    ]
-    if approved_or_valid:
-        return approved_or_valid[-1]
-    return state.html_artifacts[-1] if state.html_artifacts else None
 
 
 def _latest_qc_report(state: DesignProductionState) -> DesignQcReport | None:

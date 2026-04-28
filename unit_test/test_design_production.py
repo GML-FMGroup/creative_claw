@@ -358,6 +358,92 @@ class DesignProductionTests(unittest.TestCase):
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(len(completed_payload["export_artifacts"]), 3)
 
+    def test_manager_source_ref_details_flow_to_preview_and_handoff(self) -> None:
+        source_dir = workspace_root() / "test_inputs" / "design_source_refs"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source_path = source_dir / "brand.png"
+        source_path.write_bytes(b"fake-brand-image")
+        source_ref = workspace_relative_path(source_path)
+        state = _adk_state("session_design_source_refs")
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=_FakeDesignExpertRuntime(),
+        )
+
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a product detail page using the provided brand image",
+                input_files=[{"path": source_ref, "name": "brand.png", "description": "brand logo reference"}],
+                placeholder_design=False,
+                design_settings={"design_genre": "product_detail_page"},
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        review_items = preview.review_payload.model_dump(mode="json")["items"]
+        html_review_items = next(item for item in review_items if item["kind"] == "html_artifacts")["artifacts"]
+        preview_review_items = next(item for item in review_items if item["kind"] == "preview_reports")["reports"]
+        asset_id = html_review_items[0]["source_refs"][0]
+        self.assertEqual(html_review_items[0]["source_ref_details"][0]["name"], "brand.png")
+        self.assertEqual(preview_review_items[0]["source_refs"], [asset_id])
+        self.assertTrue(preview_review_items[0]["source_ref_details"][0]["path"].split("/")[-1].endswith("brand.png"))
+
+        preview_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="preview",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(preview_view.view["html_artifacts"][0]["source_refs"], [asset_id])
+        self.assertEqual(preview_view.view["preview_reports"][0]["source_ref_details"][0]["name"], "brand.png")
+
+        completed = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        artifacts_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="artifacts",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(artifacts_view.view["html_artifacts"][0]["source_ref_details"][0]["name"], "brand.png")
+        self.assertTrue(any(item["source_refs"] == [asset_id] for item in artifacts_view.view["artifacts"]))
+
+        completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
+        manifest_path = next(
+            artifact["path"]
+            for artifact in completed_payload["export_artifacts"]
+            if artifact["name"] == "handoff_manifest.json"
+        )
+        spec_path = next(
+            artifact["path"]
+            for artifact in completed_payload["export_artifacts"]
+            if artifact["name"] == "design_spec.md"
+        )
+        manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
+        spec_markdown = resolve_workspace_path(spec_path).read_text(encoding="utf-8")
+        self.assertEqual(manifest["latest_source_refs"], [asset_id])
+        self.assertEqual(manifest["latest_source_ref_details"][0]["name"], "brand.png")
+        self.assertEqual(manifest["html_artifacts"][0]["source_ref_details"][0]["asset_id"], asset_id)
+        self.assertEqual(manifest["preview_reports"][0]["source_refs"], [asset_id])
+        self.assertTrue(any(item["source_refs"] == [asset_id] for item in manifest["deliverables"]))
+        self.assertTrue(any(item["source_refs"] == [asset_id] for item in manifest["handoff_artifacts"]))
+        self.assertIn(f"brand.png({asset_id})", spec_markdown)
+        self.assertNotIn(str(workspace_root()), spec_markdown)
+
     def test_manager_expert_quality_failure_becomes_warning(self) -> None:
         state = _adk_state("session_design_expert_qc_fallback")
         runtime = _FakeDesignExpertRuntime(fail_quality=True)

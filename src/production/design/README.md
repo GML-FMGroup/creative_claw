@@ -37,6 +37,10 @@ When a Design production run reaches final approval, the manager now writes dete
 
 Final approval now also writes `exports/design_handoff_bundle.zip`, a portable bundle for downstream handoff. The bundle includes available final deliverables such as the approved HTML artifact, preview screenshots, QC report, `design_spec.md`, and `handoff_manifest.json`. P1a does not generate PDF, Figma, or production-code handoff outputs.
 
+## P1b Source References
+
+Design outputs now expose source reference details for user-provided reference assets. HTML artifacts, preview reports, read-only preview/artifacts views, `design_spec.md`, and `handoff_manifest.json` include source asset names, workspace-relative paths, kinds, and statuses where available. This keeps handoff output traceable without exposing local absolute paths.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -45,6 +49,7 @@ Final approval now also writes `exports/design_handoff_bundle.zip`, a portable b
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.
+- `source_refs.py`: source-reference enrichment helpers for views, reviews, and handoff files.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
 - `quality.py`: deterministic P0 quality report generation and supplemental expert finding merge.
 - `impact.py`: read-only P0 revision impact analysis.

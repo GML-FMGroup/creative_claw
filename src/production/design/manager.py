@@ -26,6 +26,11 @@ from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.handoff import write_handoff_exports
 from src.production.design.placeholders import PlaceholderHtmlBuilder
 from src.production.design.quality import build_quality_report, quality_report_markdown
+from src.production.design.source_refs import (
+    preview_report_source_refs,
+    source_ref_details,
+    workspace_file_source_refs,
+)
 from src.production.design.tools.asset_ingestor import AssetIngestor
 from src.production.design.tools.html_validator import HtmlValidator
 from src.production.design.tools.preview_renderer import HtmlPreviewRenderer
@@ -1224,8 +1229,8 @@ def _preview_review_payload(state: DesignProductionState) -> ReviewPayload:
         title="Review generated HTML design",
         summary="Open the HTML artifact and preview reports, then approve or request changes.",
         items=[
-            {"kind": "html_artifacts", "artifacts": [item.model_dump(mode="json") for item in state.html_artifacts]},
-            {"kind": "preview_reports", "reports": [item.model_dump(mode="json") for item in state.preview_reports]},
+            {"kind": "html_artifacts", "artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts]},
+            {"kind": "preview_reports", "reports": [_preview_report_payload(state, item) for item in state.preview_reports]},
             {"kind": "qc_reports", "reports": [item.model_dump(mode="json") for item in state.qc_reports]},
         ],
         options=[
@@ -1234,6 +1239,29 @@ def _preview_review_payload(state: DesignProductionState) -> ReviewPayload:
             {"id": "cancel", "label": "Cancel"},
         ],
     )
+
+
+def _html_artifact_payload(state: DesignProductionState, artifact: HtmlArtifact) -> dict[str, Any]:
+    payload = artifact.model_dump(mode="json")
+    payload["source_refs"] = list(artifact.depends_on)
+    payload["source_ref_details"] = source_ref_details(state, artifact.depends_on)
+    return payload
+
+
+def _preview_report_payload(state: DesignProductionState, report: PreviewReport) -> dict[str, Any]:
+    payload = report.model_dump(mode="json")
+    source_refs = preview_report_source_refs(state, report)
+    payload["source_refs"] = source_refs
+    payload["source_ref_details"] = source_ref_details(state, source_refs)
+    return payload
+
+
+def _workspace_file_payload(state: DesignProductionState, artifact: WorkspaceFileRef) -> dict[str, Any]:
+    payload = artifact.model_dump(mode="json")
+    source_refs = workspace_file_source_refs(state, artifact)
+    payload["source_refs"] = source_refs
+    payload["source_ref_details"] = source_ref_details(state, source_refs)
+    return payload
 
 
 def _brief_markdown(brief: DesignBrief | None) -> str:
@@ -1310,7 +1338,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
             },
-            "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+            "artifacts": [_workspace_file_payload(state, item) for item in state.artifacts],
         }
     )
     return view
@@ -1348,8 +1376,8 @@ def _preview_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "preview")
     view.update(
         {
-            "html_artifacts": [item.model_dump(mode="json") for item in state.html_artifacts],
-            "preview_reports": [item.model_dump(mode="json") for item in state.preview_reports],
+            "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
+            "preview_reports": [_preview_report_payload(state, item) for item in state.preview_reports],
             "preview_report_path": f"{state.production_session.root_dir}/reports/preview_report.json",
         }
     )
@@ -1379,10 +1407,10 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "artifacts")
     view.update(
         {
-            "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
-            "html_artifacts": [item.model_dump(mode="json") for item in state.html_artifacts],
+            "artifacts": [_workspace_file_payload(state, item) for item in state.artifacts],
+            "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
-            "export_artifacts": [item.model_dump(mode="json") for item in state.export_artifacts],
+            "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )
     return view
