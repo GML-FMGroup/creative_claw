@@ -7,6 +7,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from src.production.design.artifact_lineage import (
+    artifact_lineage_json,
+    artifact_lineage_markdown,
+)
 from src.production.design.browser_diagnostics import (
     browser_diagnostics_json,
     browser_diagnostics_markdown,
@@ -16,6 +20,7 @@ from src.production.design.component_inventory import (
     component_inventory_markdown,
 )
 from src.production.design.models import (
+    ArtifactLineageReport,
     BrowserDiagnosticsReport,
     ComponentInventoryReport,
     DesignProductionState,
@@ -117,6 +122,7 @@ def _handoff_manifest(
     latest_html = latest_html_artifact(state)
     latest_qc = _latest_qc_report(state)
     latest_validation = _latest_validation_report(state)
+    latest_lineage = _latest_artifact_lineage_report(state)
     latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "schema_version": "0.1.0",
@@ -133,11 +139,13 @@ def _handoff_manifest(
         "latest_source_ref_details": source_ref_details(state, latest_source_refs),
         "quality_status": latest_qc.status if latest_qc is not None else "",
         "validation_status": latest_validation.status if latest_validation is not None else "",
+        "artifact_lineage_status": latest_lineage.status if latest_lineage is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
         "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
         "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+        "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
@@ -153,8 +161,9 @@ def _handoff_manifest(
             "Design token JSON and CSS are derived from DesignSystemSpec.",
             "Component inventory is derived from DesignProductionState and generated HTML.",
             "Browser diagnostics are derived from preview and PDF export reports.",
+            "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1h.",
+            "Figma and production-code handoff outputs are intentionally outside P1i.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -290,6 +299,20 @@ def _design_spec_markdown(
             lines.append("  - None.")
         for finding in latest_diagnostics.findings:
             lines.append(f"  - [{finding.severity}] {finding.category}: {finding.summary}")
+    lines.extend(["", "## Artifact Lineage", ""])
+    if not state.artifact_lineage_reports:
+        lines.append("- No artifact lineage report was generated.")
+    else:
+        latest_lineage = state.artifact_lineage_reports[-1]
+        lines.append(f"- Status: {latest_lineage.status}")
+        lines.append(f"- Summary: {latest_lineage.summary}")
+        lines.append(f"- Latest artifact ID: {latest_lineage.latest_artifact_id or 'n/a'}")
+        lines.append("- Artifacts:")
+        if not latest_lineage.items:
+            lines.append("  - None.")
+        for item in latest_lineage.items:
+            replaced_by = f", replaced by {item.replaced_by_artifact_id}" if item.replaced_by_artifact_id else ""
+            lines.append(f"  - {item.artifact_id}: v{item.version}, {item.status}, {item.build_mode or item.builder}{replaced_by}")
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -340,8 +363,9 @@ def _design_spec_markdown(
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- Component inventory is deterministic handoff guidance derived from state and HTML structure.",
             "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
+            "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1h.",
+            "- Figma and production-code handoff outputs are intentionally outside P1i.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -439,6 +463,10 @@ def _artifact_payload(
         return browser_diagnostics_markdown(_latest_browser_diagnostics_report(state)).encode("utf-8")
     if artifact.name == "browser_diagnostics.json":
         return browser_diagnostics_json(_latest_browser_diagnostics_report(state)).encode("utf-8")
+    if artifact.name == "artifact_lineage.md":
+        return artifact_lineage_markdown(_latest_artifact_lineage_report(state)).encode("utf-8")
+    if artifact.name == "artifact_lineage.json":
+        return artifact_lineage_json(_latest_artifact_lineage_report(state)).encode("utf-8")
     return None
 
 
@@ -479,6 +507,10 @@ def _latest_component_inventory_report(state: DesignProductionState) -> Componen
 
 def _latest_browser_diagnostics_report(state: DesignProductionState) -> BrowserDiagnosticsReport | None:
     return state.browser_diagnostics_reports[-1] if state.browser_diagnostics_reports else None
+
+
+def _latest_artifact_lineage_report(state: DesignProductionState) -> ArtifactLineageReport | None:
+    return state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
 
 
 def _latest_validation_report(state: DesignProductionState) -> HtmlValidationReport | None:

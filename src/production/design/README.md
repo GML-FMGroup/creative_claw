@@ -65,11 +65,16 @@ Design production now derives an implementation-facing component inventory from 
 
 Design production now derives deterministic browser diagnostics from preview and PDF export facts. The report separates environment issues, missing preview artifacts, browser console/network failures, responsive overflow, and PDF export failures without making browser-dependent outputs blocking. Diagnostics are persisted under `reports/browser_diagnostics.*`, exposed through `view_type="diagnostics"`, included in preview review metadata, and packaged in final handoff exports.
 
+## P1i Artifact Lineage
+
+Design production now derives deterministic HTML artifact lineage from `DesignProductionState`. The report links each HTML artifact to version, status, builder mode, revision id, source refs, validation/component/preview/diagnostics/QC/PDF reports, preview screenshots, PDF exports, and stale/replaced relationships. Lineage is persisted under `reports/artifact_lineage.*`, exposed through `view_type="lineage"`, included in preview review metadata, and packaged in final handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
+- `artifact_lineage.py`: deterministic HTML artifact lineage reports linking revisions, artifacts, and derived report ids.
 - `browser_diagnostics.py`: deterministic diagnostics derived from browser preview and PDF export reports.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.
 - `component_inventory.py`: deterministic component inventory extraction from state and generated HTML.

@@ -290,6 +290,40 @@ class BrowserDiagnosticsReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class ArtifactLineageItem(BaseModel):
+    """One HTML artifact lineage entry with linked report ids."""
+
+    item_id: str = Field(default_factory=lambda: new_id("artifact_lineage_item"))
+    artifact_id: str
+    page_id: str = ""
+    path: str = ""
+    version: int = 1
+    status: DesignArtifactStatus
+    builder: str = ""
+    build_mode: str = ""
+    revision_id: str = ""
+    replaces_artifact_ids: list[str] = Field(default_factory=list)
+    replaced_by_artifact_id: str = ""
+    stale_reason: str = ""
+    source_refs: list[str] = Field(default_factory=list)
+    report_refs: dict[str, list[str]] = Field(default_factory=dict)
+    artifact_refs: dict[str, list[str]] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ArtifactLineageReport(BaseModel):
+    """State-derived lineage report for Design HTML artifacts and attached reports."""
+
+    report_id: str = Field(default_factory=lambda: new_id("artifact_lineage"))
+    latest_artifact_id: str = ""
+    status: Literal["ready", "partial", "empty"] = "ready"
+    summary: str = ""
+    items: list[ArtifactLineageItem] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class DesignQcFinding(BaseModel):
     """One explainable quality finding for a design artifact."""
 
@@ -330,6 +364,7 @@ class DesignProductionState(ProductionState):
     preview_reports: list[PreviewReport] = Field(default_factory=list)
     pdf_export_reports: list[PdfExportReport] = Field(default_factory=list)
     browser_diagnostics_reports: list[BrowserDiagnosticsReport] = Field(default_factory=list)
+    artifact_lineage_reports: list[ArtifactLineageReport] = Field(default_factory=list)
     qc_reports: list[DesignQcReport] = Field(default_factory=list)
     revision_history: list[dict[str, Any]] = Field(default_factory=list)
     export_artifacts: list[WorkspaceFileRef] = Field(default_factory=list)

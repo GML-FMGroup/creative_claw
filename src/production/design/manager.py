@@ -6,12 +6,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.production.design.artifact_lineage import (
+    artifact_lineage_json,
+    artifact_lineage_markdown,
+    build_artifact_lineage,
+)
 from src.production.design.browser_diagnostics import (
     browser_diagnostics_markdown,
     build_browser_diagnostics,
 )
 from src.production.design.impact import build_revision_impact_view, normalize_revision_request
 from src.production.design.models import (
+    ArtifactLineageReport,
     BrowserDiagnosticsReport,
     ComponentInventoryReport,
     DesignBrief,
@@ -74,6 +80,7 @@ _VIEW_TYPES = (
     "layout",
     "preview",
     "diagnostics",
+    "lineage",
     "quality",
     "events",
     "artifacts",
@@ -467,6 +474,7 @@ class DesignProductionManager:
         await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
         await self._export_requested_pdf(state, response={})
         _append_browser_diagnostics(state, latest_html_artifact(state))
+        _append_artifact_lineage(state)
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -634,6 +642,7 @@ class DesignProductionManager:
                 artifact.status = "approved"
         await self._export_requested_pdf(state, response=response)
         _append_browser_diagnostics(state, latest_html_artifact(state))
+        _append_artifact_lineage(state)
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -753,6 +762,7 @@ class DesignProductionManager:
             expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
+        _append_artifact_lineage(state)
         state.progress_percent = max(state.progress_percent, 90)
         state.production_events.append(
             ProductionEvent(
@@ -958,6 +968,26 @@ class DesignProductionManager:
                     ),
                 ]
             )
+        lineage_md_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+        lineage_json_path = f"{state.production_session.root_dir}/reports/artifact_lineage.json"
+        if state.artifact_lineage_reports:
+            state.artifact_lineage_reports[-1].report_path = lineage_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="artifact_lineage.md",
+                        path=lineage_md_path,
+                        description="Design HTML artifact lineage report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="artifact_lineage.json",
+                        path=lineage_json_path,
+                        description="Machine-readable Design HTML artifact lineage report.",
+                        source=self.capability,
+                    ),
+                ]
+            )
         for report in state.pdf_export_reports:
             if report.status == "exported" and report.pdf_path:
                 final_artifacts.append(
@@ -1113,6 +1143,17 @@ class DesignProductionManager:
             browser_diagnostics_markdown(latest_diagnostics),
             encoding="utf-8",
         )
+        latest_lineage = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
+        if latest_lineage is not None:
+            latest_lineage.report_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+        (root / "reports" / "artifact_lineage.json").write_text(
+            artifact_lineage_json(latest_lineage),
+            encoding="utf-8",
+        )
+        (root / "reports" / "artifact_lineage.md").write_text(
+            artifact_lineage_markdown(latest_lineage),
+            encoding="utf-8",
+        )
         latest_qc = state.qc_reports[-1] if state.qc_reports else None
         if latest_qc is not None:
             latest_qc.report_path = f"{state.production_session.root_dir}/reports/qc_report.md"
@@ -1261,6 +1302,27 @@ def _append_browser_diagnostics(
                 "artifact_id": report.artifact_id,
                 "status": report.status,
                 "finding_counts": report.metrics.get("finding_counts", {}),
+            },
+        )
+    )
+    return report
+
+
+def _append_artifact_lineage(state: DesignProductionState) -> ArtifactLineageReport:
+    """Build and store the latest artifact lineage report."""
+    report = build_artifact_lineage(state)
+    report.report_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+    state.artifact_lineage_reports = [report]
+    state.production_events.append(
+        ProductionEvent(
+            event_type="artifact_lineage_built",
+            stage=state.stage,
+            message="Built Design HTML artifact lineage report.",
+            metadata={
+                "report_id": report.report_id,
+                "status": report.status,
+                "latest_artifact_id": report.latest_artifact_id,
+                "artifact_count": report.metrics.get("artifact_count", 0),
             },
         )
     )
@@ -1533,6 +1595,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
     validation_report = _latest_validation_report_for_artifact(state, artifact_id)
     qc_report = _latest_qc_report_for_artifact(state, artifact_id)
     diagnostics_report = _latest_browser_diagnostics_report_for_artifact(state, artifact_id)
+    lineage_report = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
     source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "delivery": {
@@ -1556,6 +1619,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
         },
         "preview": _preview_review_summary(preview_reports),
         "diagnostics": _browser_diagnostics_summary(diagnostics_report),
+        "lineage": _artifact_lineage_summary(lineage_report),
         "quality": _quality_review_summary(qc_report),
         "source_refs": source_refs,
         "source_ref_details": source_ref_details(state, source_refs),
@@ -1676,6 +1740,27 @@ def _browser_diagnostics_summary(report: BrowserDiagnosticsReport | None) -> dic
     }
 
 
+def _artifact_lineage_summary(report: ArtifactLineageReport | None) -> dict[str, Any]:
+    """Build a compact artifact lineage summary for review metadata."""
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "latest_artifact_id": "",
+            "report_path": "",
+            "artifact_count": 0,
+            "revision_count": 0,
+        }
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "latest_artifact_id": report.latest_artifact_id,
+        "report_path": report.report_path or "",
+        "artifact_count": report.metrics.get("artifact_count", 0),
+        "revision_count": report.metrics.get("revision_count", 0),
+    }
+
+
 def _quality_review_summary(report: DesignQcReport | None) -> dict[str, Any]:
     """Build a concise QC summary for review metadata."""
     finding_counts = {"info": 0, "warning": 0, "error": 0}
@@ -1775,6 +1860,8 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _preview_view(state)
     if view_type == "diagnostics":
         return _diagnostics_view(state)
+    if view_type == "lineage":
+        return _lineage_view(state)
     if view_type == "quality":
         return _quality_view(state)
     if view_type == "events":
@@ -1817,6 +1904,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
                 "browser_diagnostics_reports": len(state.browser_diagnostics_reports),
+                "artifact_lineage_reports": len(state.artifact_lineage_reports),
                 "qc_reports": len(state.qc_reports),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
@@ -1902,6 +1990,25 @@ def _diagnostics_view(state: DesignProductionState) -> dict[str, Any]:
     return view
 
 
+def _lineage_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "lineage")
+    view.update(
+        {
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
+            "latest_artifact_lineage": (
+                state.artifact_lineage_reports[-1].model_dump(mode="json")
+                if state.artifact_lineage_reports
+                else None
+            ),
+            "artifact_lineage_report_path": f"{state.production_session.root_dir}/reports/artifact_lineage.md",
+            "artifact_lineage_json_path": f"{state.production_session.root_dir}/reports/artifact_lineage.json",
+            "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
+            "revision_history": state.revision_history,
+        }
+    )
+    return view
+
+
 def _quality_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "quality")
     view.update(
@@ -1911,12 +2018,14 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
             "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
+            "artifact_lineage_report_path": f"{state.production_session.root_dir}/reports/artifact_lineage.md",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
     )
@@ -1939,6 +2048,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )
