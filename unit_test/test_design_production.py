@@ -20,12 +20,14 @@ from src.production.design.models import (
     DesignTokenColor,
     DesignTokenTypography,
     HtmlArtifact,
+    HtmlValidationReport,
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
     PdfExportReport,
     PreviewReport,
 )
+from src.production.design.page_handoff import build_page_handoff
 from src.production.design.prompt_catalog import (
     DesignPromptCatalogError,
     available_prompt_templates,
@@ -294,6 +296,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("browser_diagnostics.json", artifact_names)
         self.assertIn("artifact_lineage.md", artifact_names)
         self.assertIn("artifact_lineage.json", artifact_names)
+        self.assertIn("page_handoff.md", artifact_names)
+        self.assertIn("page_handoff.json", artifact_names)
         self.assertIn("design_spec.md", artifact_names)
         self.assertIn("handoff_manifest.json", artifact_names)
         self.assertIn("design_tokens.json", artifact_names)
@@ -329,6 +333,16 @@ class DesignProductionTests(unittest.TestCase):
             [payload["design_system_extraction_reports"][0]["report_id"]],
         )
         self.assertEqual(lineage["items"][0]["report_refs"]["preview_report_ids"], [item["report_id"] for item in payload["preview_reports"]])
+        self.assertEqual(
+            lineage["items"][0]["report_refs"]["page_handoff_report_ids"],
+            [payload["page_handoff_reports"][0]["report_id"]],
+        )
+        page_handoff = payload["page_handoff_reports"][0]
+        self.assertEqual(page_handoff["status"], "ready")
+        self.assertEqual(page_handoff["metrics"]["planned_page_count"], 1)
+        self.assertEqual(page_handoff["metrics"]["handoff_item_count"], 1)
+        self.assertEqual(page_handoff["items"][0]["status"], "ready")
+        self.assertEqual(page_handoff["items"][0]["artifact_id"], payload["html_artifacts"][0]["artifact_id"])
         rebuilt_inventory = build_component_inventory(DesignProductionState.model_validate(payload))
         self.assertEqual(rebuilt_inventory.status, "ready")
         self.assertTrue(any(item.source == "layout_plan" for item in rebuilt_inventory.items))
@@ -398,6 +412,15 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(lineage_view.view["latest_artifact_lineage"]["status"], "ready")
         self.assertTrue(lineage_view.view["artifact_lineage_report_path"].endswith("reports/artifact_lineage.md"))
+        pages_view = asyncio.run(
+            manager.view(
+                production_session_id=result.production_session_id,
+                view_type="pages",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(pages_view.view["latest_page_handoff"]["status"], "ready")
+        self.assertTrue(pages_view.view["page_handoff_report_path"].endswith("reports/page_handoff.md"))
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
         export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
@@ -423,6 +446,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(manifest["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(manifest["artifact_lineage_status"], "ready")
         self.assertEqual(manifest["artifact_lineage_reports"][0]["metrics"]["artifact_count"], 1)
+        self.assertEqual(manifest["page_handoff_status"], "ready")
+        self.assertEqual(manifest["page_handoff_reports"][0]["metrics"]["handoff_item_count"], 1)
         self.assertTrue(any(item["name"] == "design_tokens.json" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_tokens.css" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_handoff_bundle.zip" for item in manifest["handoff_artifacts"]))
@@ -445,6 +470,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/browser_diagnostics.json", bundle_names)
         self.assertIn("reports/artifact_lineage.md", bundle_names)
         self.assertIn("reports/artifact_lineage.json", bundle_names)
+        self.assertIn("reports/page_handoff.md", bundle_names)
+        self.assertIn("reports/page_handoff.json", bundle_names)
         self.assertIn("reports/qc_report.md", bundle_names)
         self.assertIn("previews/index_desktop.png", bundle_names)
         self.assertIn("previews/index_mobile.png", bundle_names)
@@ -527,6 +554,10 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(review_metadata["lineage"]["status"], "ready")
         self.assertEqual(review_metadata["lineage"]["artifact_count"], 1)
         self.assertTrue(review_metadata["lineage"]["report_path"].endswith("reports/artifact_lineage.md"))
+        self.assertEqual(review_metadata["delivery"]["page_handoff_status"], "ready")
+        self.assertTrue(review_metadata["delivery"]["page_handoff_report_path"].endswith("reports/page_handoff.md"))
+        self.assertEqual(review_metadata["pages"]["status"], "ready")
+        self.assertEqual(review_metadata["pages"]["handoff_item_count"], 1)
         self.assertEqual(review_metadata["quality"]["status"], "pass")
         self.assertEqual(review_metadata["quality"]["finding_counts"]["info"], 1)
         self.assertEqual(review_metadata["quality"]["attention_findings"], [])
@@ -544,6 +575,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(overview_view.view["counts"]["accessibility_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["browser_diagnostics_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["artifact_lineage_reports"], 1)
+        self.assertEqual(overview_view.view["counts"]["page_handoff_reports"], 1)
 
         completed = asyncio.run(
             manager.resume(
@@ -571,6 +603,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_handoff_bundle.zip", completed_names)
         self.assertIn("artifact_lineage.md", completed_names)
         self.assertIn("artifact_lineage.json", completed_names)
+        self.assertIn("page_handoff.md", completed_names)
+        self.assertIn("page_handoff.json", completed_names)
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(completed_payload["design_system_audit_reports"][0]["status"], "warning")
         self.assertEqual(completed_payload["component_inventory_reports"][0]["status"], "ready")
@@ -578,6 +612,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["artifact_lineage_reports"][0]["status"], "ready")
+        self.assertEqual(completed_payload["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
 
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:
@@ -1166,6 +1201,64 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(any(selector.selector == ".card" for selector in report.selectors))
         self.assertTrue(any(selector.kind == "media_query" for selector in report.selectors))
         self.assertGreater(report.metrics["selector_count"], 0)
+
+    def test_page_handoff_reports_missing_planned_pages(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_page_handoff" / "production" / "design_page_handoff"
+        html_path = session_root / "artifacts" / "index.html"
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text("<!doctype html><html lang=\"en\"><head><title>Home</title></head><body></body></html>", encoding="utf-8")
+        home_page = PageBlueprint(page_id="page_home", title="Home", path="index.html")
+        pricing_page = PageBlueprint(page_id="page_pricing", title="Pricing", path="pricing.html")
+        artifact = HtmlArtifact(
+            artifact_id="artifact_home",
+            page_id=home_page.page_id,
+            path=workspace_relative_path(html_path),
+            builder="placeholder",
+            status="valid",
+        )
+        state = DesignProductionState(
+            production_session=ProductionSession(
+                production_session_id="design_page_handoff",
+                capability="design",
+                adk_session_id="session_design_page_handoff",
+                turn_index=1,
+                root_dir=workspace_relative_path(session_root),
+                status="running",
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            ),
+            status="running",
+            stage="page_handoff_test",
+            build_mode="multi_html",
+            layout_plan=LayoutPlan(pages=[home_page, pricing_page]),
+            html_artifacts=[artifact],
+            html_validation_reports=[
+                HtmlValidationReport(
+                    artifact_id=artifact.artifact_id,
+                    path=artifact.path,
+                    status="valid",
+                )
+            ],
+            preview_reports=[
+                PreviewReport(
+                    artifact_id=artifact.artifact_id,
+                    viewport="desktop",
+                    screenshot_path="generated/session_design_page_handoff/production/design_page_handoff/previews/home.png",
+                    valid=True,
+                )
+            ],
+        )
+
+        report = build_page_handoff(state)
+
+        self.assertEqual(report.status, "partial")
+        self.assertEqual(report.metrics["planned_page_count"], 2)
+        self.assertEqual(report.metrics["handoff_item_count"], 2)
+        self.assertEqual(report.metrics["ready_item_count"], 1)
+        self.assertEqual(report.metrics["missing_item_count"], 1)
+        statuses_by_page = {item.page_id: item.status for item in report.items}
+        self.assertEqual(statuses_by_page["page_home"], "ready")
+        self.assertEqual(statuses_by_page["page_pricing"], "missing")
 
     def test_accessibility_report_flags_static_html_issues(self) -> None:
         session_root = workspace_root() / "generated" / "session_design_accessibility" / "production" / "design_accessibility"
