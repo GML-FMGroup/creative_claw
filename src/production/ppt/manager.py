@@ -1762,7 +1762,7 @@ def _final_preview_review_payload(state: PPTProductionState) -> ReviewPayload:
         review_type="ppt_final_preview_review",
         title="Review Generated PPT Preview",
         summary="Approve the preview to complete production, or revise to return to outline planning.",
-        items=[preview.model_dump(mode="json") for preview in state.slide_previews],
+        items=_preview_payload_items(state),
         options=[
             {"decision": "approve", "label": "Approve final PPTX"},
             {"decision": "revise", "label": "Revise deck", "requires_notes": True},
@@ -1773,11 +1773,6 @@ def _final_preview_review_payload(state: PPTProductionState) -> ReviewPayload:
 
 def _page_preview_review_payload(state: PPTProductionState, slide_ids: list[str]) -> ReviewPayload:
     selected_ids = set(slide_ids)
-    items = [
-        preview.model_dump(mode="json")
-        for preview in state.slide_previews
-        if preview.slide_id in selected_ids
-    ]
     return ReviewPayload(
         review_type="ppt_page_preview_review",
         title="Review Regenerated PPT Page Preview",
@@ -1785,13 +1780,34 @@ def _page_preview_review_payload(state: PPTProductionState, slide_ids: list[str]
             "Approve these regenerated page previews to return to deck spec review. "
             "The full final PPTX and quality report remain stale until the deck spec is approved and rebuilt."
         ),
-        items=items,
+        items=_preview_payload_items(state, slide_ids=selected_ids),
         options=[
             {"decision": "approve", "label": "Approve regenerated pages and review deck spec"},
             {"decision": "revise", "label": "Revise regenerated page", "requires_notes": True},
             {"decision": "cancel", "label": "Cancel production"},
         ],
     )
+
+
+def _preview_payload_items(state: PPTProductionState, slide_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    """Return preview payload items enriched with matching deck slide metadata."""
+    deck_slides = {slide.slide_id: slide for slide in state.deck_spec.slides} if state.deck_spec is not None else {}
+    items: list[dict[str, Any]] = []
+    for preview in state.slide_previews:
+        if slide_ids is not None and preview.slide_id not in slide_ids:
+            continue
+        slide = deck_slides.get(preview.slide_id)
+        item = preview.model_dump(mode="json")
+        item.update(
+            {
+                "title": slide.title if slide is not None else "",
+                "layout_type": slide.layout_type if slide is not None else "",
+                "deck_slide_status": slide.status if slide is not None else "",
+                "source_refs": slide.source_refs if slide is not None else [],
+            }
+        )
+        items.append(item)
+    return items
 
 
 def _build_production_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
@@ -1839,7 +1855,7 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
     elif view_type == "deck_spec":
         base.update({"deck_spec": state.deck_spec.model_dump(mode="json") if state.deck_spec else None, "deck_spec_path": f"{state.production_session.root_dir}/deck_spec.json"})
     elif view_type == "previews":
-        base.update({"previews": [item.model_dump(mode="json") for item in state.slide_previews], "preview_index_path": f"{state.production_session.root_dir}/preview/index.json"})
+        base.update({"previews": _preview_payload_items(state), "preview_index_path": f"{state.production_session.root_dir}/preview/index.json"})
     elif view_type == "quality":
         base.update({"quality_report": state.quality_report.model_dump(mode="json") if state.quality_report else None, "quality_report_path": f"{state.production_session.root_dir}/quality_report.json", "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md"})
     elif view_type == "manifest":
