@@ -37,6 +37,11 @@ Run the Design P0 eval manually with live model credentials:
   --print_detailed_results
 ```
 
+Use the same Design evalset as the P1 acceptance routing suite before closing
+Design P1 changes. It covers the Design-vs-image/PPT boundary, direction and
+preview review flow, targeted revision flow, multi-page routing, and strict
+structured-output compatibility.
+
 Run the multi-page Design routing case first when tuning microsite behavior:
 
 ```bash
