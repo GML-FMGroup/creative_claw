@@ -6,12 +6,24 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.production.design.artifact_lineage import (
+    artifact_lineage_json,
+    artifact_lineage_markdown,
+    build_artifact_lineage,
+)
+from src.production.design.accessibility import (
+    accessibility_report_json,
+    accessibility_report_markdown,
+    build_accessibility_report,
+)
 from src.production.design.browser_diagnostics import (
     browser_diagnostics_markdown,
     build_browser_diagnostics,
 )
 from src.production.design.impact import build_revision_impact_view, normalize_revision_request
 from src.production.design.models import (
+    AccessibilityReport,
+    ArtifactLineageReport,
     BrowserDiagnosticsReport,
     ComponentInventoryReport,
     DesignBrief,
@@ -71,9 +83,11 @@ _VIEW_TYPES = (
     "brief",
     "design_system",
     "components",
+    "accessibility",
     "layout",
     "preview",
     "diagnostics",
+    "lineage",
     "quality",
     "events",
     "artifacts",
@@ -467,6 +481,7 @@ class DesignProductionManager:
         await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
         await self._export_requested_pdf(state, response={})
         _append_browser_diagnostics(state, latest_html_artifact(state))
+        _append_artifact_lineage(state)
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -634,6 +649,7 @@ class DesignProductionManager:
                 artifact.status = "approved"
         await self._export_requested_pdf(state, response=response)
         _append_browser_diagnostics(state, latest_html_artifact(state))
+        _append_artifact_lineage(state)
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -725,6 +741,8 @@ class DesignProductionManager:
             raise RuntimeError("; ".join(validation_report.issues) or "HTML validation failed")
         artifact.status = "valid"
         _append_component_inventory(state, artifact)
+        state.stage = "accessibility_check"
+        accessibility_report = _append_accessibility_report(state, artifact)
 
         state.stage = "html_preview"
         preview_reports = await self.preview_renderer.render(
@@ -753,6 +771,7 @@ class DesignProductionManager:
             expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
+        _append_artifact_lineage(state)
         state.progress_percent = max(state.progress_percent, 90)
         state.production_events.append(
             ProductionEvent(
@@ -762,6 +781,7 @@ class DesignProductionManager:
                 metadata={
                     "artifact_id": artifact.artifact_id,
                     "validation_status": validation_report.status,
+                    "accessibility_status": accessibility_report.status,
                     "qc_status": qc_report.status,
                     "expert_qc_status": expert_qc_report.status if expert_qc_report is not None else "",
                 },
@@ -938,6 +958,26 @@ class DesignProductionManager:
                     ),
                 ]
             )
+        accessibility_md_path = f"{state.production_session.root_dir}/reports/accessibility_report.md"
+        accessibility_json_path = f"{state.production_session.root_dir}/reports/accessibility_report.json"
+        if state.accessibility_reports:
+            state.accessibility_reports[-1].report_path = accessibility_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="accessibility_report.md",
+                        path=accessibility_md_path,
+                        description="Static HTML accessibility lint report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="accessibility_report.json",
+                        path=accessibility_json_path,
+                        description="Machine-readable HTML accessibility lint report.",
+                        source=self.capability,
+                    ),
+                ]
+            )
         diagnostics_md_path = f"{state.production_session.root_dir}/reports/browser_diagnostics.md"
         diagnostics_json_path = f"{state.production_session.root_dir}/reports/browser_diagnostics.json"
         if state.browser_diagnostics_reports:
@@ -954,6 +994,26 @@ class DesignProductionManager:
                         name="browser_diagnostics.json",
                         path=diagnostics_json_path,
                         description="Machine-readable browser preview and export diagnostics.",
+                        source=self.capability,
+                    ),
+                ]
+            )
+        lineage_md_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+        lineage_json_path = f"{state.production_session.root_dir}/reports/artifact_lineage.json"
+        if state.artifact_lineage_reports:
+            state.artifact_lineage_reports[-1].report_path = lineage_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="artifact_lineage.md",
+                        path=lineage_md_path,
+                        description="Design HTML artifact lineage report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="artifact_lineage.json",
+                        path=lineage_json_path,
+                        description="Machine-readable Design HTML artifact lineage report.",
                         source=self.capability,
                     ),
                 ]
@@ -1078,6 +1138,17 @@ class DesignProductionManager:
             component_inventory_markdown(latest_inventory),
             encoding="utf-8",
         )
+        latest_accessibility = state.accessibility_reports[-1] if state.accessibility_reports else None
+        if latest_accessibility is not None:
+            latest_accessibility.report_path = f"{state.production_session.root_dir}/reports/accessibility_report.md"
+        (root / "reports" / "accessibility_report.json").write_text(
+            accessibility_report_json(latest_accessibility),
+            encoding="utf-8",
+        )
+        (root / "reports" / "accessibility_report.md").write_text(
+            accessibility_report_markdown(latest_accessibility),
+            encoding="utf-8",
+        )
         (root / "layout_plan.json").write_text(
             json.dumps(
                 state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
@@ -1111,6 +1182,17 @@ class DesignProductionManager:
         )
         (root / "reports" / "browser_diagnostics.md").write_text(
             browser_diagnostics_markdown(latest_diagnostics),
+            encoding="utf-8",
+        )
+        latest_lineage = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
+        if latest_lineage is not None:
+            latest_lineage.report_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+        (root / "reports" / "artifact_lineage.json").write_text(
+            artifact_lineage_json(latest_lineage),
+            encoding="utf-8",
+        )
+        (root / "reports" / "artifact_lineage.md").write_text(
+            artifact_lineage_markdown(latest_lineage),
             encoding="utf-8",
         )
         latest_qc = state.qc_reports[-1] if state.qc_reports else None
@@ -1238,6 +1320,26 @@ def _append_component_inventory(state: DesignProductionState, artifact: HtmlArti
     return report
 
 
+def _append_accessibility_report(state: DesignProductionState, artifact: HtmlArtifact) -> AccessibilityReport:
+    """Build and store an accessibility report for one HTML artifact."""
+    report = build_accessibility_report(state, artifact=artifact)
+    state.accessibility_reports.append(report)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="accessibility_report_built",
+            stage=state.stage,
+            message="Built static HTML accessibility report.",
+            metadata={
+                "report_id": report.report_id,
+                "artifact_id": report.artifact_id,
+                "status": report.status,
+                "finding_counts": report.metrics.get("finding_counts", {}),
+            },
+        )
+    )
+    return report
+
+
 def _append_browser_diagnostics(
     state: DesignProductionState,
     artifact: HtmlArtifact | None,
@@ -1261,6 +1363,27 @@ def _append_browser_diagnostics(
                 "artifact_id": report.artifact_id,
                 "status": report.status,
                 "finding_counts": report.metrics.get("finding_counts", {}),
+            },
+        )
+    )
+    return report
+
+
+def _append_artifact_lineage(state: DesignProductionState) -> ArtifactLineageReport:
+    """Build and store the latest artifact lineage report."""
+    report = build_artifact_lineage(state)
+    report.report_path = f"{state.production_session.root_dir}/reports/artifact_lineage.md"
+    state.artifact_lineage_reports = [report]
+    state.production_events.append(
+        ProductionEvent(
+            event_type="artifact_lineage_built",
+            stage=state.stage,
+            message="Built Design HTML artifact lineage report.",
+            metadata={
+                "report_id": report.report_id,
+                "status": report.status,
+                "latest_artifact_id": report.latest_artifact_id,
+                "artifact_count": report.metrics.get("artifact_count", 0),
             },
         )
     )
@@ -1532,7 +1655,9 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
     preview_reports = _preview_reports_for_artifact(state, artifact_id)
     validation_report = _latest_validation_report_for_artifact(state, artifact_id)
     qc_report = _latest_qc_report_for_artifact(state, artifact_id)
+    accessibility_report = _latest_accessibility_report_for_artifact(state, artifact_id)
     diagnostics_report = _latest_browser_diagnostics_report_for_artifact(state, artifact_id)
+    lineage_report = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
     source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "delivery": {
@@ -1553,9 +1678,17 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
                 if qc_report is not None
                 else ""
             ),
+            "accessibility_status": accessibility_report.status if accessibility_report is not None else "",
+            "accessibility_report_path": (
+                accessibility_report.report_path or f"{state.production_session.root_dir}/reports/accessibility_report.md"
+                if accessibility_report is not None
+                else ""
+            ),
         },
         "preview": _preview_review_summary(preview_reports),
+        "accessibility": _accessibility_summary(accessibility_report),
         "diagnostics": _browser_diagnostics_summary(diagnostics_report),
+        "lineage": _artifact_lineage_summary(lineage_report),
         "quality": _quality_review_summary(qc_report),
         "source_refs": source_refs,
         "source_ref_details": source_ref_details(state, source_refs),
@@ -1584,6 +1717,16 @@ def _latest_qc_report_for_artifact(
 ) -> DesignQcReport | None:
     for report in reversed(state.qc_reports):
         if not artifact_id or artifact_id in report.artifact_ids:
+            return report
+    return None
+
+
+def _latest_accessibility_report_for_artifact(
+    state: DesignProductionState,
+    artifact_id: str,
+) -> AccessibilityReport | None:
+    for report in reversed(state.accessibility_reports):
+        if not artifact_id or report.artifact_id == artifact_id:
             return report
     return None
 
@@ -1645,6 +1788,37 @@ def _layout_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _accessibility_summary(report: AccessibilityReport | None) -> dict[str, Any]:
+    """Build a compact accessibility summary for review metadata."""
+    finding_counts = {"info": 0, "warning": 0, "error": 0}
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "report_path": "",
+            "finding_counts": finding_counts,
+            "attention_findings": [],
+        }
+    finding_counts.update(report.metrics.get("finding_counts", {}))
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "report_path": report.report_path or "",
+        "finding_counts": finding_counts,
+        "attention_findings": [
+            {
+                "finding_id": finding.finding_id,
+                "severity": finding.severity,
+                "category": finding.category,
+                "target": finding.target,
+                "summary": finding.summary,
+            }
+            for finding in report.findings
+            if finding.severity in {"warning", "error"}
+        ],
+    }
+
+
 def _browser_diagnostics_summary(report: BrowserDiagnosticsReport | None) -> dict[str, Any]:
     """Build a compact browser diagnostics summary for review metadata."""
     finding_counts = {"info": 0, "warning": 0, "error": 0}
@@ -1673,6 +1847,27 @@ def _browser_diagnostics_summary(report: BrowserDiagnosticsReport | None) -> dic
             for finding in report.findings
             if finding.severity in {"warning", "error"}
         ],
+    }
+
+
+def _artifact_lineage_summary(report: ArtifactLineageReport | None) -> dict[str, Any]:
+    """Build a compact artifact lineage summary for review metadata."""
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "latest_artifact_id": "",
+            "report_path": "",
+            "artifact_count": 0,
+            "revision_count": 0,
+        }
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "latest_artifact_id": report.latest_artifact_id,
+        "report_path": report.report_path or "",
+        "artifact_count": report.metrics.get("artifact_count", 0),
+        "revision_count": report.metrics.get("revision_count", 0),
     }
 
 
@@ -1769,12 +1964,16 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _design_system_view(state)
     if view_type == "components":
         return _components_view(state)
+    if view_type == "accessibility":
+        return _accessibility_view(state)
     if view_type == "layout":
         return _layout_view(state)
     if view_type == "preview":
         return _preview_view(state)
     if view_type == "diagnostics":
         return _diagnostics_view(state)
+    if view_type == "lineage":
+        return _lineage_view(state)
     if view_type == "quality":
         return _quality_view(state)
     if view_type == "events":
@@ -1814,9 +2013,11 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "html_artifacts": len(state.html_artifacts),
                 "design_system_audit_reports": len(state.design_system_audit_reports),
                 "component_inventory_reports": len(state.component_inventory_reports),
+                "accessibility_reports": len(state.accessibility_reports),
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
                 "browser_diagnostics_reports": len(state.browser_diagnostics_reports),
+                "artifact_lineage_reports": len(state.artifact_lineage_reports),
                 "qc_reports": len(state.qc_reports),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
@@ -1858,6 +2059,23 @@ def _components_view(state: DesignProductionState) -> dict[str, Any]:
     return view
 
 
+def _accessibility_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "accessibility")
+    view.update(
+        {
+            "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
+            "latest_accessibility_report": (
+                state.accessibility_reports[-1].model_dump(mode="json")
+                if state.accessibility_reports
+                else None
+            ),
+            "accessibility_report_path": f"{state.production_session.root_dir}/reports/accessibility_report.md",
+            "accessibility_json_path": f"{state.production_session.root_dir}/reports/accessibility_report.json",
+        }
+    )
+    return view
+
+
 def _layout_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "layout")
     view.update(
@@ -1876,6 +2094,8 @@ def _preview_view(state: DesignProductionState) -> dict[str, Any]:
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "preview_reports": [_preview_report_payload(state, item) for item in state.preview_reports],
             "preview_report_path": f"{state.production_session.root_dir}/reports/preview_report.json",
+            "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
+            "accessibility_report_path": f"{state.production_session.root_dir}/reports/accessibility_report.md",
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
             "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
         }
@@ -1902,6 +2122,25 @@ def _diagnostics_view(state: DesignProductionState) -> dict[str, Any]:
     return view
 
 
+def _lineage_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "lineage")
+    view.update(
+        {
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
+            "latest_artifact_lineage": (
+                state.artifact_lineage_reports[-1].model_dump(mode="json")
+                if state.artifact_lineage_reports
+                else None
+            ),
+            "artifact_lineage_report_path": f"{state.production_session.root_dir}/reports/artifact_lineage.md",
+            "artifact_lineage_json_path": f"{state.production_session.root_dir}/reports/artifact_lineage.json",
+            "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
+            "revision_history": state.revision_history,
+        }
+    )
+    return view
+
+
 def _quality_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "quality")
     view.update(
@@ -1909,14 +2148,18 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "html_validation_reports": [item.model_dump(mode="json") for item in state.html_validation_reports],
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+            "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
             "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
+            "accessibility_report_path": f"{state.production_session.root_dir}/reports/accessibility_report.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
+            "artifact_lineage_report_path": f"{state.production_session.root_dir}/reports/artifact_lineage.md",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
     )
@@ -1937,8 +2180,10 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+            "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )
