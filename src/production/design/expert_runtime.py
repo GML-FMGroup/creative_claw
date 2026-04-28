@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 from google.adk.agents import LlmAgent
 from google.adk.runners import InMemoryRunner
 from google.genai.types import Content, Part
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from conf.llm import build_llm, resolve_llm_model_name
 from src.production.design.models import (
@@ -18,9 +18,13 @@ from src.production.design.models import (
     DesignGenre,
     DesignQcReport,
     DesignSystemSpec,
+    DesignTokenColor,
+    DesignTokenTypography,
     HtmlArtifact,
     HtmlValidationReport,
     LayoutPlan,
+    LayoutSection,
+    PageBlueprint,
     PreviewReport,
     ReferenceAssetEntry,
 )
@@ -43,6 +47,185 @@ class HtmlBuildOutput(BaseModel):
     html: str = Field(description="Complete standalone HTML document.")
     section_fragments: dict[str, str] = Field(default_factory=dict)
     notes: str = ""
+
+
+class _StrictModel(BaseModel):
+    """Base class for ADK-facing structured outputs accepted by strict JSON schema backends."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class _AdkNamedValue(_StrictModel):
+    """One named scalar value in a strict ADK output schema."""
+
+    name: str = ""
+    value: str = ""
+
+
+class _AdkDesignTokenColor(_StrictModel):
+    """Strict color token returned by DesignSystemExpert."""
+
+    name: str = ""
+    value: str = ""
+    usage: str = ""
+
+    def to_design_token(self) -> DesignTokenColor:
+        """Convert into the production color token model."""
+        return DesignTokenColor(name=self.name, value=self.value, usage=self.usage)
+
+
+class _AdkDesignTokenTypography(_StrictModel):
+    """Strict typography token returned by DesignSystemExpert."""
+
+    role: str = ""
+    font_family: str = ""
+    font_size_px: int | None = None
+    font_weight: str = ""
+    line_height: str = ""
+
+    def to_design_token(self) -> DesignTokenTypography:
+        """Convert into the production typography token model."""
+        return DesignTokenTypography(
+            role=self.role,
+            font_family=self.font_family,
+            font_size_px=self.font_size_px,
+            font_weight=self.font_weight,
+            line_height=self.line_height,
+        )
+
+
+class _AdkComponentToken(_StrictModel):
+    """Strict component token group returned by DesignSystemExpert."""
+
+    name: str = ""
+    tokens: list[_AdkNamedValue] = Field(default_factory=list)
+
+
+class _AdkDesignSystemSpec(_StrictModel):
+    """Strict Design system output that avoids free-form object maps."""
+
+    version: int = 1
+    source: str = "generated"
+    colors: list[_AdkDesignTokenColor] = Field(default_factory=list)
+    typography: list[_AdkDesignTokenTypography] = Field(default_factory=list)
+    spacing: list[_AdkNamedValue] = Field(default_factory=list)
+    radii: list[_AdkNamedValue] = Field(default_factory=list)
+    shadows: list[_AdkNamedValue] = Field(default_factory=list)
+    component_tokens: list[_AdkComponentToken] = Field(default_factory=list)
+    notes: str = ""
+
+    def to_design_system_spec(self) -> DesignSystemSpec:
+        """Convert strict ADK output into the production Design system model."""
+        return DesignSystemSpec(
+            version=self.version,
+            source=_coerce_design_system_source(self.source),
+            colors=[token.to_design_token() for token in self.colors if token.name and token.value],
+            typography=[token.to_design_token() for token in self.typography if token.role and token.font_family],
+            spacing=_named_values_to_dict(self.spacing),
+            radii=_named_values_to_dict(self.radii),
+            shadows=_named_values_to_dict(self.shadows),
+            component_tokens=_component_tokens_to_dict(self.component_tokens),
+            notes=self.notes,
+        )
+
+
+class _AdkLayoutSection(_StrictModel):
+    """Strict layout section returned by LayoutPlannerExpert."""
+
+    section_id: str = ""
+    title: str = ""
+    purpose: str = ""
+    content: list[str] = Field(default_factory=list)
+    required_asset_ids: list[str] = Field(default_factory=list)
+    missing_asset_briefs: list[str] = Field(default_factory=list)
+    responsive_notes: str = ""
+    expert_hints: list[_AdkNamedValue] = Field(default_factory=list)
+
+    def to_layout_section(self) -> LayoutSection:
+        """Convert into the production layout section model."""
+        kwargs: dict[str, Any] = {
+            "title": self.title or "Section",
+            "purpose": self.purpose,
+            "content": self.content,
+            "required_asset_ids": self.required_asset_ids,
+            "missing_asset_briefs": self.missing_asset_briefs,
+            "responsive_notes": self.responsive_notes,
+            "expert_hints": _named_values_to_dict(self.expert_hints),
+        }
+        if self.section_id:
+            kwargs["section_id"] = self.section_id
+        return LayoutSection(**kwargs)
+
+
+class _AdkPageBlueprint(_StrictModel):
+    """Strict page blueprint returned by LayoutPlannerExpert."""
+
+    page_id: str = ""
+    title: str = ""
+    path: str = "index.html"
+    sections: list[_AdkLayoutSection] = Field(default_factory=list)
+    device_targets: list[str] = Field(default_factory=lambda: ["desktop", "mobile"])
+    version: int = 1
+    status: str = "draft"
+
+    def to_page_blueprint(self) -> PageBlueprint:
+        """Convert into the production page blueprint model."""
+        kwargs: dict[str, Any] = {
+            "title": self.title or "Page",
+            "path": self.path or "index.html",
+            "sections": [section.to_layout_section() for section in self.sections],
+            "device_targets": self.device_targets or ["desktop", "mobile"],
+            "version": self.version,
+            "status": _coerce_page_status(self.status),
+        }
+        if self.page_id:
+            kwargs["page_id"] = self.page_id
+        return PageBlueprint(**kwargs)
+
+
+class _AdkLayoutPlan(_StrictModel):
+    """Strict layout plan output that avoids free-form section hint maps."""
+
+    version: int = 1
+    pages: list[_AdkPageBlueprint] = Field(default_factory=list)
+    global_notes: str = ""
+
+    def to_layout_plan(self) -> LayoutPlan:
+        """Convert into the production layout plan model."""
+        return LayoutPlan(
+            version=self.version,
+            pages=[page.to_page_blueprint() for page in self.pages],
+            global_notes=self.global_notes,
+        )
+
+
+class _AdkSectionFragment(_StrictModel):
+    """Strict HTML section fragment entry returned by HtmlBuilderExpert."""
+
+    section_id: str = ""
+    html: str = ""
+
+
+class _AdkHtmlBuildOutput(_StrictModel):
+    """Strict HTML builder output that avoids free-form fragment maps."""
+
+    title: str = ""
+    html: str = Field(description="Complete standalone HTML document.")
+    section_fragments: list[_AdkSectionFragment] = Field(default_factory=list)
+    notes: str = ""
+
+    def to_html_build_output(self) -> HtmlBuildOutput:
+        """Convert into the production HTML build output model."""
+        return HtmlBuildOutput(
+            title=self.title,
+            html=self.html,
+            section_fragments={
+                fragment.section_id: fragment.html
+                for fragment in self.section_fragments
+                if fragment.section_id and fragment.html
+            },
+            notes=self.notes,
+        )
 
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
@@ -100,13 +283,14 @@ class DesignExpertRuntime:
                 "playbook_text": playbook_text,
             },
         )
-        design_system = await self._run_structured_agent(
+        adk_design_system = await self._run_structured_agent(
             agent_name="DesignSystemExpert",
             instruction="You create practical design systems for responsive HTML artifacts.",
             request_text=design_system_prompt,
-            output_schema=DesignSystemSpec,
+            output_schema=_AdkDesignSystemSpec,
             output_key="design_system",
         )
+        design_system = adk_design_system.to_design_system_spec()
         if design_system.source == "placeholder":
             design_system.source = "generated"
 
@@ -122,13 +306,14 @@ class DesignExpertRuntime:
                 "playbook_text": playbook_text,
             },
         )
-        layout_plan = await self._run_structured_agent(
+        adk_layout_plan = await self._run_structured_agent(
             agent_name="LayoutPlannerExpert",
             instruction="You create page-aware layout plans with stable HTML section ids.",
             request_text=layout_prompt,
-            output_schema=LayoutPlan,
+            output_schema=_AdkLayoutPlan,
             output_key="layout_plan",
         )
+        layout_plan = adk_layout_plan.to_layout_plan()
 
         return DesignDirectionPlan(
             brief=brief,
@@ -163,16 +348,17 @@ class DesignExpertRuntime:
                 "previous_html_summary": _summarize_previous_html(previous_html),
             },
         )
-        output = await self._run_structured_agent(
+        adk_output = await self._run_structured_agent(
             agent_name="HtmlBuilderExpert",
             instruction=(
                 "You build complete, portable, responsive HTML for one target page. "
                 "Return only fields requested by the schema."
             ),
             request_text=prompt,
-            output_schema=HtmlBuildOutput,
+            output_schema=_AdkHtmlBuildOutput,
             output_key="html_build_output",
         )
+        output = adk_output.to_html_build_output()
         output.html = normalize_generated_html(output.html)
         return output
 
@@ -365,6 +551,46 @@ def _requested_page_specs(design_settings: dict[str, Any]) -> list[dict[str, Any
             }
         )
     return page_specs
+
+
+def _named_values_to_dict(items: list[_AdkNamedValue]) -> dict[str, str]:
+    """Convert strict named-value lists into production token maps."""
+    values: dict[str, str] = {}
+    for item in items:
+        name = str(item.name or "").strip()
+        value = str(item.value or "").strip()
+        if name and value:
+            values[name] = value
+    return values
+
+
+def _component_tokens_to_dict(items: list[_AdkComponentToken]) -> dict[str, dict[str, str]]:
+    """Convert strict component token groups into production component token maps."""
+    values: dict[str, dict[str, str]] = {}
+    for item in items:
+        name = str(item.name or "").strip()
+        if not name:
+            continue
+        tokens = _named_values_to_dict(item.tokens)
+        if tokens:
+            values[name] = tokens
+    return values
+
+
+def _coerce_design_system_source(value: str) -> str:
+    """Return a production-safe DesignSystemSpec source literal."""
+    source = str(value or "").strip()
+    if source in {"generated", "extracted", "mixed", "placeholder"}:
+        return source
+    return "generated"
+
+
+def _coerce_page_status(value: str) -> str:
+    """Return a production-safe PageBlueprint status literal."""
+    status = str(value or "").strip()
+    if status in {"draft", "approved", "stale"}:
+        return status
+    return "draft"
 
 
 def _model_json_or_null(value: BaseModel | None) -> str:

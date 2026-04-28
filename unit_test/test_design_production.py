@@ -4,12 +4,27 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from src.production.design.accessibility import build_accessibility_report
 from src.production.design.component_inventory import build_component_inventory
 from src.production.design.design_system_audit import audit_design_system
 from src.production.design.design_system_extractor import build_design_system_extraction
-from src.production.design.expert_runtime import DesignDirectionPlan, DesignExpertRuntime, HtmlBuildOutput
+from src.production.design.expert_runtime import (
+    DesignDirectionPlan,
+    DesignExpertRuntime,
+    HtmlBuildOutput,
+    _AdkComponentToken,
+    _AdkDesignSystemSpec,
+    _AdkDesignTokenColor,
+    _AdkDesignTokenTypography,
+    _AdkHtmlBuildOutput,
+    _AdkLayoutPlan,
+    _AdkLayoutSection,
+    _AdkNamedValue,
+    _AdkPageBlueprint,
+    _AdkSectionFragment,
+)
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
     DesignBrief,
@@ -337,27 +352,27 @@ class _CapturingDesignExpertRuntime(DesignExpertRuntime):
                 audience="buyers",
                 primary_action="Explore product",
             )
-        if output_schema is DesignSystemSpec:
-            return DesignSystemSpec(source="generated")
-        if output_schema is LayoutPlan:
-            return LayoutPlan(
+        if output_schema is _AdkDesignSystemSpec:
+            return _AdkDesignSystemSpec(source="generated")
+        if output_schema is _AdkLayoutPlan:
+            return _AdkLayoutPlan(
                 pages=[
-                    PageBlueprint(
+                    _AdkPageBlueprint(
                         title="Home",
                         path="index.html",
                         sections=[
-                            LayoutSection(
+                            _AdkLayoutSection(
                                 section_id="home-hero",
                                 title="Hero",
                                 purpose="Introduce the product.",
                             )
                         ],
                     ),
-                    PageBlueprint(
+                    _AdkPageBlueprint(
                         title="Product",
                         path="product.html",
                         sections=[
-                            LayoutSection(
+                            _AdkLayoutSection(
                                 section_id="product-overview",
                                 title="Product Overview",
                                 purpose="Explain product value.",
@@ -1679,6 +1694,84 @@ class DesignProductionTests(unittest.TestCase):
         with self.assertRaises(DesignPromptCatalogError):
             render_prompt_template("brief_expert", {"user_prompt": "missing variables"})
 
+    def test_design_expert_runtime_adk_output_schemas_are_strict(self) -> None:
+        for schema_model in (_AdkDesignSystemSpec, _AdkLayoutPlan, _AdkHtmlBuildOutput):
+            with self.subTest(schema=schema_model.__name__):
+                _assert_no_open_object_schema(self, schema_model.model_json_schema())
+
+    def test_design_expert_runtime_strict_outputs_convert_to_production_models(self) -> None:
+        design_system = _AdkDesignSystemSpec(
+            version=2,
+            source="unexpected",
+            colors=[
+                _AdkDesignTokenColor(name="primary", value="#123456", usage="Primary actions"),
+                _AdkDesignTokenColor(name="", value="#ffffff", usage="Ignored missing name"),
+            ],
+            typography=[
+                _AdkDesignTokenTypography(
+                    role="display",
+                    font_family="Inter, sans-serif",
+                    font_size_px=42,
+                    font_weight="700",
+                    line_height="1.1",
+                )
+            ],
+            spacing=[_AdkNamedValue(name="section_y", value="32px")],
+            radii=[_AdkNamedValue(name="card", value="8px")],
+            shadows=[_AdkNamedValue(name="focus", value="0 0 0 3px rgba(22, 93, 255, 0.24)")],
+            component_tokens=[
+                _AdkComponentToken(
+                    name="button",
+                    tokens=[
+                        _AdkNamedValue(name="height", value="44px"),
+                        _AdkNamedValue(name="", value="ignored"),
+                    ],
+                )
+            ],
+            notes="Strict schema conversion.",
+        ).to_design_system_spec()
+        self.assertEqual(design_system.source, "generated")
+        self.assertEqual(design_system.version, 2)
+        self.assertEqual([color.name for color in design_system.colors], ["primary"])
+        self.assertEqual(design_system.spacing, {"section_y": "32px"})
+        self.assertEqual(design_system.radii, {"card": "8px"})
+        self.assertEqual(design_system.component_tokens, {"button": {"height": "44px"}})
+
+        layout_plan = _AdkLayoutPlan(
+            pages=[
+                _AdkPageBlueprint(
+                    page_id="page_home",
+                    title="Home",
+                    path="index.html",
+                    status="unexpected",
+                    sections=[
+                        _AdkLayoutSection(
+                            section_id="hero",
+                            title="Hero",
+                            purpose="Introduce the product.",
+                            content=["Lead with product value."],
+                            expert_hints=[_AdkNamedValue(name="density", value="compact")],
+                        )
+                    ],
+                )
+            ],
+            global_notes="Keep page rhythm stable.",
+        ).to_layout_plan()
+        self.assertEqual(layout_plan.pages[0].status, "draft")
+        self.assertEqual(layout_plan.pages[0].sections[0].section_id, "hero")
+        self.assertEqual(layout_plan.pages[0].sections[0].expert_hints, {"density": "compact"})
+
+        html_output = _AdkHtmlBuildOutput(
+            title="Home",
+            html="<!doctype html><html lang=\"en\"><body><main></main></body></html>",
+            section_fragments=[
+                _AdkSectionFragment(section_id="hero", html="<section id=\"hero\"></section>"),
+                _AdkSectionFragment(section_id="", html="<section></section>"),
+            ],
+            notes="Built from strict schema.",
+        ).to_html_build_output()
+        self.assertEqual(html_output.section_fragments, {"hero": "<section id=\"hero\"></section>"})
+
     def test_design_expert_runtime_layout_prompt_includes_multi_page_settings(self) -> None:
         runtime = _CapturingDesignExpertRuntime()
         settings = {
@@ -1726,6 +1819,22 @@ class DesignProductionTests(unittest.TestCase):
 
         self.assertEqual(report.status, "invalid")
         self.assertTrue(any("absolute path" in issue for issue in report.issues))
+
+
+def _assert_no_open_object_schema(test_case: unittest.TestCase, node: Any, *, path: str = "$") -> None:
+    """Assert every object-like JSON schema node forbids additional properties."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" or "properties" in node:
+            test_case.assertIs(
+                node.get("additionalProperties"),
+                False,
+                f"{path} must set additionalProperties=false for strict ADK structured output",
+            )
+        for key, value in node.items():
+            _assert_no_open_object_schema(test_case, value, path=f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            _assert_no_open_object_schema(test_case, item, path=f"{path}[{index}]")
 
 
 if __name__ == "__main__":
