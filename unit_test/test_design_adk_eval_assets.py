@@ -18,11 +18,12 @@ class DesignAdkEvalAssetsTests(unittest.TestCase):
         metrics = get_eval_metrics_from_config(eval_config)
 
         self.assertEqual(eval_set.eval_set_id, "design_p0")
-        self.assertGreaterEqual(len(eval_set.eval_cases), 8)
+        self.assertGreaterEqual(len(eval_set.eval_cases), 9)
         eval_ids = {item.eval_id for item in eval_set.eval_cases}
         self.assertIn("start_saas_landing_requires_design_review", eval_ids)
         self.assertIn("start_dashboard_ui_requires_design_review", eval_ids)
         self.assertIn("view_preview_and_quality_after_generation", eval_ids)
+        self.assertIn("start_multi_page_microsite_preserves_pages", eval_ids)
         self.assertIn("analyze_hero_revision_impact", eval_ids)
         self.assertIn("apply_confirmed_hero_revision", eval_ids)
         self.assertIn("poster_png_should_not_use_design_production", eval_ids)
@@ -35,10 +36,23 @@ class DesignAdkEvalAssetsTests(unittest.TestCase):
         rubric_ids = {item["rubric_id"] for item in rubrics}
         self.assertIn("design_uses_production_tool", rubric_ids)
         self.assertIn("design_review_before_html_generation", rubric_ids)
+        self.assertIn("design_multi_page_preserves_page_intent", rubric_ids)
         self.assertIn("design_view_for_preview_or_quality", rubric_ids)
         self.assertIn("design_impact_before_targeted_revision", rubric_ids)
         self.assertIn("design_apply_revision_after_confirmation", rubric_ids)
         self.assertIn("design_boundary_for_non_html_outputs", rubric_ids)
+
+        eval_payload = json.loads(evalset_path.read_text(encoding="utf-8"))
+        multi_page_case = next(
+            item
+            for item in eval_payload["eval_cases"]
+            if item["eval_id"] == "start_multi_page_microsite_preserves_pages"
+        )
+        user_text = multi_page_case["conversation"][0]["user_content"]["parts"][0]["text"]
+        self.assertIn("多页面 HTML microsite", user_text)
+        self.assertIn("index.html", user_text)
+        self.assertIn("product.html", user_text)
+        self.assertIn("pricing.html", user_text)
 
         for eval_case in eval_set.eval_cases:
             state = eval_case.session_input.state
