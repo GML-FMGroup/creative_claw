@@ -1533,6 +1533,7 @@ def _render_manifest(state: PPTProductionState) -> dict[str, Any]:
                 "layout_type": slide.layout_type if slide is not None else "",
                 "deck_slide_status": slide.status if slide is not None else "",
                 "source_refs": slide.source_refs if slide is not None else [],
+                "source_ref_details": _source_ref_details(state, slide.source_refs if slide is not None else []),
                 "preview_status": preview.status,
                 "preview_path": preview.preview_path,
                 "segment_path": preview.segment_path,
@@ -1620,8 +1621,7 @@ def _render_manifest_markdown(manifest: dict[str, Any]) -> str:
     if slides:
         lines.extend(["## Slides", ""])
         for slide in slides:
-            source_refs = slide.get("source_refs") or []
-            source_text = f" source_refs={','.join(source_refs)}" if source_refs else ""
+            source_text = _source_refs_manifest_text(slide.get("source_ref_details") or [])
             lines.append(
                 "- "
                 f"{slide.get('sequence_index')}. {slide.get('title') or slide.get('slide_id')} "
@@ -1738,6 +1738,7 @@ def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
                     "visual_notes": slide.visual_notes,
                     "speaker_notes": slide.speaker_notes,
                     "source_refs": slide.source_refs,
+                    "source_ref_details": _source_ref_details(state, slide.source_refs),
                     "status": slide.status,
                     "preview_status": preview.status if preview is not None else "",
                     "preview_path": preview.preview_path if preview is not None else "",
@@ -1804,10 +1805,51 @@ def _preview_payload_items(state: PPTProductionState, slide_ids: set[str] | None
                 "layout_type": slide.layout_type if slide is not None else "",
                 "deck_slide_status": slide.status if slide is not None else "",
                 "source_refs": slide.source_refs if slide is not None else [],
+                "source_ref_details": _source_ref_details(state, slide.source_refs if slide is not None else []),
             }
         )
         items.append(item)
     return items
+
+
+def _source_ref_details(state: PPTProductionState, source_refs: list[str]) -> list[dict[str, str]]:
+    """Resolve slide source ref ids to readable input metadata."""
+    inputs_by_id = {item.input_id: item for item in state.inputs}
+    details: list[dict[str, str]] = []
+    for source_ref in source_refs:
+        entry = inputs_by_id.get(source_ref)
+        if entry is None:
+            details.append({"input_id": source_ref, "name": source_ref, "path": "", "role": "", "status": "missing"})
+            continue
+        details.append(
+            {
+                "input_id": entry.input_id,
+                "name": entry.name,
+                "path": entry.path,
+                "role": entry.role,
+                "status": entry.status,
+            }
+        )
+    return details
+
+
+def _source_refs_markdown_text(state: PPTProductionState, source_refs: list[str]) -> str:
+    details = _source_ref_details(state, source_refs)
+    if not details:
+        return ", ".join(source_refs)
+    return ", ".join(_format_source_ref_detail(detail) for detail in details)
+
+
+def _source_refs_manifest_text(details: list[dict[str, str]]) -> str:
+    if not details:
+        return ""
+    return f" sources={','.join(_format_source_ref_detail(detail) for detail in details)}"
+
+
+def _format_source_ref_detail(detail: dict[str, str]) -> str:
+    name = detail.get("name") or detail.get("input_id") or "unknown"
+    input_id = detail.get("input_id") or ""
+    return f"{name}({input_id})" if input_id and input_id != name else name
 
 
 def _build_production_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
@@ -1959,7 +2001,7 @@ def _deck_spec_markdown(state: PPTProductionState) -> str:
     for slide in state.deck_spec.slides:
         lines.extend([f"## {slide.sequence_index}. {slide.title}", "", f"Layout: {slide.layout_type}", f"Visual: {slide.visual_notes}", ""])
         if slide.source_refs:
-            lines.append(f"Source refs: {', '.join(slide.source_refs)}")
+            lines.append(f"Source refs: {_source_refs_markdown_text(state, slide.source_refs)}")
             lines.append("")
         lines.extend(f"- {bullet}" for bullet in slide.bullets)
         lines.append("")
