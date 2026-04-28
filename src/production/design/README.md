@@ -73,6 +73,10 @@ Design production now derives deterministic HTML artifact lineage from `DesignPr
 
 Design production now derives a deterministic accessibility report from each valid generated HTML artifact. The report checks document language/title/viewport metadata, semantic landmarks, heading outline, image alt text, accessible names for links and buttons, form labels, and non-semantic click handlers. Accessibility output is persisted under `reports/accessibility_report.*`, exposed through `view_type="accessibility"`, included in preview review metadata, and packaged in final handoff exports.
 
+## P1k Design System Extraction
+
+Design production now derives a deterministic design-system extraction report from each generated HTML artifact. The report summarizes CSS custom properties, colors, typography, spacing/radius/shadow values, media breakpoints, and selectors found in the generated HTML/CSS, alongside DesignSystemSpec token usage. Extraction output is persisted under `reports/design_system_extraction.*`, exposed through `view_type="design_system_extraction"` and the design-system/quality views, included in preview review metadata, linked from artifact lineage, and packaged in final handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -82,6 +86,7 @@ Design production now derives a deterministic accessibility report from each val
 - `artifact_lineage.py`: deterministic HTML artifact lineage reports linking revisions, artifacts, and derived report ids.
 - `browser_diagnostics.py`: deterministic diagnostics derived from browser preview and PDF export reports.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.
+- `design_system_extractor.py`: deterministic design-system usage extraction from generated HTML/CSS.
 - `component_inventory.py`: deterministic component inventory extraction from state and generated HTML.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.

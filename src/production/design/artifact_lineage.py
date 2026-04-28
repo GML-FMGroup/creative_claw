@@ -146,6 +146,9 @@ def _report_refs(state: DesignProductionState, artifact_id: str) -> dict[str, li
         "component_inventory_report_ids": [
             report.report_id for report in state.component_inventory_reports if report.artifact_id == artifact_id
         ],
+        "design_system_extraction_report_ids": [
+            report.report_id for report in state.design_system_extraction_reports if report.artifact_id == artifact_id
+        ],
         "accessibility_report_ids": [
             report.report_id for report in state.accessibility_reports if report.artifact_id == artifact_id
         ],
@@ -199,6 +202,7 @@ def _metrics(
         "report_counts": {
             "html_validation": len(state.html_validation_reports),
             "component_inventory": len(state.component_inventory_reports),
+            "design_system_extraction": len(state.design_system_extraction_reports),
             "accessibility": len(state.accessibility_reports),
             "preview": len(state.preview_reports),
             "browser_diagnostics": len(state.browser_diagnostics_reports),
@@ -245,6 +249,8 @@ def _notes(
         notes.append("Artifact was superseded by a later build.")
     if not report_refs.get("html_validation_report_ids"):
         notes.append("No validation report is linked to this artifact.")
+    if not report_refs.get("design_system_extraction_report_ids"):
+        notes.append("No design-system extraction report is linked to this artifact.")
     if not report_refs.get("accessibility_report_ids"):
         notes.append("No accessibility report is linked to this artifact.")
     if not report_refs.get("quality_report_ids"):
