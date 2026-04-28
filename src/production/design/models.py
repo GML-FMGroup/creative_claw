@@ -265,6 +265,31 @@ class PdfExportReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class BrowserDiagnosticsFinding(BaseModel):
+    """One deterministic finding for browser-dependent Design outputs."""
+
+    finding_id: str = Field(default_factory=lambda: new_id("browser_diagnostics_finding"))
+    severity: Literal["info", "warning", "error"]
+    category: Literal["preview", "pdf", "environment", "artifact"]
+    target: str = ""
+    summary: str
+    recommendation: str = ""
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class BrowserDiagnosticsReport(BaseModel):
+    """Browser preview and export diagnostics derived from Design production facts."""
+
+    report_id: str = Field(default_factory=lambda: new_id("browser_diagnostics"))
+    artifact_id: str = ""
+    status: Literal["ready", "warning", "fail"] = "ready"
+    summary: str = ""
+    findings: list[BrowserDiagnosticsFinding] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class DesignQcFinding(BaseModel):
     """One explainable quality finding for a design artifact."""
 
@@ -304,6 +329,7 @@ class DesignProductionState(ProductionState):
     html_validation_reports: list[HtmlValidationReport] = Field(default_factory=list)
     preview_reports: list[PreviewReport] = Field(default_factory=list)
     pdf_export_reports: list[PdfExportReport] = Field(default_factory=list)
+    browser_diagnostics_reports: list[BrowserDiagnosticsReport] = Field(default_factory=list)
     qc_reports: list[DesignQcReport] = Field(default_factory=list)
     revision_history: list[dict[str, Any]] = Field(default_factory=list)
     export_artifacts: list[WorkspaceFileRef] = Field(default_factory=list)

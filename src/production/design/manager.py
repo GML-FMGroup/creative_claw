@@ -6,8 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.production.design.browser_diagnostics import (
+    browser_diagnostics_markdown,
+    build_browser_diagnostics,
+)
 from src.production.design.impact import build_revision_impact_view, normalize_revision_request
 from src.production.design.models import (
+    BrowserDiagnosticsReport,
     ComponentInventoryReport,
     DesignBrief,
     DesignQcFinding,
@@ -61,7 +66,18 @@ from src.production.session_store import ProductionSessionStore
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
-_VIEW_TYPES = ("overview", "brief", "design_system", "components", "layout", "preview", "quality", "events", "artifacts")
+_VIEW_TYPES = (
+    "overview",
+    "brief",
+    "design_system",
+    "components",
+    "layout",
+    "preview",
+    "diagnostics",
+    "quality",
+    "events",
+    "artifacts",
+)
 
 
 class DesignProductionManager:
@@ -450,6 +466,7 @@ class DesignProductionManager:
     async def _build_and_complete_placeholder(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
         await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
         await self._export_requested_pdf(state, response={})
+        _append_browser_diagnostics(state, latest_html_artifact(state))
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -616,6 +633,7 @@ class DesignProductionManager:
             if artifact.status in {"draft", "valid"}:
                 artifact.status = "approved"
         await self._export_requested_pdf(state, response=response)
+        _append_browser_diagnostics(state, latest_html_artifact(state))
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -715,6 +733,7 @@ class DesignProductionManager:
             output_dir=session_root / "previews",
         )
         state.preview_reports.extend(preview_reports)
+        _append_browser_diagnostics(state, artifact)
 
         state.stage = "quality_check"
         expert_qc_report: DesignQcReport | None = None
@@ -919,6 +938,26 @@ class DesignProductionManager:
                     ),
                 ]
             )
+        diagnostics_md_path = f"{state.production_session.root_dir}/reports/browser_diagnostics.md"
+        diagnostics_json_path = f"{state.production_session.root_dir}/reports/browser_diagnostics.json"
+        if state.browser_diagnostics_reports:
+            state.browser_diagnostics_reports[-1].report_path = diagnostics_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="browser_diagnostics.md",
+                        path=diagnostics_md_path,
+                        description="Browser preview and export diagnostics report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="browser_diagnostics.json",
+                        path=diagnostics_json_path,
+                        description="Machine-readable browser preview and export diagnostics.",
+                        source=self.capability,
+                    ),
+                ]
+            )
         for report in state.pdf_export_reports:
             if report.status == "exported" and report.pdf_path:
                 final_artifacts.append(
@@ -1059,6 +1098,21 @@ class DesignProductionManager:
             json.dumps([item.model_dump(mode="json") for item in state.pdf_export_reports], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        latest_diagnostics = state.browser_diagnostics_reports[-1] if state.browser_diagnostics_reports else None
+        if latest_diagnostics is not None:
+            latest_diagnostics.report_path = f"{state.production_session.root_dir}/reports/browser_diagnostics.md"
+        (root / "reports" / "browser_diagnostics.json").write_text(
+            json.dumps(
+                [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (root / "reports" / "browser_diagnostics.md").write_text(
+            browser_diagnostics_markdown(latest_diagnostics),
+            encoding="utf-8",
+        )
         latest_qc = state.qc_reports[-1] if state.qc_reports else None
         if latest_qc is not None:
             latest_qc.report_path = f"{state.production_session.root_dir}/reports/qc_report.md"
@@ -1178,6 +1232,35 @@ def _append_component_inventory(state: DesignProductionState, artifact: HtmlArti
                 "artifact_id": report.artifact_id,
                 "status": report.status,
                 "item_count": report.metrics.get("item_count", 0),
+            },
+        )
+    )
+    return report
+
+
+def _append_browser_diagnostics(
+    state: DesignProductionState,
+    artifact: HtmlArtifact | None,
+) -> BrowserDiagnosticsReport:
+    """Build and store the latest browser diagnostics for one HTML artifact."""
+    report = build_browser_diagnostics(state, artifact=artifact)
+    if report.artifact_id:
+        state.browser_diagnostics_reports = [
+            item
+            for item in state.browser_diagnostics_reports
+            if item.artifact_id != report.artifact_id
+        ]
+    state.browser_diagnostics_reports.append(report)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="browser_diagnostics_built",
+            stage=state.stage,
+            message="Built browser preview and export diagnostics.",
+            metadata={
+                "report_id": report.report_id,
+                "artifact_id": report.artifact_id,
+                "status": report.status,
+                "finding_counts": report.metrics.get("finding_counts", {}),
             },
         )
     )
@@ -1449,6 +1532,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
     preview_reports = _preview_reports_for_artifact(state, artifact_id)
     validation_report = _latest_validation_report_for_artifact(state, artifact_id)
     qc_report = _latest_qc_report_for_artifact(state, artifact_id)
+    diagnostics_report = _latest_browser_diagnostics_report_for_artifact(state, artifact_id)
     source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "delivery": {
@@ -1471,6 +1555,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
             ),
         },
         "preview": _preview_review_summary(preview_reports),
+        "diagnostics": _browser_diagnostics_summary(diagnostics_report),
         "quality": _quality_review_summary(qc_report),
         "source_refs": source_refs,
         "source_ref_details": source_ref_details(state, source_refs),
@@ -1499,6 +1584,16 @@ def _latest_qc_report_for_artifact(
 ) -> DesignQcReport | None:
     for report in reversed(state.qc_reports):
         if not artifact_id or artifact_id in report.artifact_ids:
+            return report
+    return None
+
+
+def _latest_browser_diagnostics_report_for_artifact(
+    state: DesignProductionState,
+    artifact_id: str,
+) -> BrowserDiagnosticsReport | None:
+    for report in reversed(state.browser_diagnostics_reports):
+        if not artifact_id or report.artifact_id == artifact_id:
             return report
     return None
 
@@ -1547,6 +1642,37 @@ def _layout_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "body_scroll_width": body_scroll_width,
         "body_scroll_height": metrics.get("bodyScrollHeight"),
         "horizontal_overflow_px": horizontal_overflow_px,
+    }
+
+
+def _browser_diagnostics_summary(report: BrowserDiagnosticsReport | None) -> dict[str, Any]:
+    """Build a compact browser diagnostics summary for review metadata."""
+    finding_counts = {"info": 0, "warning": 0, "error": 0}
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "report_path": "",
+            "finding_counts": finding_counts,
+            "attention_findings": [],
+        }
+    finding_counts.update(report.metrics.get("finding_counts", {}))
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "report_path": report.report_path or "",
+        "finding_counts": finding_counts,
+        "attention_findings": [
+            {
+                "finding_id": finding.finding_id,
+                "severity": finding.severity,
+                "category": finding.category,
+                "target": finding.target,
+                "summary": finding.summary,
+            }
+            for finding in report.findings
+            if finding.severity in {"warning", "error"}
+        ],
     }
 
 
@@ -1647,6 +1773,8 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _layout_view(state)
     if view_type == "preview":
         return _preview_view(state)
+    if view_type == "diagnostics":
+        return _diagnostics_view(state)
     if view_type == "quality":
         return _quality_view(state)
     if view_type == "events":
@@ -1688,6 +1816,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "component_inventory_reports": len(state.component_inventory_reports),
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
+                "browser_diagnostics_reports": len(state.browser_diagnostics_reports),
                 "qc_reports": len(state.qc_reports),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
@@ -1747,6 +1876,27 @@ def _preview_view(state: DesignProductionState) -> dict[str, Any]:
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "preview_reports": [_preview_report_payload(state, item) for item in state.preview_reports],
             "preview_report_path": f"{state.production_session.root_dir}/reports/preview_report.json",
+            "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
+        }
+    )
+    return view
+
+
+def _diagnostics_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "diagnostics")
+    view.update(
+        {
+            "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
+            "latest_browser_diagnostics": (
+                state.browser_diagnostics_reports[-1].model_dump(mode="json")
+                if state.browser_diagnostics_reports
+                else None
+            ),
+            "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
+            "browser_diagnostics_json_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.json",
+            "preview_reports": [_preview_report_payload(state, item) for item in state.preview_reports],
+            "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
         }
     )
     return view
@@ -1760,11 +1910,13 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
+            "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
             "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
+            "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
     )
@@ -1786,6 +1938,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
             "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
+            "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )

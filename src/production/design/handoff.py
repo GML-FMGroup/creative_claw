@@ -7,11 +7,16 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from src.production.design.browser_diagnostics import (
+    browser_diagnostics_json,
+    browser_diagnostics_markdown,
+)
 from src.production.design.component_inventory import (
     component_inventory_json,
     component_inventory_markdown,
 )
 from src.production.design.models import (
+    BrowserDiagnosticsReport,
     ComponentInventoryReport,
     DesignProductionState,
     DesignQcReport,
@@ -132,6 +137,7 @@ def _handoff_manifest(
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
         "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+        "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
@@ -146,8 +152,9 @@ def _handoff_manifest(
             "The core Design deliverable is the approved HTML artifact.",
             "Design token JSON and CSS are derived from DesignSystemSpec.",
             "Component inventory is derived from DesignProductionState and generated HTML.",
+            "Browser diagnostics are derived from preview and PDF export reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1g.",
+            "Figma and production-code handoff outputs are intentionally outside P1h.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -271,6 +278,18 @@ def _design_spec_markdown(
         for item in latest_inventory.items:
             selector = f" ({item.selector})" if item.selector else ""
             lines.append(f"  - [{item.category}] {item.name}{selector}: {item.source}")
+    lines.extend(["", "## Browser Diagnostics", ""])
+    if not state.browser_diagnostics_reports:
+        lines.append("- No browser diagnostics report was generated.")
+    else:
+        latest_diagnostics = state.browser_diagnostics_reports[-1]
+        lines.append(f"- Status: {latest_diagnostics.status}")
+        lines.append(f"- Summary: {latest_diagnostics.summary}")
+        lines.append("- Findings:")
+        if not latest_diagnostics.findings:
+            lines.append("  - None.")
+        for finding in latest_diagnostics.findings:
+            lines.append(f"  - [{finding.severity}] {finding.category}: {finding.summary}")
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -320,8 +339,9 @@ def _design_spec_markdown(
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- Component inventory is deterministic handoff guidance derived from state and HTML structure.",
+            "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1g.",
+            "- Figma and production-code handoff outputs are intentionally outside P1h.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -415,6 +435,10 @@ def _artifact_payload(
         return component_inventory_markdown(_latest_component_inventory_report(state)).encode("utf-8")
     if artifact.name == "component_inventory.json":
         return component_inventory_json(_latest_component_inventory_report(state)).encode("utf-8")
+    if artifact.name == "browser_diagnostics.md":
+        return browser_diagnostics_markdown(_latest_browser_diagnostics_report(state)).encode("utf-8")
+    if artifact.name == "browser_diagnostics.json":
+        return browser_diagnostics_json(_latest_browser_diagnostics_report(state)).encode("utf-8")
     return None
 
 
@@ -451,6 +475,10 @@ def _latest_design_system_audit_report(state: DesignProductionState) -> DesignSy
 
 def _latest_component_inventory_report(state: DesignProductionState) -> ComponentInventoryReport | None:
     return state.component_inventory_reports[-1] if state.component_inventory_reports else None
+
+
+def _latest_browser_diagnostics_report(state: DesignProductionState) -> BrowserDiagnosticsReport | None:
+    return state.browser_diagnostics_reports[-1] if state.browser_diagnostics_reports else None
 
 
 def _latest_validation_report(state: DesignProductionState) -> HtmlValidationReport | None:
