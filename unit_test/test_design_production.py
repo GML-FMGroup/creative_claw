@@ -5,11 +5,13 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.production.design.component_inventory import build_component_inventory
 from src.production.design.design_system_audit import audit_design_system
 from src.production.design.expert_runtime import DesignDirectionPlan, HtmlBuildOutput
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
     DesignBrief,
+    DesignProductionState,
     DesignQcFinding,
     DesignQcReport,
     DesignSystemSpec,
@@ -278,6 +280,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(resolve_workspace_path(html_paths[0]).exists())
         artifact_names = {artifact.name for artifact in result.artifacts}
         self.assertIn("design_system_audit.md", artifact_names)
+        self.assertIn("component_inventory.md", artifact_names)
+        self.assertIn("component_inventory.json", artifact_names)
         self.assertIn("design_spec.md", artifact_names)
         self.assertIn("handoff_manifest.json", artifact_names)
         self.assertIn("design_tokens.json", artifact_names)
@@ -291,6 +295,11 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["design_genre"], "landing_page")
         self.assertEqual(len(payload["html_artifacts"]), 1)
         self.assertEqual(payload["design_system_audit_reports"][0]["status"], "pass")
+        self.assertEqual(payload["component_inventory_reports"][0]["status"], "ready")
+        self.assertGreater(payload["component_inventory_reports"][0]["metrics"]["item_count"], 0)
+        rebuilt_inventory = build_component_inventory(DesignProductionState.model_validate(payload))
+        self.assertEqual(rebuilt_inventory.status, "ready")
+        self.assertTrue(any(item.source == "layout_plan" for item in rebuilt_inventory.items))
         design_system_view = asyncio.run(
             manager.view(
                 production_session_id=result.production_session_id,
@@ -308,6 +317,16 @@ class DesignProductionTests(unittest.TestCase):
             )
         )
         self.assertEqual(quality_view.view["design_system_audit_reports"][0]["status"], "pass")
+        self.assertEqual(quality_view.view["component_inventory_reports"][0]["status"], "ready")
+        components_view = asyncio.run(
+            manager.view(
+                production_session_id=result.production_session_id,
+                view_type="components",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(components_view.view["component_inventory_reports"][0]["status"], "ready")
+        self.assertTrue(components_view.view["component_inventory_report_path"].endswith("reports/component_inventory.md"))
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
         export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
@@ -325,6 +344,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(manifest["latest_html_path"], html_paths[0])
         self.assertEqual(manifest["quality_status"], "pass")
         self.assertEqual(manifest["design_system_audit_reports"][0]["status"], "pass")
+        self.assertEqual(manifest["component_inventory_reports"][0]["status"], "ready")
         self.assertTrue(any(item["name"] == "design_tokens.json" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_tokens.css" for item in manifest["design_token_artifacts"]))
         self.assertTrue(any(item["name"] == "design_handoff_bundle.zip" for item in manifest["handoff_artifacts"]))
@@ -337,6 +357,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("exports/design_tokens.json", bundle_names)
         self.assertIn("exports/design_tokens.css", bundle_names)
         self.assertIn("reports/design_system_audit.md", bundle_names)
+        self.assertIn("reports/component_inventory.md", bundle_names)
+        self.assertIn("reports/component_inventory.json", bundle_names)
         self.assertIn("reports/qc_report.md", bundle_names)
         self.assertIn("previews/index_desktop.png", bundle_names)
         self.assertIn("previews/index_mobile.png", bundle_names)
@@ -433,6 +455,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn(html_path, state["final_file_paths"])
         completed_names = {artifact.name for artifact in completed.artifacts}
         self.assertIn("design_system_audit.md", completed_names)
+        self.assertIn("component_inventory.md", completed_names)
+        self.assertIn("component_inventory.json", completed_names)
         self.assertIn("design_spec.md", completed_names)
         self.assertIn("handoff_manifest.json", completed_names)
         self.assertIn("design_tokens.json", completed_names)
@@ -440,6 +464,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_handoff_bundle.zip", completed_names)
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(completed_payload["design_system_audit_reports"][0]["status"], "warning")
+        self.assertEqual(completed_payload["component_inventory_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
 
     def test_manager_final_approval_can_export_pdf_from_approved_html(self) -> None:

@@ -57,12 +57,17 @@ Final approval now exports `exports/design_tokens.json` and `exports/design_toke
 
 Design production now runs a deterministic design-system audit whenever a Design system is prepared. The report checks token coverage, naming collisions, color values and contrast, typography roles, spacing/radius constraints, and component-token coverage. Audit output is non-blocking, persisted under `reports/design_system_audit.*`, exposed through Design system and quality views, and included in handoff exports.
 
+## P1g Component Inventory
+
+Design production now derives an implementation-facing component inventory from `LayoutPlan`, `DesignSystemSpec`, and the generated HTML artifact. The report lists layout sections, tokenized components, and detected HTML component hooks with selectors, source refs, token refs, and implementation notes. Inventory output is persisted under `reports/component_inventory.*`, exposed through `view_type="components"`, and included in handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.
+- `component_inventory.py`: deterministic component inventory extraction from state and generated HTML.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.

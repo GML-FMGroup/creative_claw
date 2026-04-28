@@ -7,7 +7,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from src.production.design.component_inventory import (
+    component_inventory_json,
+    component_inventory_markdown,
+)
 from src.production.design.models import (
+    ComponentInventoryReport,
     DesignProductionState,
     DesignQcReport,
     DesignSystemAuditReport,
@@ -126,6 +131,7 @@ def _handoff_manifest(
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
+        "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
@@ -139,8 +145,9 @@ def _handoff_manifest(
         "known_limits": [
             "The core Design deliverable is the approved HTML artifact.",
             "Design token JSON and CSS are derived from DesignSystemSpec.",
+            "Component inventory is derived from DesignProductionState and generated HTML.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1f.",
+            "Figma and production-code handoff outputs are intentionally outside P1g.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -251,6 +258,19 @@ def _design_spec_markdown(
             lines.append("  - None.")
         for finding in latest_audit.findings:
             lines.append(f"  - [{finding.severity}] {finding.category}: {finding.summary}")
+    lines.extend(["", "## Component Inventory", ""])
+    if not state.component_inventory_reports:
+        lines.append("- No component inventory was generated.")
+    else:
+        latest_inventory = state.component_inventory_reports[-1]
+        lines.append(f"- Status: {latest_inventory.status}")
+        lines.append(f"- Summary: {latest_inventory.summary}")
+        lines.append("- Items:")
+        if not latest_inventory.items:
+            lines.append("  - None.")
+        for item in latest_inventory.items:
+            selector = f" ({item.selector})" if item.selector else ""
+            lines.append(f"  - [{item.category}] {item.name}{selector}: {item.source}")
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -299,8 +319,9 @@ def _design_spec_markdown(
             "",
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
+            "- Component inventory is deterministic handoff guidance derived from state and HTML structure.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1f.",
+            "- Figma and production-code handoff outputs are intentionally outside P1g.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -390,6 +411,10 @@ def _artifact_payload(
         return quality_report_markdown(_latest_qc_report(state)).encode("utf-8")
     if artifact.name == "design_system_audit.md":
         return design_system_audit_markdown(_latest_design_system_audit_report(state)).encode("utf-8")
+    if artifact.name == "component_inventory.md":
+        return component_inventory_markdown(_latest_component_inventory_report(state)).encode("utf-8")
+    if artifact.name == "component_inventory.json":
+        return component_inventory_json(_latest_component_inventory_report(state)).encode("utf-8")
     return None
 
 
@@ -422,6 +447,10 @@ def _latest_qc_report(state: DesignProductionState) -> DesignQcReport | None:
 
 def _latest_design_system_audit_report(state: DesignProductionState) -> DesignSystemAuditReport | None:
     return state.design_system_audit_reports[-1] if state.design_system_audit_reports else None
+
+
+def _latest_component_inventory_report(state: DesignProductionState) -> ComponentInventoryReport | None:
+    return state.component_inventory_reports[-1] if state.component_inventory_reports else None
 
 
 def _latest_validation_report(state: DesignProductionState) -> HtmlValidationReport | None:
