@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.production.design.accessibility import build_accessibility_report
 from src.production.design.component_inventory import build_component_inventory
 from src.production.design.design_system_audit import audit_design_system
 from src.production.design.expert_runtime import DesignDirectionPlan, HtmlBuildOutput
@@ -17,6 +18,7 @@ from src.production.design.models import (
     DesignSystemSpec,
     DesignTokenColor,
     DesignTokenTypography,
+    HtmlArtifact,
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
@@ -30,6 +32,7 @@ from src.production.design.prompt_catalog import (
 )
 from src.production.design.tool import run_design_production
 from src.production.design.tools.html_validator import HtmlValidator
+from src.production.models import ProductionSession, utc_now_iso
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path, workspace_root
 
 
@@ -282,6 +285,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_system_audit.md", artifact_names)
         self.assertIn("component_inventory.md", artifact_names)
         self.assertIn("component_inventory.json", artifact_names)
+        self.assertIn("accessibility_report.md", artifact_names)
+        self.assertIn("accessibility_report.json", artifact_names)
         self.assertIn("browser_diagnostics.md", artifact_names)
         self.assertIn("browser_diagnostics.json", artifact_names)
         self.assertIn("artifact_lineage.md", artifact_names)
@@ -301,12 +306,18 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(payload["component_inventory_reports"][0]["status"], "ready")
         self.assertGreater(payload["component_inventory_reports"][0]["metrics"]["item_count"], 0)
+        self.assertEqual(payload["accessibility_reports"][0]["status"], "pass")
+        self.assertEqual(payload["accessibility_reports"][0]["metrics"]["h1_count"], 1)
         self.assertEqual(payload["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(payload["browser_diagnostics_reports"][0]["metrics"]["preview_valid_count"], 2)
         lineage = payload["artifact_lineage_reports"][0]
         self.assertEqual(lineage["status"], "ready")
         self.assertEqual(lineage["latest_artifact_id"], payload["html_artifacts"][0]["artifact_id"])
         self.assertEqual(lineage["metrics"]["artifact_count"], 1)
+        self.assertEqual(
+            lineage["items"][0]["report_refs"]["accessibility_report_ids"],
+            [payload["accessibility_reports"][0]["report_id"]],
+        )
         self.assertEqual(lineage["items"][0]["report_refs"]["preview_report_ids"], [item["report_id"] for item in payload["preview_reports"]])
         rebuilt_inventory = build_component_inventory(DesignProductionState.model_validate(payload))
         self.assertEqual(rebuilt_inventory.status, "ready")
@@ -329,6 +340,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(quality_view.view["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(quality_view.view["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(quality_view.view["accessibility_reports"][0]["status"], "pass")
         components_view = asyncio.run(
             manager.view(
                 production_session_id=result.production_session_id,
@@ -338,6 +350,15 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(components_view.view["component_inventory_reports"][0]["status"], "ready")
         self.assertTrue(components_view.view["component_inventory_report_path"].endswith("reports/component_inventory.md"))
+        accessibility_view = asyncio.run(
+            manager.view(
+                production_session_id=result.production_session_id,
+                view_type="accessibility",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(accessibility_view.view["latest_accessibility_report"]["status"], "pass")
+        self.assertTrue(accessibility_view.view["accessibility_report_path"].endswith("reports/accessibility_report.md"))
         diagnostics_view = asyncio.run(
             manager.view(
                 production_session_id=result.production_session_id,
@@ -374,6 +395,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(manifest["quality_status"], "pass")
         self.assertEqual(manifest["design_system_audit_reports"][0]["status"], "pass")
         self.assertEqual(manifest["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(manifest["accessibility_status"], "pass")
+        self.assertEqual(manifest["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(manifest["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(manifest["artifact_lineage_status"], "ready")
         self.assertEqual(manifest["artifact_lineage_reports"][0]["metrics"]["artifact_count"], 1)
@@ -391,6 +414,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/design_system_audit.md", bundle_names)
         self.assertIn("reports/component_inventory.md", bundle_names)
         self.assertIn("reports/component_inventory.json", bundle_names)
+        self.assertIn("reports/accessibility_report.md", bundle_names)
+        self.assertIn("reports/accessibility_report.json", bundle_names)
         self.assertIn("reports/browser_diagnostics.md", bundle_names)
         self.assertIn("reports/browser_diagnostics.json", bundle_names)
         self.assertIn("reports/artifact_lineage.md", bundle_names)
@@ -462,8 +487,12 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(review_metadata["delivery"]["html_validation_status"], "valid")
         self.assertEqual(review_metadata["delivery"]["qc_status"], "pass")
         self.assertTrue(review_metadata["delivery"]["qc_report_path"].endswith("reports/qc_report.md"))
+        self.assertEqual(review_metadata["delivery"]["accessibility_status"], "pass")
+        self.assertTrue(review_metadata["delivery"]["accessibility_report_path"].endswith("reports/accessibility_report.md"))
         self.assertEqual(review_metadata["preview"]["valid_count"], 2)
         self.assertEqual(review_metadata["preview"]["reports"][0]["layout"]["horizontal_overflow_px"], 0)
+        self.assertEqual(review_metadata["accessibility"]["status"], "pass")
+        self.assertEqual(review_metadata["accessibility"]["finding_counts"]["warning"], 0)
         self.assertEqual(review_metadata["diagnostics"]["status"], "ready")
         self.assertEqual(review_metadata["diagnostics"]["finding_counts"]["warning"], 0)
         self.assertEqual(review_metadata["lineage"]["status"], "ready")
@@ -482,6 +511,7 @@ class DesignProductionTests(unittest.TestCase):
         )
         self.assertEqual(overview_view.view["active_review"]["metadata"]["delivery"]["latest_html_path"], html_path)
         self.assertEqual(overview_view.view["active_review"]["metadata"]["quality"]["status"], "pass")
+        self.assertEqual(overview_view.view["counts"]["accessibility_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["browser_diagnostics_reports"], 1)
         self.assertEqual(overview_view.view["counts"]["artifact_lineage_reports"], 1)
 
@@ -500,6 +530,8 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("design_system_audit.md", completed_names)
         self.assertIn("component_inventory.md", completed_names)
         self.assertIn("component_inventory.json", completed_names)
+        self.assertIn("accessibility_report.md", completed_names)
+        self.assertIn("accessibility_report.json", completed_names)
         self.assertIn("design_spec.md", completed_names)
         self.assertIn("handoff_manifest.json", completed_names)
         self.assertIn("design_tokens.json", completed_names)
@@ -510,6 +542,7 @@ class DesignProductionTests(unittest.TestCase):
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(completed_payload["design_system_audit_reports"][0]["status"], "warning")
         self.assertEqual(completed_payload["component_inventory_reports"][0]["status"], "ready")
+        self.assertEqual(completed_payload["accessibility_reports"][0]["status"], "pass")
         self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["artifact_lineage_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
@@ -1038,6 +1071,59 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(any("invalid hex" in summary for summary in summaries))
         self.assertTrue(any("Duplicate color token name" in summary for summary in summaries))
         self.assertEqual(report.metrics["finding_counts"]["error"], 2)
+
+    def test_accessibility_report_flags_static_html_issues(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_accessibility" / "production" / "design_accessibility"
+        artifacts_dir = session_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        html_path = artifacts_dir / "index.html"
+        html_path.write_text(
+            """<!doctype html>
+<html>
+<head></head>
+<body>
+  <section><h2>Skipped heading</h2></section>
+  <img src="product.png">
+  <button><span aria-hidden="true"></span></button>
+  <form><input id="email" type="email" placeholder="Email"></form>
+  <div onclick="submitForm()">Submit</div>
+</body>
+</html>
+""",
+            encoding="utf-8",
+        )
+        artifact = HtmlArtifact(
+            page_id="page_accessibility",
+            path=workspace_relative_path(html_path),
+            builder="placeholder",
+        )
+        state = DesignProductionState(
+            production_session=ProductionSession(
+                production_session_id="design_accessibility",
+                capability="design",
+                adk_session_id="session_design_accessibility",
+                turn_index=1,
+                root_dir=workspace_relative_path(session_root),
+                status="running",
+                created_at=utc_now_iso(),
+                updated_at=utc_now_iso(),
+            ),
+            status="running",
+            stage="accessibility_test",
+            html_artifacts=[artifact],
+        )
+
+        report = build_accessibility_report(state, artifact=artifact)
+
+        self.assertEqual(report.status, "fail")
+        summaries = [finding.summary for finding in report.findings]
+        self.assertTrue(any("missing a lang" in summary for summary in summaries))
+        self.assertTrue(any("missing an alt" in summary for summary in summaries))
+        self.assertTrue(any("no accessible name" in summary for summary in summaries))
+        self.assertTrue(any("no durable accessible label" in summary for summary in summaries))
+        self.assertTrue(any("onclick handler" in summary for summary in summaries))
+        self.assertEqual(report.metrics["image_missing_alt_count"], 1)
+        self.assertEqual(report.metrics["unlabeled_form_control_count"], 1)
 
     def test_design_prompt_catalog_renders_packaged_templates(self) -> None:
         self.assertIn("html_builder_expert", available_prompt_templates())

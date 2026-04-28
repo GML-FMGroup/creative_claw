@@ -13,6 +13,8 @@ _DERIVED_HANDOFF_NAMES = {
     "design_system_audit.md",
     "component_inventory.md",
     "component_inventory.json",
+    "accessibility_report.md",
+    "accessibility_report.json",
     "browser_diagnostics.md",
     "browser_diagnostics.json",
     "artifact_lineage.md",

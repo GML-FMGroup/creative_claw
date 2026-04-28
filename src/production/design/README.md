@@ -67,13 +67,18 @@ Design production now derives deterministic browser diagnostics from preview and
 
 ## P1i Artifact Lineage
 
-Design production now derives deterministic HTML artifact lineage from `DesignProductionState`. The report links each HTML artifact to version, status, builder mode, revision id, source refs, validation/component/preview/diagnostics/QC/PDF reports, preview screenshots, PDF exports, and stale/replaced relationships. Lineage is persisted under `reports/artifact_lineage.*`, exposed through `view_type="lineage"`, included in preview review metadata, and packaged in final handoff exports.
+Design production now derives deterministic HTML artifact lineage from `DesignProductionState`. The report links each HTML artifact to version, status, builder mode, revision id, source refs, validation/component/accessibility/preview/diagnostics/QC/PDF reports, preview screenshots, PDF exports, and stale/replaced relationships. Lineage is persisted under `reports/artifact_lineage.*`, exposed through `view_type="lineage"`, included in preview review metadata, and packaged in final handoff exports.
+
+## P1j Accessibility Lint
+
+Design production now derives a deterministic accessibility report from each valid generated HTML artifact. The report checks document language/title/viewport metadata, semantic landmarks, heading outline, image alt text, accessible names for links and buttons, form labels, and non-semantic click handlers. Accessibility output is persisted under `reports/accessibility_report.*`, exposed through `view_type="accessibility"`, included in preview review metadata, and packaged in final handoff exports.
 
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
+- `accessibility.py`: deterministic static HTML accessibility lint and report rendering.
 - `artifact_lineage.py`: deterministic HTML artifact lineage reports linking revisions, artifacts, and derived report ids.
 - `browser_diagnostics.py`: deterministic diagnostics derived from browser preview and PDF export reports.
 - `design_system_audit.py`: deterministic Design system audit rules and report rendering.

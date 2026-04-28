@@ -11,6 +11,10 @@ from src.production.design.artifact_lineage import (
     artifact_lineage_json,
     artifact_lineage_markdown,
 )
+from src.production.design.accessibility import (
+    accessibility_report_json,
+    accessibility_report_markdown,
+)
 from src.production.design.browser_diagnostics import (
     browser_diagnostics_json,
     browser_diagnostics_markdown,
@@ -20,6 +24,7 @@ from src.production.design.component_inventory import (
     component_inventory_markdown,
 )
 from src.production.design.models import (
+    AccessibilityReport,
     ArtifactLineageReport,
     BrowserDiagnosticsReport,
     ComponentInventoryReport,
@@ -122,6 +127,7 @@ def _handoff_manifest(
     latest_html = latest_html_artifact(state)
     latest_qc = _latest_qc_report(state)
     latest_validation = _latest_validation_report(state)
+    latest_accessibility = _latest_accessibility_report(state)
     latest_lineage = _latest_artifact_lineage_report(state)
     latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
@@ -139,11 +145,13 @@ def _handoff_manifest(
         "latest_source_ref_details": source_ref_details(state, latest_source_refs),
         "quality_status": latest_qc.status if latest_qc is not None else "",
         "validation_status": latest_validation.status if latest_validation is not None else "",
+        "accessibility_status": latest_accessibility.status if latest_accessibility is not None else "",
         "artifact_lineage_status": latest_lineage.status if latest_lineage is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
         "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+        "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
         "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
         "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
@@ -160,10 +168,11 @@ def _handoff_manifest(
             "The core Design deliverable is the approved HTML artifact.",
             "Design token JSON and CSS are derived from DesignSystemSpec.",
             "Component inventory is derived from DesignProductionState and generated HTML.",
+            "Accessibility reports are deterministic static checks over generated HTML.",
             "Browser diagnostics are derived from preview and PDF export reports.",
             "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1i.",
+            "Figma and production-code handoff outputs are intentionally outside P1j.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -287,6 +296,18 @@ def _design_spec_markdown(
         for item in latest_inventory.items:
             selector = f" ({item.selector})" if item.selector else ""
             lines.append(f"  - [{item.category}] {item.name}{selector}: {item.source}")
+    lines.extend(["", "## Accessibility", ""])
+    if not state.accessibility_reports:
+        lines.append("- No accessibility report was generated.")
+    else:
+        latest_accessibility = state.accessibility_reports[-1]
+        lines.append(f"- Status: {latest_accessibility.status}")
+        lines.append(f"- Summary: {latest_accessibility.summary}")
+        lines.append("- Findings:")
+        if not latest_accessibility.findings:
+            lines.append("  - None.")
+        for finding in latest_accessibility.findings:
+            lines.append(f"  - [{finding.severity}] {finding.category}: {finding.summary}")
     lines.extend(["", "## Browser Diagnostics", ""])
     if not state.browser_diagnostics_reports:
         lines.append("- No browser diagnostics report was generated.")
@@ -362,10 +383,11 @@ def _design_spec_markdown(
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
             "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- Component inventory is deterministic handoff guidance derived from state and HTML structure.",
+            "- Accessibility lint is deterministic and derived from static HTML semantics.",
             "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
             "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1i.",
+            "- Figma and production-code handoff outputs are intentionally outside P1j.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -459,6 +481,10 @@ def _artifact_payload(
         return component_inventory_markdown(_latest_component_inventory_report(state)).encode("utf-8")
     if artifact.name == "component_inventory.json":
         return component_inventory_json(_latest_component_inventory_report(state)).encode("utf-8")
+    if artifact.name == "accessibility_report.md":
+        return accessibility_report_markdown(_latest_accessibility_report(state)).encode("utf-8")
+    if artifact.name == "accessibility_report.json":
+        return accessibility_report_json(_latest_accessibility_report(state)).encode("utf-8")
     if artifact.name == "browser_diagnostics.md":
         return browser_diagnostics_markdown(_latest_browser_diagnostics_report(state)).encode("utf-8")
     if artifact.name == "browser_diagnostics.json":
@@ -503,6 +529,10 @@ def _latest_design_system_audit_report(state: DesignProductionState) -> DesignSy
 
 def _latest_component_inventory_report(state: DesignProductionState) -> ComponentInventoryReport | None:
     return state.component_inventory_reports[-1] if state.component_inventory_reports else None
+
+
+def _latest_accessibility_report(state: DesignProductionState) -> AccessibilityReport | None:
+    return state.accessibility_reports[-1] if state.accessibility_reports else None
 
 
 def _latest_browser_diagnostics_report(state: DesignProductionState) -> BrowserDiagnosticsReport | None:
