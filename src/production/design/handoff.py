@@ -21,6 +21,7 @@ from src.production.design.source_refs import (
     source_refs_text,
     workspace_file_source_refs,
 )
+from src.production.design.tokens import write_design_token_exports
 from src.production.models import WorkspaceFileRef, utc_now_iso
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
@@ -41,6 +42,7 @@ def write_handoff_exports(
     spec_path = export_dir / "design_spec.md"
     manifest_path = export_dir / "handoff_manifest.json"
     bundle_path = export_dir / _BUNDLE_NAME
+    token_refs = write_design_token_exports(state=state, export_dir=export_dir)
 
     spec_ref = WorkspaceFileRef(
         name="design_spec.md",
@@ -60,19 +62,25 @@ def write_handoff_exports(
         description="Portable ZIP bundle containing Design handoff deliverables.",
         source=state.production_session.capability,
     )
-    handoff_refs = [spec_ref, manifest_ref, bundle_ref]
+    handoff_refs = [spec_ref, manifest_ref, *token_refs, bundle_ref]
 
     spec_path.write_text(
         _design_spec_markdown(
             state,
             core_artifacts=core_artifacts,
+            token_artifacts=token_refs,
             handoff_artifacts=handoff_refs,
         ),
         encoding="utf-8",
     )
     manifest_path.write_text(
         json.dumps(
-            _handoff_manifest(state, core_artifacts=core_artifacts, handoff_artifacts=handoff_refs),
+            _handoff_manifest(
+                state,
+                core_artifacts=core_artifacts,
+                token_artifacts=token_refs,
+                handoff_artifacts=handoff_refs,
+            ),
             ensure_ascii=False,
             indent=2,
         ),
@@ -82,7 +90,7 @@ def write_handoff_exports(
         state=state,
         bundle_path=bundle_path,
         session_root=session_root,
-        artifacts=core_artifacts + [spec_ref, manifest_ref],
+        artifacts=core_artifacts + [spec_ref, manifest_ref, *token_refs],
     )
     return handoff_refs
 
@@ -91,6 +99,7 @@ def _handoff_manifest(
     state: DesignProductionState,
     *,
     core_artifacts: list[WorkspaceFileRef],
+    token_artifacts: list[WorkspaceFileRef],
     handoff_artifacts: list[WorkspaceFileRef],
 ) -> dict[str, Any]:
     latest_html = latest_html_artifact(state)
@@ -122,9 +131,11 @@ def _handoff_manifest(
         "quality_reports": [item.model_dump(mode="json") for item in state.qc_reports],
         "revision_history": state.revision_history,
         "deliverables": [_workspace_file_manifest_item(state, item) for item in core_artifacts],
+        "design_token_artifacts": [_workspace_file_manifest_item(state, item) for item in token_artifacts],
         "handoff_artifacts": [_workspace_file_manifest_item(state, item) for item in handoff_artifacts],
         "known_limits": [
             "The core Design deliverable is the approved HTML artifact.",
+            "Design token JSON and CSS are derived from DesignSystemSpec.",
             "PDF is an optional export derived from the approved HTML artifact.",
             "Figma and production-code handoff outputs are intentionally outside P1d.",
             "Screenshots are included only when browser preview rendering is available.",
@@ -159,6 +170,7 @@ def _design_spec_markdown(
     state: DesignProductionState,
     *,
     core_artifacts: list[WorkspaceFileRef],
+    token_artifacts: list[WorkspaceFileRef],
     handoff_artifacts: list[WorkspaceFileRef],
 ) -> str:
     brief = state.brief
@@ -218,6 +230,12 @@ def _design_spec_markdown(
             )
             for item in state.design_system.typography
         )
+    lines.extend(["", "## Design Token Files", ""])
+    if not token_artifacts:
+        lines.append("- No design token files were exported.")
+    else:
+        for artifact in token_artifacts:
+            lines.append(f"- {artifact.name}: {artifact.path} - {artifact.description}")
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -265,6 +283,7 @@ def _design_spec_markdown(
             "## Known Limits",
             "",
             "- The approved HTML artifact is the durable source of truth for this Design production output.",
+            "- Design token JSON and CSS are deterministic handoff files derived from DesignSystemSpec.",
             "- PDF export is optional and derived from the approved HTML artifact.",
             "- Figma and production-code handoff outputs are intentionally outside P1d.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",

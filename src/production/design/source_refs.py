@@ -12,6 +12,8 @@ _DERIVED_HANDOFF_NAMES = {
     "qc_report.md",
     "design_spec.md",
     "handoff_manifest.json",
+    "design_tokens.json",
+    "design_tokens.css",
     "design_handoff_bundle.zip",
 }
 
