@@ -352,6 +352,13 @@ class PPTProductionTests(unittest.TestCase):
                     adk_state=state,
                 )
             )
+            previews_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="previews",
+                    adk_state=state,
+                )
+            )
             manifest_view = asyncio.run(
                 manager.view(
                     production_session_id=started.production_session_id,
@@ -366,6 +373,8 @@ class PPTProductionTests(unittest.TestCase):
         source_input_ids = payload["document_summary"]["source_input_ids"]
         deck_slides_with_refs = [slide for slide in payload["deck_spec"]["slides"] if slide["source_refs"]]
         review_items_with_refs = [item for item in deck_spec_review.review_payload.items if item["source_refs"]]
+        preview_items_with_refs = [item for item in preview_review.review_payload.items if item["source_refs"]]
+        preview_view_items_with_refs = [item for item in previews_view.view["previews"] if item["source_refs"]]
         manifest_slides_with_refs = [slide for slide in manifest_view.view["manifest"]["slides"] if slide["source_refs"]]
         deck_spec_md = workspace_root() / f"{payload['production_session']['root_dir']}/deck_spec.md"
 
@@ -375,6 +384,10 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(quality_checks["source_fact_coverage"]["status"], "pass")
         self.assertEqual(deck_slides_with_refs[0]["source_refs"], source_input_ids)
         self.assertEqual(review_items_with_refs[0]["source_refs"], source_input_ids)
+        self.assertEqual(preview_items_with_refs[0]["source_refs"], source_input_ids)
+        self.assertEqual(preview_view_items_with_refs[0]["source_refs"], source_input_ids)
+        self.assertIn("title", preview_items_with_refs[0])
+        self.assertIn("deck_slide_status", preview_view_items_with_refs[0])
         self.assertEqual(manifest_slides_with_refs[0]["source_refs"], source_input_ids)
         self.assertIn(f"Source refs: {source_input_ids[0]}", deck_spec_md.read_text(encoding="utf-8"))
 
@@ -780,6 +793,8 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(regenerated.stage, "page_preview_review")
         self.assertEqual(regenerated.review_payload.review_type, "ppt_page_preview_review")
         self.assertEqual([item["slide_id"] for item in regenerated.review_payload.items], [target_slide_id])
+        self.assertEqual(regenerated.review_payload.items[0]["source_refs"], [])
+        self.assertIn("deck_slide_status", regenerated.review_payload.items[0])
         self.assertEqual(previews[target_slide_id]["status"], "generated")
         self.assertEqual(previews[untouched_slide_id]["status"], "generated")
         self.assertTrue((workspace_root() / previews[target_slide_id]["preview_path"]).is_file())
