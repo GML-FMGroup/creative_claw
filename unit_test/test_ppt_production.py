@@ -580,6 +580,119 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
         self.assertFalse(any("/segments/" in path for path in state["final_file_paths"]))
 
+    def test_p1_acceptance_source_document_flow_completes_with_quality_context(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            source = root / "acceptance_business.md"
+            source.write_text(
+                "Revenue grew 20% in Q1. Enterprise retention improved by 6 points. "
+                "Expansion pipeline reached 4M for the next quarter.",
+                encoding="utf-8",
+            )
+            source_ref = workspace_relative_path(source)
+
+            state = _adk_state("session_ppt_p1_acceptance_source_doc")
+            manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+
+            started = asyncio.run(
+                manager.start(
+                    user_prompt="做一份 3 页的 Q1 业务汇报，给高管看，突出收入、留存和 pipeline。",
+                    input_files=[source_ref],
+                    placeholder_assets=False,
+                    render_settings={"target_pages": 3, "style_preset": "business_executive"},
+                    adk_state=state,
+                )
+            )
+            started_payload = _load_state_payload(started)
+            source_input_ids = started_payload["document_summary"]["source_input_ids"]
+
+            self.assertEqual(started.stage, "outline_review")
+            self.assertEqual(started_payload["document_summary"]["status"], "ready")
+            self.assertEqual(started_payload["document_summary"]["document_count"], 1)
+            self.assertTrue(source_input_ids)
+            self.assertTrue(
+                any(
+                    "Source fact:" in bullet
+                    for item in started.review_payload.items
+                    for bullet in item["bullet_points"]
+                )
+            )
+
+            deck_spec_review = asyncio.run(
+                manager.resume(
+                    production_session_id=started.production_session_id,
+                    user_response={"decision": "approve"},
+                    adk_state=state,
+                )
+            )
+            deck_items_with_refs = [item for item in deck_spec_review.review_payload.items if item["source_refs"]]
+
+            self.assertEqual(deck_spec_review.stage, "deck_spec_review")
+            self.assertTrue(deck_items_with_refs)
+            self.assertEqual(deck_items_with_refs[0]["source_refs"], source_input_ids)
+            self.assertEqual(deck_items_with_refs[0]["source_ref_details"][0]["name"], "acceptance_business.md")
+
+            preview_review = asyncio.run(
+                manager.resume(
+                    production_session_id=started.production_session_id,
+                    user_response={"decision": "approve"},
+                    adk_state=state,
+                )
+            )
+            preview_payload = _load_state_payload(preview_review)
+            quality_checks = {check["check_id"]: check for check in preview_payload["quality_report"]["checks"]}
+            metadata = preview_review.review_payload.metadata
+            preview_items_with_refs = [item for item in preview_review.review_payload.items if item["source_refs"]]
+            segment_paths = [item["segment_path"] for item in preview_review.review_payload.items]
+
+            self.assertEqual(preview_review.stage, "final_preview_review")
+            self.assertEqual(metadata["delivery"]["quality_status"], "pass")
+            self.assertEqual(metadata["quality"]["status"], "pass")
+            self.assertEqual(metadata["quality"]["check_counts"]["warning"], 0)
+            self.assertEqual(metadata["quality"]["check_counts"]["fail"], 0)
+            self.assertEqual(metadata["quality"]["attention_checks"], [])
+            self.assertTrue(metadata["delivery"]["final_pptx_path"].endswith("final.pptx"))
+            self.assertEqual(len(segment_paths), 3)
+            self.assertTrue(all((workspace_root() / path).is_file() for path in segment_paths))
+            self.assertTrue(preview_items_with_refs)
+            self.assertEqual(preview_items_with_refs[0]["source_ref_details"][0]["path"], source_ref)
+            self.assertEqual(quality_checks["source_fact_coverage"]["status"], "pass")
+            self.assertGreaterEqual(quality_checks["source_fact_coverage"]["details"]["matched_fact_count"], 1)
+
+            manifest_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="manifest",
+                    adk_state=state,
+                )
+            )
+            manifest = manifest_view.view["manifest"]
+            manifest_slides_with_refs = [slide for slide in manifest["slides"] if slide["source_refs"]]
+
+            self.assertEqual(manifest["delivery"]["final_pptx_path"], metadata["delivery"]["final_pptx_path"])
+            self.assertEqual(manifest["delivery"]["quality_status"], metadata["delivery"]["quality_status"])
+            self.assertEqual(manifest["delivery"]["segment_count"], 3)
+            self.assertTrue(manifest_slides_with_refs)
+            self.assertEqual(manifest_slides_with_refs[0]["source_ref_details"][0]["name"], "acceptance_business.md")
+
+            completed = asyncio.run(
+                manager.resume(
+                    production_session_id=started.production_session_id,
+                    user_response={"decision": "approve"},
+                    adk_state=state,
+                )
+            )
+            completed_payload = _load_state_payload(completed)
+
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed_payload["stage"], "completed")
+        self.assertEqual(state["active_production_status"], "completed")
+        self.assertEqual(state["active_production_sessions"]["ppt"]["status"], "completed")
+        self.assertTrue(any(path.endswith("final.pptx") for path in state["final_file_paths"]))
+        self.assertTrue(any(path.endswith("quality_report.md") for path in state["final_file_paths"]))
+        self.assertTrue(any(path.endswith("render_manifest.md") for path in state["final_file_paths"]))
+        self.assertFalse(any("/segments/" in path for path in state["final_file_paths"]))
+
     def test_manager_can_pause_at_brief_review_before_outline(self) -> None:
         state = _adk_state("session_ppt_brief_review")
         manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
