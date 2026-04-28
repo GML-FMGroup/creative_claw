@@ -21,7 +21,7 @@ from src.production.ppt.models import (
     SlidePreview,
 )
 from src.production.ppt.prompt_catalog import PPTPromptCatalogError, available_prompt_templates, render_prompt_template
-from src.production.ppt.quality import build_quality_report
+from src.production.ppt.quality import build_quality_report, quality_report_markdown
 from src.production.ppt.template_analyzer import TemplateAnalyzerService
 from src.production.ppt.tool import run_ppt_production
 from src.runtime.workspace import workspace_relative_path, workspace_root
@@ -401,6 +401,19 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(checks["source_fact_coverage"].status, "warning")
         self.assertEqual(checks["source_fact_coverage"].details["matched_fact_count"], 0)
         self.assertEqual(checks["source_fact_coverage"].details["coverage_ratio"], 0)
+
+        markdown = quality_report_markdown(report)
+        self.assertIn("### [WARNING] source_fact_coverage", markdown)
+        self.assertIn("- Category: content", markdown)
+        self.assertIn("- matched_fact_count: 0", markdown)
+        self.assertIn("- coverage_ratio: 0.0", markdown)
+        self.assertIn("- unmatched_facts:", markdown)
+        self.assertIn("Revenue grew 20% in Q1", markdown)
+
+    def test_quality_report_markdown_handles_missing_report(self) -> None:
+        markdown = quality_report_markdown(None)
+
+        self.assertIn("No quality report has been generated yet.", markdown)
 
     def test_manager_native_flow_deck_spec_preview_completion(self) -> None:
         state = _adk_state("session_ppt_manager_flow")

@@ -52,13 +52,73 @@ def quality_report_markdown(report: PPTQualityReport | None) -> str:
     else:
         lines.append("- No metrics available.")
     lines.extend(["", "## Checks", ""])
-    lines.extend(f"- [{check.status}] {check.check_id}: {check.summary}" for check in report.checks)
+    if report.checks:
+        for check in report.checks:
+            lines.extend(_check_markdown_lines(check))
+    else:
+        lines.append("- No checks available.")
     lines.extend(["", "## Recommendations", ""])
     if report.recommendations:
         lines.extend(f"- {item}" for item in report.recommendations)
     else:
         lines.append("- No immediate quality actions found.")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _check_markdown_lines(check: PPTQualityCheck) -> list[str]:
+    lines = [
+        f"### [{check.status.upper()}] {check.check_id}",
+        "",
+        f"- Category: {check.category}",
+        f"- Summary: {check.summary}",
+    ]
+    detail_lines = _detail_markdown_lines(check.details)
+    if detail_lines:
+        lines.extend(["- Details:", *detail_lines])
+    else:
+        lines.append("- Details: none")
+    lines.append("")
+    return lines
+
+
+def _detail_markdown_lines(details: dict[str, object]) -> list[str]:
+    lines: list[str] = []
+    for key, value in details.items():
+        lines.extend(_detail_value_lines(str(key), value, indent=2))
+    return lines
+
+
+def _detail_value_lines(label: str, value: object, *, indent: int) -> list[str]:
+    prefix = " " * indent
+    if isinstance(value, dict):
+        if not value:
+            return [f"{prefix}- {label}: {{}}"]
+        lines = [f"{prefix}- {label}:"]
+        for nested_key, nested_value in value.items():
+            lines.extend(_detail_value_lines(str(nested_key), nested_value, indent=indent + 2))
+        return lines
+    if isinstance(value, list):
+        if not value:
+            return [f"{prefix}- {label}: []"]
+        lines = [f"{prefix}- {label}:"]
+        item_prefix = " " * (indent + 2)
+        for item in value:
+            if isinstance(item, dict):
+                lines.append(f"{item_prefix}-")
+                for nested_key, nested_value in item.items():
+                    lines.extend(_detail_value_lines(str(nested_key), nested_value, indent=indent + 4))
+            else:
+                lines.append(f"{item_prefix}- {_format_detail_scalar(item)}")
+        return lines
+    return [f"{prefix}- {label}: {_format_detail_scalar(value)}"]
+
+
+def _format_detail_scalar(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def _final_pptx_exists_check(state: PPTProductionState) -> PPTQualityCheck:
