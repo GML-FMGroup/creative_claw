@@ -88,6 +88,7 @@ class ReviewPayload(BaseModel):
     summary: str = ""
     items: list[dict[str, Any]] = Field(default_factory=list)
     options: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProductionBreakpoint(BaseModel):

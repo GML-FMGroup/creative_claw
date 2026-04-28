@@ -1769,6 +1769,7 @@ def _final_preview_review_payload(state: PPTProductionState) -> ReviewPayload:
             {"decision": "revise", "label": "Revise deck", "requires_notes": True},
             {"decision": "cancel", "label": "Cancel production"},
         ],
+        metadata=_final_preview_review_metadata(state),
     )
 
 
@@ -1810,6 +1811,61 @@ def _preview_payload_items(state: PPTProductionState, slide_ids: set[str] | None
         )
         items.append(item)
     return items
+
+
+def _final_preview_review_metadata(state: PPTProductionState) -> dict[str, Any]:
+    """Return compact delivery and quality context for final preview approval."""
+    quality_report_path = (
+        state.quality_report.report_path
+        if state.quality_report is not None and state.quality_report.report_path
+        else f"{state.production_session.root_dir}/quality_report.json"
+    )
+    return {
+        "delivery": {
+            "final_pptx_path": state.final_artifact.pptx_path if state.final_artifact is not None else "",
+            "preview_count": len(state.slide_previews),
+            "segment_count": len([preview for preview in state.slide_previews if preview.segment_path]),
+            "quality_report_path": quality_report_path if state.quality_report is not None else "",
+            "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md" if state.quality_report is not None else "",
+            "quality_status": state.quality_report.status if state.quality_report is not None else "",
+        },
+        "quality": _quality_review_summary(state),
+        "warnings": list(state.warnings),
+    }
+
+
+def _quality_review_summary(state: PPTProductionState) -> dict[str, Any]:
+    """Build a concise quality summary for review payload metadata."""
+    report = state.quality_report
+    check_counts = {"pass": 0, "warning": 0, "fail": 0, "not_applicable": 0}
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "check_counts": check_counts,
+            "attention_checks": [],
+            "recommendations": [],
+        }
+
+    for check in report.checks:
+        check_counts[check.status] = check_counts.get(check.status, 0) + 1
+    attention_checks = [
+        {
+            "check_id": check.check_id,
+            "status": check.status,
+            "category": check.category,
+            "summary": check.summary,
+        }
+        for check in report.checks
+        if check.status in {"warning", "fail"}
+    ]
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "check_counts": check_counts,
+        "attention_checks": attention_checks,
+        "recommendations": report.recommendations[:3],
+    }
 
 
 def _source_ref_details(state: PPTProductionState, source_refs: list[str]) -> list[dict[str, str]]:

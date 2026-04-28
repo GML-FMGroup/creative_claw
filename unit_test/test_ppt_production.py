@@ -520,6 +520,15 @@ class PPTProductionTests(unittest.TestCase):
             with zipfile.ZipFile(resolved_segment) as package:
                 slide_xml = [name for name in package.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
             self.assertEqual(len(slide_xml), 1)
+        review_metadata = preview_review.review_payload.metadata
+        self.assertEqual(review_metadata["delivery"]["final_pptx_path"], final_artifact.path)
+        self.assertEqual(review_metadata["delivery"]["preview_count"], 3)
+        self.assertEqual(review_metadata["delivery"]["segment_count"], 3)
+        self.assertEqual(review_metadata["delivery"]["quality_status"], "pass")
+        self.assertTrue(review_metadata["delivery"]["quality_report_path"].endswith("quality_report.json"))
+        self.assertEqual(review_metadata["quality"]["status"], "pass")
+        self.assertEqual(review_metadata["quality"]["check_counts"]["not_applicable"], 1)
+        self.assertEqual(review_metadata["quality"]["attention_checks"], [])
 
         manifest_view = asyncio.run(
             manager.view(
@@ -548,6 +557,14 @@ class PPTProductionTests(unittest.TestCase):
         )
         quality_checks = {check["check_id"]: check for check in quality_view.view["quality_report"]["checks"]}
         self.assertEqual(quality_checks["source_fact_coverage"]["status"], "not_applicable")
+        overview_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="overview",
+                adk_state=state,
+            )
+        )
+        self.assertEqual(overview_view.view["active_review"]["metadata"]["quality"]["status"], "pass")
 
         completed = asyncio.run(
             manager.resume(
