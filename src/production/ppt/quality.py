@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,7 @@ def build_quality_report(state: PPTProductionState, *, report_path: str | None =
         _preview_check(state),
         _input_warning_check(state),
         _content_density_check(state),
+        _source_fact_coverage_check(state),
     ]
     status = _aggregate_status(checks)
     recommendations = _recommendations(checks)
@@ -135,6 +137,100 @@ def _content_density_check(state: PPTProductionState) -> PPTQualityCheck:
         "Some slides may be too dense for presentation use." if dense_slides else "Slide text density is within P0 limits.",
         {"dense_slides": dense_slides},
     )
+
+
+def _source_fact_coverage_check(state: PPTProductionState) -> PPTQualityCheck:
+    """Check whether extracted source-document facts are represented in the deck."""
+    document_summary = state.document_summary
+    if document_summary is None or document_summary.status != "ready":
+        return _check(
+            "source_fact_coverage",
+            "content",
+            "not_applicable",
+            "No ready source-document facts are available for coverage checking.",
+        )
+    facts = [fact.strip() for fact in document_summary.salient_facts if fact.strip()]
+    if not facts:
+        return _check(
+            "source_fact_coverage",
+            "content",
+            "not_applicable",
+            "No salient source-document facts are available for coverage checking.",
+        )
+
+    deck_text = _combined_deck_text(state)
+    matched_facts = [fact for fact in facts if _fact_matches_text(fact, deck_text)]
+    matched_count = len(matched_facts)
+    coverage_ratio = round(matched_count / len(facts), 3)
+    details = {
+        "fact_count": len(facts),
+        "matched_fact_count": matched_count,
+        "coverage_ratio": coverage_ratio,
+        "unmatched_facts": [fact for fact in facts if fact not in matched_facts][:3],
+    }
+    if matched_count:
+        return _check(
+            "source_fact_coverage",
+            "content",
+            "pass",
+            "At least one extracted source-document fact is represented in the deck.",
+            details,
+        )
+    return _check(
+        "source_fact_coverage",
+        "content",
+        "warning",
+        "Extracted source-document facts were not found in the generated deck content.",
+        details,
+    )
+
+
+def _combined_deck_text(state: PPTProductionState) -> str:
+    """Return the reviewable outline/deck text used for source fact coverage."""
+    parts: list[str] = []
+    if state.outline is not None:
+        parts.append(state.outline.title)
+        for entry in state.outline.entries:
+            parts.extend(
+                [
+                    entry.title,
+                    entry.purpose,
+                    entry.speaker_notes,
+                    *entry.bullet_points,
+                ]
+            )
+    if state.deck_spec is not None:
+        parts.append(state.deck_spec.title)
+        for slide in state.deck_spec.slides:
+            parts.extend(
+                [
+                    slide.title,
+                    slide.visual_notes,
+                    slide.speaker_notes,
+                    *slide.bullets,
+                ]
+            )
+    return "\n".join(part for part in parts if part)
+
+
+def _fact_matches_text(fact: str, text: str) -> bool:
+    normalized_fact = _normalize_match_text(fact)
+    normalized_text = _normalize_match_text(text)
+    if not normalized_fact or not normalized_text:
+        return False
+    if normalized_fact in normalized_text:
+        return True
+
+    fact_tokens = set(normalized_fact.split())
+    if len(fact_tokens) < 4:
+        return fact_tokens.issubset(set(normalized_text.split()))
+    matched = fact_tokens.intersection(normalized_text.split())
+    return len(matched) / len(fact_tokens) >= 0.65
+
+
+def _normalize_match_text(text: str) -> str:
+    tokens = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", text.lower())
+    return " ".join(tokens)
 
 
 def _actual_pptx_slide_count(state: PPTProductionState) -> int:

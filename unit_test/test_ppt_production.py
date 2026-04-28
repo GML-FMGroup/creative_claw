@@ -7,12 +7,21 @@ import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.production.models import ProductionSession, utc_now_iso
 from src.production.ppt.deck_builder import DeckBuilderService
 from src.production.ppt.document_loader import DocumentLoaderService
 from src.production.ppt.ingest import classify_input_path, ingest_input_files
 from src.production.ppt.manager import PPTProductionManager
-from src.production.ppt.models import DeckSlide, DeckSpec, PPTRenderSettings, SlidePreview
+from src.production.ppt.models import (
+    DeckSlide,
+    DeckSpec,
+    DocumentSummary,
+    PPTRenderSettings,
+    PPTProductionState,
+    SlidePreview,
+)
 from src.production.ppt.prompt_catalog import PPTPromptCatalogError, available_prompt_templates, render_prompt_template
+from src.production.ppt.quality import build_quality_report
 from src.production.ppt.template_analyzer import TemplateAnalyzerService
 from src.production.ppt.tool import run_ppt_production
 from src.runtime.workspace import workspace_relative_path, workspace_root
@@ -305,6 +314,94 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any("Source fact: Revenue grew 20%" in bullet for bullet in outline_bullets))
         self.assertTrue(any("Template analyzed" in bullet for bullet in outline_bullets))
 
+    def test_quality_report_tracks_source_fact_coverage(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            source = root / "business.md"
+            source.write_text("Revenue grew 20% in Q1. Enterprise retention improved by 6 points.", encoding="utf-8")
+
+            state = _adk_state("session_ppt_source_fact_coverage")
+            manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
+            started = asyncio.run(
+                manager.start(
+                    user_prompt="做一份 3 页的 Q1 业务汇报，给高管看。",
+                    input_files=[workspace_relative_path(source)],
+                    placeholder_assets=False,
+                    render_settings={"target_pages": 3, "style_preset": "business_executive"},
+                    adk_state=state,
+                )
+            )
+            asyncio.run(
+                manager.resume(
+                    production_session_id=started.production_session_id,
+                    user_response={"decision": "approve"},
+                    adk_state=state,
+                )
+            )
+            preview_review = asyncio.run(
+                manager.resume(
+                    production_session_id=started.production_session_id,
+                    user_response={"decision": "approve"},
+                    adk_state=state,
+                )
+            )
+            quality_view = asyncio.run(
+                manager.view(
+                    production_session_id=started.production_session_id,
+                    view_type="quality",
+                    adk_state=state,
+                )
+            )
+
+        payload = _load_state_payload(preview_review)
+        checks = {check["check_id"]: check for check in payload["quality_report"]["checks"]}
+        quality_checks = {check["check_id"]: check for check in quality_view.view["quality_report"]["checks"]}
+
+        self.assertEqual(preview_review.stage, "final_preview_review")
+        self.assertEqual(checks["source_fact_coverage"]["status"], "pass")
+        self.assertGreaterEqual(checks["source_fact_coverage"]["details"]["matched_fact_count"], 1)
+        self.assertEqual(quality_checks["source_fact_coverage"]["status"], "pass")
+
+    def test_quality_report_warns_when_source_facts_are_omitted(self) -> None:
+        now = utc_now_iso()
+        state = PPTProductionState(
+            production_session=ProductionSession(
+                production_session_id="ppt_source_coverage_warning",
+                capability="ppt",
+                adk_session_id="session_source_coverage_warning",
+                turn_index=1,
+                root_dir="generated/session_source_coverage_warning/production/ppt_source_coverage_warning",
+                status="completed",
+                created_at=now,
+                updated_at=now,
+            ),
+            status="completed",
+            stage="quality_check",
+            document_summary=DocumentSummary(
+                status="ready",
+                salient_facts=["Revenue grew 20% in Q1. Enterprise retention improved by 6 points."],
+                document_count=1,
+                extracted_character_count=64,
+            ),
+            deck_spec=DeckSpec(
+                slides=[
+                    DeckSlide(
+                        slide_id="slide_1",
+                        sequence_index=1,
+                        title="Decision and Next Steps",
+                        bullets=["Confirm the owner and next checkpoint."],
+                    )
+                ]
+            ),
+        )
+
+        report = build_quality_report(state)
+        checks = {check.check_id: check for check in report.checks}
+
+        self.assertEqual(checks["source_fact_coverage"].status, "warning")
+        self.assertEqual(checks["source_fact_coverage"].details["matched_fact_count"], 0)
+        self.assertEqual(checks["source_fact_coverage"].details["coverage_ratio"], 0)
+
     def test_manager_native_flow_deck_spec_preview_completion(self) -> None:
         state = _adk_state("session_ppt_manager_flow")
         manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
@@ -389,6 +486,16 @@ class PPTProductionTests(unittest.TestCase):
         manifest_json = workspace_root() / manifest_view.view["manifest_path"]
         self.assertTrue(manifest_json.is_file())
         self.assertEqual(json.loads(manifest_json.read_text(encoding="utf-8"))["delivery"]["final_pptx_path"], final_artifact.path)
+
+        quality_view = asyncio.run(
+            manager.view(
+                production_session_id=started.production_session_id,
+                view_type="quality",
+                adk_state=state,
+            )
+        )
+        quality_checks = {check["check_id"]: check for check in quality_view.view["quality_report"]["checks"]}
+        self.assertEqual(quality_checks["source_fact_coverage"]["status"], "not_applicable")
 
         completed = asyncio.run(
             manager.resume(
