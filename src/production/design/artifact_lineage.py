@@ -112,11 +112,11 @@ def _lineage_item(
     artifact_ids_before = [
         item.artifact_id
         for item in state.html_artifacts[:artifact_index]
-        if item.status in {"stale", "valid", "approved"}
+        if item.page_id == artifact.page_id and item.status in {"stale", "valid", "approved"}
     ]
     build_mode = str(artifact.metadata.get("build_mode") or _build_mode_from_builder(artifact.builder))
     replaces = artifact_ids_before if build_mode == "revision" else []
-    replaced_by = latest_artifact_id if artifact.status == "stale" and latest_artifact_id != artifact.artifact_id else ""
+    replaced_by = _replacing_artifact_id(state, artifact=artifact, artifact_index=artifact_index, latest_artifact_id=latest_artifact_id)
     report_refs = _report_refs(state, artifact.artifact_id)
     artifact_refs = _artifact_refs(state, artifact.artifact_id)
     return ArtifactLineageItem(
@@ -136,6 +136,26 @@ def _lineage_item(
         artifact_refs=artifact_refs,
         notes=_notes(artifact=artifact, report_refs=report_refs, artifact_refs=artifact_refs),
     )
+
+
+def _replacing_artifact_id(
+    state: DesignProductionState,
+    *,
+    artifact: HtmlArtifact,
+    artifact_index: int,
+    latest_artifact_id: str,
+) -> str:
+    """Return the later same-page artifact that replaced a stale artifact."""
+    if artifact.status != "stale":
+        return ""
+    for candidate in reversed(state.html_artifacts[artifact_index + 1 :]):
+        if candidate.page_id == artifact.page_id and candidate.artifact_id != artifact.artifact_id:
+            return candidate.artifact_id
+    if latest_artifact_id != artifact.artifact_id:
+        latest = next((item for item in state.html_artifacts if item.artifact_id == latest_artifact_id), None)
+        if latest is not None and latest.page_id == artifact.page_id:
+            return latest_artifact_id
+    return ""
 
 
 def _report_refs(state: DesignProductionState, artifact_id: str) -> dict[str, list[str]]:

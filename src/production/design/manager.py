@@ -569,7 +569,7 @@ class DesignProductionManager:
         revision_request: dict[str, Any],
         adk_state,
     ) -> ProductionRunResult:
-        """Apply a preview-stage revision by rebuilding the P0 single-page HTML."""
+        """Apply a preview-stage revision by rebuilding affected HTML page artifacts."""
         impact_view = build_revision_impact_view(state, revision_request)
         revision_entry = dict(revision_request)
         revision_entry["revision_id"] = impact_view.get("revision_id", "")
@@ -580,8 +580,9 @@ class DesignProductionManager:
         }
         state.revision_history.append(revision_entry)
         stale_reason = _revision_stale_reason(revision_entry)
+        affected_page_ids = set(_revision_page_ids(state, impact_view))
         for artifact in state.html_artifacts:
-            if artifact.status != "failed":
+            if artifact.status != "failed" and artifact.page_id in affected_page_ids:
                 artifact.status = "stale"
                 artifact.stale_reason = stale_reason
         state.artifacts = []
@@ -594,8 +595,8 @@ class DesignProductionManager:
             ProductionEvent(
                 event_type="revision_applied",
                 stage=state.stage,
-                message="Design revision was applied; rebuilding the full P0 HTML page.",
-                metadata={"impact": impact_view},
+                message="Design revision was applied; rebuilding affected HTML page artifacts.",
+                metadata={"impact": impact_view, "affected_page_ids": sorted(affected_page_ids)},
             )
         )
         try:
@@ -732,7 +733,11 @@ class DesignProductionManager:
         _ensure_design_dirs(session_root)
         state.stage = "html_building"
         state.progress_percent = max(state.progress_percent, 55)
-        target_pages = _target_pages_for_html_build(state, builder_mode=builder_mode)
+        target_pages = _target_pages_for_html_build(
+            state,
+            builder_mode=builder_mode,
+            revision_impact=revision_impact,
+        )
         built_artifacts: list[HtmlArtifact] = []
         last_processing: dict[str, Any] = {}
         for page in target_pages:
@@ -955,7 +960,7 @@ class DesignProductionManager:
             build_mode="revision" if builder_mode == "revision" else "baseline",
             revision_request=revision_request,
             revision_impact=revision_impact,
-            previous_html=_read_latest_html(state) if builder_mode == "revision" else "",
+            previous_html=_read_latest_html_for_page(state, page.page_id) if builder_mode == "revision" else "",
         )
         output_path.write_text(html_output.html, encoding="utf-8")
         section_fragments = html_output.section_fragments or {
@@ -1402,10 +1407,18 @@ def _build_mode_from_settings(design_settings: dict[str, Any]) -> DesignBuildMod
     return "single_html"
 
 
-def _target_pages_for_html_build(state: DesignProductionState, *, builder_mode: str) -> list[PageBlueprint]:
+def _target_pages_for_html_build(
+    state: DesignProductionState,
+    *,
+    builder_mode: str,
+    revision_impact: dict[str, Any] | None = None,
+) -> list[PageBlueprint]:
     """Return the page targets for the current HTML build pass."""
     if state.layout_plan is None or not state.layout_plan.pages:
         raise ValueError("layout_plan with at least one page is required before HTML generation")
+    if builder_mode == "revision" and state.build_mode == "multi_html":
+        affected_page_ids = set(_revision_page_ids(state, revision_impact or {}))
+        return [page for page in state.layout_plan.pages if page.page_id in affected_page_ids] or list(state.layout_plan.pages)
     if state.build_mode == "multi_html" and builder_mode != "revision":
         return list(state.layout_plan.pages)
     return [state.layout_plan.pages[0]]
@@ -1427,6 +1440,23 @@ def _active_html_artifacts(state: DesignProductionState) -> list[HtmlArtifact]:
     if active:
         return active
     return state.html_artifacts[-1:] if state.html_artifacts else []
+
+
+def _revision_page_ids(state: DesignProductionState, revision_impact: dict[str, Any]) -> list[str]:
+    """Return page ids that should be rebuilt for a revision."""
+    pages = state.layout_plan.pages if state.layout_plan is not None else []
+    if not pages:
+        return []
+    if state.build_mode != "multi_html":
+        return [pages[0].page_id]
+    requested_ids = {
+        str(page_id).strip()
+        for page_id in revision_impact.get("affected_page_ids", [])
+        if str(page_id).strip()
+    }
+    if requested_ids:
+        return [page.page_id for page in pages if page.page_id in requested_ids]
+    return [page.page_id for page in pages]
 
 
 def _normalize_page_path(path: str | None) -> str:
@@ -1461,6 +1491,17 @@ def _read_latest_html(state: DesignProductionState) -> str:
         return resolve_workspace_path(latest_path).read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _read_latest_html_for_page(state: DesignProductionState, page_id: str) -> str:
+    """Read the latest generated HTML artifact for one page."""
+    for artifact in reversed(state.html_artifacts):
+        if artifact.page_id == page_id and artifact.path:
+            try:
+                return resolve_workspace_path(artifact.path).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+    return _read_latest_html(state)
 
 
 def _read_artifact_html(artifact: HtmlArtifact) -> str:
@@ -1626,8 +1667,8 @@ def _revision_stale_reason(revision_request: dict[str, Any]) -> str:
     """Return a concise stale reason for artifacts replaced by a revision."""
     notes = str(revision_request.get("notes") or "").strip()
     if not notes:
-        return "Revision applied; P0 rebuilt the full page."
-    return f"Revision applied; P0 rebuilt the full page. Notes: {notes[:160]}"
+        return "Revision applied; affected page artifact rebuilt."
+    return f"Revision applied; affected page artifact rebuilt. Notes: {notes[:160]}"
 
 
 def _status_message(state: DesignProductionState) -> str:
