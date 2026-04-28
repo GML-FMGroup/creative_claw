@@ -11,6 +11,8 @@ from src.production.models import WorkspaceFileRef
 _DERIVED_HANDOFF_NAMES = {
     "qc_report.md",
     "design_system_audit.md",
+    "component_inventory.md",
+    "component_inventory.json",
     "design_spec.md",
     "handoff_manifest.json",
     "design_tokens.json",

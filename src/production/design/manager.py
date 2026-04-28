@@ -8,6 +8,7 @@ from typing import Any
 
 from src.production.design.impact import build_revision_impact_view, normalize_revision_request
 from src.production.design.models import (
+    ComponentInventoryReport,
     DesignBrief,
     DesignQcFinding,
     DesignQcReport,
@@ -23,6 +24,11 @@ from src.production.design.models import (
     PageBlueprint,
     PdfExportReport,
     PreviewReport,
+)
+from src.production.design.component_inventory import (
+    build_component_inventory,
+    component_inventory_json,
+    component_inventory_markdown,
 )
 from src.production.design.design_system_audit import audit_design_system, design_system_audit_markdown
 from src.production.design.expert_runtime import DesignExpertRuntime
@@ -55,7 +61,7 @@ from src.production.session_store import ProductionSessionStore
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
-_VIEW_TYPES = ("overview", "brief", "design_system", "layout", "preview", "quality", "events", "artifacts")
+_VIEW_TYPES = ("overview", "brief", "design_system", "components", "layout", "preview", "quality", "events", "artifacts")
 
 
 class DesignProductionManager:
@@ -700,6 +706,7 @@ class DesignProductionManager:
             artifact.status = "failed"
             raise RuntimeError("; ".join(validation_report.issues) or "HTML validation failed")
         artifact.status = "valid"
+        _append_component_inventory(state, artifact)
 
         state.stage = "html_preview"
         preview_reports = await self.preview_renderer.render(
@@ -892,6 +899,26 @@ class DesignProductionManager:
                     source=self.capability,
                 )
             )
+        inventory_md_path = f"{state.production_session.root_dir}/reports/component_inventory.md"
+        inventory_json_path = f"{state.production_session.root_dir}/reports/component_inventory.json"
+        if state.component_inventory_reports:
+            state.component_inventory_reports[-1].report_path = inventory_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="component_inventory.md",
+                        path=inventory_md_path,
+                        description="Implementation-facing component inventory report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="component_inventory.json",
+                        path=inventory_json_path,
+                        description="Machine-readable component inventory report.",
+                        source=self.capability,
+                    ),
+                ]
+            )
         for report in state.pdf_export_reports:
             if report.status == "exported" and report.pdf_path:
                 final_artifacts.append(
@@ -999,6 +1026,17 @@ class DesignProductionManager:
         )
         (root / "reports" / "design_system_audit.md").write_text(
             design_system_audit_markdown(latest_audit),
+            encoding="utf-8",
+        )
+        latest_inventory = state.component_inventory_reports[-1] if state.component_inventory_reports else None
+        if latest_inventory is not None:
+            latest_inventory.report_path = f"{state.production_session.root_dir}/reports/component_inventory.md"
+        (root / "reports" / "component_inventory.json").write_text(
+            component_inventory_json(latest_inventory),
+            encoding="utf-8",
+        )
+        (root / "reports" / "component_inventory.md").write_text(
+            component_inventory_markdown(latest_inventory),
             encoding="utf-8",
         )
         (root / "layout_plan.json").write_text(
@@ -1120,6 +1158,26 @@ def _append_design_system_audit(state: DesignProductionState) -> DesignSystemAud
                 "report_id": report.report_id,
                 "status": report.status,
                 "finding_counts": report.metrics.get("finding_counts", {}),
+            },
+        )
+    )
+    return report
+
+
+def _append_component_inventory(state: DesignProductionState, artifact: HtmlArtifact) -> ComponentInventoryReport:
+    """Build and store a component inventory report for one HTML artifact."""
+    report = build_component_inventory(state, artifact=artifact)
+    state.component_inventory_reports.append(report)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="component_inventory_built",
+            stage=state.stage,
+            message="Built Design component inventory for handoff.",
+            metadata={
+                "report_id": report.report_id,
+                "artifact_id": report.artifact_id,
+                "status": report.status,
+                "item_count": report.metrics.get("item_count", 0),
             },
         )
     )
@@ -1583,6 +1641,8 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _brief_view(state)
     if view_type == "design_system":
         return _design_system_view(state)
+    if view_type == "components":
+        return _components_view(state)
     if view_type == "layout":
         return _layout_view(state)
     if view_type == "preview":
@@ -1625,6 +1685,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "reference_assets": len(state.reference_assets),
                 "html_artifacts": len(state.html_artifacts),
                 "design_system_audit_reports": len(state.design_system_audit_reports),
+                "component_inventory_reports": len(state.component_inventory_reports),
                 "preview_reports": len(state.preview_reports),
                 "pdf_export_reports": len(state.pdf_export_reports),
                 "qc_reports": len(state.qc_reports),
@@ -1651,6 +1712,18 @@ def _design_system_view(state: DesignProductionState) -> dict[str, Any]:
             "design_system_path": f"{state.production_session.root_dir}/design_system.json",
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
+        }
+    )
+    return view
+
+
+def _components_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "components")
+    view.update(
+        {
+            "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
+            "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
+            "component_inventory_json_path": f"{state.production_session.root_dir}/reports/component_inventory.json",
         }
     )
     return view
@@ -1685,10 +1758,12 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
         {
             "html_validation_reports": [item.model_dump(mode="json") for item in state.html_validation_reports],
             "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
+            "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
+            "component_inventory_report_path": f"{state.production_session.root_dir}/reports/component_inventory.md",
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
@@ -1709,6 +1784,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "artifacts": [_workspace_file_payload(state, item) for item in state.artifacts],
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
+            "component_inventory_reports": [item.model_dump(mode="json") for item in state.component_inventory_reports],
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }

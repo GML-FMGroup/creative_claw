@@ -124,6 +124,50 @@ class DesignSystemAuditReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class ComponentInventoryItem(BaseModel):
+    """One implementation-facing component inventory item."""
+
+    item_id: str = Field(default_factory=lambda: new_id("component_inventory_item"))
+    name: str
+    category: Literal[
+        "section",
+        "navigation",
+        "button",
+        "card",
+        "metric",
+        "form",
+        "media",
+        "tokenized_component",
+        "html_structure",
+        "other",
+    ] = "other"
+    source: Literal["layout_plan", "design_system", "html_artifact"]
+    page_id: str = ""
+    section_id: str = ""
+    selector: str = ""
+    role: str = ""
+    description: str = ""
+    source_refs: list[str] = Field(default_factory=list)
+    token_refs: list[str] = Field(default_factory=list)
+    responsive_notes: str = ""
+    implementation_notes: list[str] = Field(default_factory=list)
+
+
+class ComponentInventoryReport(BaseModel):
+    """Deterministic component inventory derived from Design production state."""
+
+    report_id: str = Field(default_factory=lambda: new_id("component_inventory"))
+    artifact_id: str = ""
+    layout_plan_id: str = ""
+    design_system_id: str = ""
+    status: Literal["ready", "partial", "empty"] = "ready"
+    summary: str = ""
+    items: list[ComponentInventoryItem] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class LayoutSection(BaseModel):
     """One stable design section that can later be regenerated independently."""
 
@@ -253,6 +297,7 @@ class DesignProductionState(ProductionState):
     reference_assets: list[ReferenceAssetEntry] = Field(default_factory=list)
     design_system: DesignSystemSpec | None = None
     design_system_audit_reports: list[DesignSystemAuditReport] = Field(default_factory=list)
+    component_inventory_reports: list[ComponentInventoryReport] = Field(default_factory=list)
     layout_plan: LayoutPlan | None = None
     variation_plan: dict[str, Any] | None = None
     html_artifacts: list[HtmlArtifact] = Field(default_factory=list)
