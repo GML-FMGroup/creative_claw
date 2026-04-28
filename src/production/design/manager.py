@@ -20,6 +20,7 @@ from src.production.design.models import (
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
+    PdfExportReport,
     PreviewReport,
 )
 from src.production.design.expert_runtime import DesignExpertRuntime
@@ -34,6 +35,7 @@ from src.production.design.source_refs import (
 )
 from src.production.design.tools.asset_ingestor import AssetIngestor
 from src.production.design.tools.html_validator import HtmlValidator
+from src.production.design.tools.pdf_exporter import HtmlPdfExporter
 from src.production.design.tools.preview_renderer import HtmlPreviewRenderer
 from src.production.errors import ProductionError as ProductionRuntimeError
 from src.production.errors import ProductionSessionNotFoundError
@@ -66,6 +68,7 @@ class DesignProductionManager:
         asset_ingestor: AssetIngestor | None = None,
         html_validator: HtmlValidator | None = None,
         preview_renderer: HtmlPreviewRenderer | None = None,
+        pdf_exporter: HtmlPdfExporter | None = None,
         placeholder_builder: PlaceholderHtmlBuilder | None = None,
         expert_runtime: DesignExpertRuntime | None = None,
     ) -> None:
@@ -74,6 +77,7 @@ class DesignProductionManager:
         self.asset_ingestor = asset_ingestor or AssetIngestor()
         self.html_validator = html_validator or HtmlValidator()
         self.preview_renderer = preview_renderer or HtmlPreviewRenderer()
+        self.pdf_exporter = pdf_exporter or HtmlPdfExporter()
         self.placeholder_builder = placeholder_builder or PlaceholderHtmlBuilder()
         self.expert_runtime = expert_runtime or DesignExpertRuntime()
 
@@ -104,6 +108,7 @@ class DesignProductionManager:
             progress_percent=5,
             design_genre=genre,
             build_mode="single_html",
+            requested_exports=_requested_exports_from_settings(design_settings or {}),
         )
         state.production_events.append(
             ProductionEvent(
@@ -250,7 +255,7 @@ class DesignProductionManager:
         if state.active_breakpoint.stage == "design_direction_review":
             return await self._build_and_pause_for_preview_review(state, adk_state=adk_state)
         if state.active_breakpoint.stage == "preview_review":
-            return self._approve_preview_and_complete(state, adk_state=adk_state)
+            return await self._approve_preview_and_complete(state, response=response, adk_state=adk_state)
         return self._result_from_state(
             state,
             message=f"Current design review stage cannot be approved: {state.active_breakpoint.stage}.",
@@ -435,6 +440,7 @@ class DesignProductionManager:
 
     async def _build_and_complete_placeholder(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
         await self._build_html_validation_preview_and_qc(state, builder_mode="placeholder")
+        await self._export_requested_pdf(state, response={})
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -590,10 +596,17 @@ class DesignProductionManager:
             view=impact_view,
         )
 
-    def _approve_preview_and_complete(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
+    async def _approve_preview_and_complete(
+        self,
+        state: DesignProductionState,
+        *,
+        response: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
         for artifact in state.html_artifacts:
             if artifact.status in {"draft", "valid"}:
                 artifact.status = "approved"
+        await self._export_requested_pdf(state, response=response)
         state.status = "completed"
         state.stage = "completed"
         state.progress_percent = 100
@@ -865,6 +878,16 @@ class DesignProductionManager:
                     source=self.capability,
                 )
             )
+        for report in state.pdf_export_reports:
+            if report.status == "exported" and report.pdf_path:
+                final_artifacts.append(
+                    WorkspaceFileRef(
+                        name=Path(report.pdf_path).name,
+                        path=report.pdf_path,
+                        description="PDF export generated from the approved HTML design.",
+                        source=self.capability,
+                    )
+                )
         state.export_artifacts = write_handoff_exports(
             state=state,
             session_root=session_root,
@@ -872,6 +895,41 @@ class DesignProductionManager:
         )
         final_artifacts.extend(state.export_artifacts)
         state.artifacts = final_artifacts
+
+    async def _export_requested_pdf(self, state: DesignProductionState, *, response: dict[str, Any]) -> None:
+        """Export the latest HTML to PDF when the session or approval requests it."""
+        if not _pdf_export_requested(state, response):
+            return
+        latest_html = latest_html_artifact(state)
+        if latest_html is None:
+            state.pdf_export_reports.append(
+                PdfExportReport(
+                    artifact_id="",
+                    source_html_path="",
+                    status="failed",
+                    issues=["PDF export requested but no HTML artifact exists."],
+                )
+            )
+            return
+        session_root = self.store.session_root(state.production_session)
+        report = await self.pdf_exporter.export(
+            artifact_id=latest_html.artifact_id,
+            html_path=latest_html.path,
+            output_path=session_root / "exports" / "design.pdf",
+        )
+        state.pdf_export_reports.append(report)
+        state.production_events.append(
+            ProductionEvent(
+                event_type="pdf_export_completed" if report.status == "exported" else "pdf_export_unavailable",
+                stage=state.stage,
+                message=(
+                    "Exported Design HTML to PDF."
+                    if report.status == "exported"
+                    else "Design PDF export was requested but could not be completed."
+                ),
+                metadata=report.model_dump(mode="json"),
+            )
+        )
 
     def _result_from_state(
         self,
@@ -928,6 +986,10 @@ class DesignProductionManager:
         )
         (root / "reports" / "preview_report.json").write_text(
             json.dumps([item.model_dump(mode="json") for item in state.preview_reports], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (root / "reports" / "pdf_export_report.json").write_text(
+            json.dumps([item.model_dump(mode="json") for item in state.pdf_export_reports], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         latest_qc = state.qc_reports[-1] if state.qc_reports else None
@@ -1058,6 +1120,36 @@ def _normalize_resume_decision(response: dict[str, Any]) -> str:
     if decision == "approve":
         return "approve"
     return ""
+
+
+def _requested_exports_from_settings(design_settings: dict[str, Any]) -> list[str]:
+    return _normalized_export_names(design_settings)
+
+
+def _pdf_export_requested(state: DesignProductionState, response: dict[str, Any]) -> bool:
+    for export_name in _normalized_export_names(response):
+        if export_name not in state.requested_exports:
+            state.requested_exports.append(export_name)
+    return "pdf" in set(state.requested_exports)
+
+
+def _normalized_export_names(payload: dict[str, Any]) -> list[str]:
+    values: list[Any] = []
+    for key in ("exports", "outputs", "export_formats", "requested_exports"):
+        raw = payload.get(key)
+        if isinstance(raw, (list, tuple, set)):
+            values.extend(raw)
+        elif raw:
+            values.append(raw)
+    if payload.get("export_pdf") or payload.get("pdf_export"):
+        values.append("pdf")
+
+    names: list[str] = []
+    for value in values:
+        normalized = str(value).strip().lower().replace("-", "_")
+        if normalized in {"pdf", "html_pdf", "print_pdf"} and "pdf" not in names:
+            names.append("pdf")
+    return names
 
 
 def _infer_design_genre(user_prompt: str, design_settings: dict[str, Any]) -> str:
@@ -1484,6 +1576,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "reference_assets": len(state.reference_assets),
                 "html_artifacts": len(state.html_artifacts),
                 "preview_reports": len(state.preview_reports),
+                "pdf_export_reports": len(state.pdf_export_reports),
                 "qc_reports": len(state.qc_reports),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
@@ -1539,8 +1632,10 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
     view.update(
         {
             "html_validation_reports": [item.model_dump(mode="json") for item in state.html_validation_reports],
+            "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
+            "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
     )
@@ -1560,6 +1655,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "artifacts": [_workspace_file_payload(state, item) for item in state.artifacts],
             "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
             "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
+            "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )

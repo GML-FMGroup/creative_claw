@@ -185,6 +185,18 @@ class PreviewReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class PdfExportReport(BaseModel):
+    """PDF export result for one HTML artifact."""
+
+    report_id: str = Field(default_factory=lambda: new_id("pdf_export"))
+    artifact_id: str
+    source_html_path: str
+    pdf_path: str = ""
+    status: Literal["exported", "unavailable", "failed"] = "exported"
+    issues: list[str] = Field(default_factory=list)
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class DesignQcFinding(BaseModel):
     """One explainable quality finding for a design artifact."""
 
@@ -221,7 +233,8 @@ class DesignProductionState(ProductionState):
     html_artifacts: list[HtmlArtifact] = Field(default_factory=list)
     html_validation_reports: list[HtmlValidationReport] = Field(default_factory=list)
     preview_reports: list[PreviewReport] = Field(default_factory=list)
+    pdf_export_reports: list[PdfExportReport] = Field(default_factory=list)
     qc_reports: list[DesignQcReport] = Field(default_factory=list)
     revision_history: list[dict[str, Any]] = Field(default_factory=list)
     export_artifacts: list[WorkspaceFileRef] = Field(default_factory=list)
-
+    requested_exports: list[str] = Field(default_factory=list)

@@ -35,7 +35,7 @@ When a Design production run reaches final approval, the manager now writes dete
 
 ## P1a Handoff Bundle
 
-Final approval now also writes `exports/design_handoff_bundle.zip`, a portable bundle for downstream handoff. The bundle includes available final deliverables such as the approved HTML artifact, preview screenshots, QC report, `design_spec.md`, and `handoff_manifest.json`. P1a does not generate PDF, Figma, or production-code handoff outputs.
+Final approval now also writes `exports/design_handoff_bundle.zip`, a portable bundle for downstream handoff. The bundle includes available final deliverables such as the approved HTML artifact, preview screenshots, QC report, `design_spec.md`, and `handoff_manifest.json`. P1a introduced the bundle without Figma or production-code handoff outputs.
 
 ## P1b Source References
 
@@ -45,11 +45,15 @@ Design outputs now expose source reference details for user-provided reference a
 
 The `preview_review` payload now uses shared `ReviewPayload.metadata` for compact delivery, preview, quality, and source-reference summaries. `view_type="overview"` exposes the same active review metadata, so runtime clients can show approval context without re-parsing full HTML artifact, preview report, or QC report payloads.
 
+## P1d Optional PDF Export
+
+Design production can now export the approved HTML artifact to `exports/design.pdf` when PDF is explicitly requested through `design_settings.exports` or the final preview approval response. PDF remains a derived handoff artifact: HTML is still the durable source of truth, and missing browser export dependencies create a non-blocking PDF export report instead of failing production.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
-- `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, and QC report models.
+- `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, PDF export report, and QC report models.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.
@@ -59,6 +63,7 @@ The `preview_review` payload now uses shared `ReviewPayload.metadata` for compac
 - `impact.py`: read-only P0 revision impact analysis.
 - `tools/asset_ingestor.py`: reference asset registration and copying.
 - `tools/html_validator.py`: static HTML validation.
+- `tools/pdf_exporter.py`: optional browser-based HTML-to-PDF export.
 - `tools/preview_renderer.py`: optional Playwright browser preview integration.
 
 ## Boundaries

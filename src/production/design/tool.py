@@ -39,8 +39,8 @@ async def run_design_production(
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, design_system, layout, preview, quality, events, and artifacts.
         input_files: Optional workspace file records or workspace-relative path strings to use as design reference assets.
         placeholder_design: Use true only for P0a placeholder HTML pipeline validation.
-        design_settings: Optional genre, audience, primary_action, and future design settings.
-        user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for revision actions. Plain text is accepted and treated as revision notes.
+        design_settings: Optional genre, audience, primary_action, requested exports such as {"exports": ["pdf"]}, and future design settings.
+        user_response: User decision payload for resume, including optional approval exports such as {"decision": "approve", "exports": ["pdf"]}; replacement details for add_reference_assets; or targets/notes for revision actions. Plain text is accepted and treated as revision notes.
     """
     if tool_context is None:
         return ProductionRunResult(
