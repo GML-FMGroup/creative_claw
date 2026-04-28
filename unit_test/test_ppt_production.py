@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 import zipfile
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -120,6 +121,24 @@ def _write_minimal_docx(path: Path, paragraphs: list[str]) -> None:
         package.writestr("word/document.xml", document_xml)
 
 
+def _write_minimal_pdf(path: Path, lines: list[str]) -> None:
+    escaped_lines = [
+        line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        for line in lines
+    ]
+    text_commands = "\n".join(f"({line}) Tj" for line in escaped_lines)
+    stream = f"BT\n/F1 12 Tf\n72 720 Td\n{text_commands}\nET".encode("latin-1")
+    compressed = zlib.compress(stream)
+    path.write_bytes(
+        b"%PDF-1.4\n"
+        b"1 0 obj\n"
+        + f"<< /Length {len(compressed)} /Filter /FlateDecode >>\n".encode("ascii")
+        + b"stream\n"
+        + compressed
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+
+
 def _build_template_pptx(output_path: Path) -> str:
     deck_spec = DeckSpec(
         title="Template Deck",
@@ -196,16 +215,30 @@ class PPTProductionTests(unittest.TestCase):
         self.assertTrue(any("Revenue grew 20%" in fact for fact in summary.salient_facts))
         self.assertTrue(any("Customer expansion" in fact for fact in summary.salient_facts))
 
-    def test_document_loader_degrades_pdf_explicitly(self) -> None:
+    def test_document_loader_extracts_simple_pdf_text_layer(self) -> None:
         with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
             root = Path(tmpdir)
             pdf = root / "source.pdf"
-            pdf.write_bytes(b"%PDF-1.4 fake")
+            _write_minimal_pdf(pdf, ["Revenue grew 20% in Q1.", "Retention improved across enterprise accounts."])
+            entries = ingest_input_files([workspace_relative_path(pdf)], turn_index=1)
+            summary = DocumentLoaderService().build_summary(entries)
+
+        self.assertEqual(summary.status, "ready")
+        self.assertEqual(summary.document_count, 1)
+        self.assertGreater(summary.extracted_character_count, 0)
+        self.assertTrue(any("Revenue grew 20%" in fact for fact in summary.salient_facts))
+        self.assertEqual(summary.warnings, [])
+
+    def test_document_loader_degrades_pdf_without_text_layer_explicitly(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            root = Path(tmpdir)
+            pdf = root / "scanned.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n1 0 obj\n<< /Length 12 >>\nstream\nq 0 0 1 1\nendstream\nendobj\n%%EOF")
             entries = ingest_input_files([workspace_relative_path(pdf)], turn_index=1)
             summary = DocumentLoaderService().build_summary(entries)
 
         self.assertEqual(summary.status, "unsupported")
-        self.assertTrue(any("PDF extraction" in warning for warning in summary.warnings))
+        self.assertTrue(any("No extractable PDF text layer" in warning for warning in summary.warnings))
 
     def test_template_analyzer_extracts_pptx_structure(self) -> None:
         with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
