@@ -2,7 +2,7 @@
 
 This package implements CreativeClaw's durable HTML-centered Design production product.
 
-Design production is intentionally separate from one-shot image generation, editable PPTX generation, and video production. Its core artifact is always HTML. Screenshots, reports, generated images, PDFs, ZIP files, and handoff specs are secondary artifacts derived from or supporting the HTML artifact.
+Design production is intentionally separate from one-shot image generation, editable PPTX generation, and video production. Its core artifact is always HTML. Screenshots, reports, generated images, ZIP bundles, and handoff specs are secondary artifacts derived from or supporting the HTML artifact.
 
 ## Current P0a Flow
 
@@ -33,6 +33,10 @@ Expert and revision HTML builds now run supplemental `DesignQCExpert` assessment
 
 When a Design production run reaches final approval, the manager now writes deterministic handoff exports under `exports/`: `design_spec.md` for human review and `handoff_manifest.json` for machine-readable downstream use. These files are derived from `DesignProductionState`, recorded in `export_artifacts`, and projected with the final HTML, preview screenshots, and QC report. P0b-E does not generate PDF, ZIP, Figma, or production-code handoff outputs.
 
+## P1a Handoff Bundle
+
+Final approval now also writes `exports/design_handoff_bundle.zip`, a portable bundle for downstream handoff. The bundle includes available final deliverables such as the approved HTML artifact, preview screenshots, QC report, `design_spec.md`, and `handoff_manifest.json`. P1a does not generate PDF, Figma, or production-code handoff outputs.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -40,7 +44,7 @@ When a Design production run reaches final approval, the manager now writes dete
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, and QC report models.
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
-- `handoff.py`: deterministic Design spec and handoff manifest exports for completed production runs.
+- `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
 - `quality.py`: deterministic P0 quality report generation and supplemental expert finding merge.
 - `impact.py`: read-only P0 revision impact analysis.

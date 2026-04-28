@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -254,6 +255,7 @@ class DesignProductionTests(unittest.TestCase):
         artifact_names = {artifact.name for artifact in result.artifacts}
         self.assertIn("design_spec.md", artifact_names)
         self.assertIn("handoff_manifest.json", artifact_names)
+        self.assertIn("design_handoff_bundle.zip", artifact_names)
         self.assertEqual(state["active_production_capability"], "design")
         self.assertEqual(state["active_production_status"], "completed")
         self.assertIn(html_paths[0], state["final_file_paths"])
@@ -264,12 +266,22 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(payload["html_validation_reports"][0]["status"], "valid")
         self.assertEqual(payload["qc_reports"][0]["status"], "pass")
         export_paths = {artifact["path"] for artifact in payload["export_artifacts"]}
-        self.assertEqual(len(export_paths), 2)
+        self.assertEqual(len(export_paths), 3)
         self.assertTrue(any(path.endswith("exports/design_spec.md") for path in export_paths))
         manifest_path = next(path for path in export_paths if path.endswith("exports/handoff_manifest.json"))
         manifest = json.loads(resolve_workspace_path(manifest_path).read_text(encoding="utf-8"))
         self.assertEqual(manifest["latest_html_path"], html_paths[0])
         self.assertEqual(manifest["quality_status"], "pass")
+        self.assertTrue(any(item["name"] == "design_handoff_bundle.zip" for item in manifest["handoff_artifacts"]))
+        bundle_path = next(path for path in export_paths if path.endswith("exports/design_handoff_bundle.zip"))
+        with zipfile.ZipFile(resolve_workspace_path(bundle_path)) as bundle:
+            bundle_names = set(bundle.namelist())
+        self.assertIn("artifacts/index.html", bundle_names)
+        self.assertIn("exports/design_spec.md", bundle_names)
+        self.assertIn("exports/handoff_manifest.json", bundle_names)
+        self.assertIn("reports/qc_report.md", bundle_names)
+        self.assertIn("previews/index_desktop.png", bundle_names)
+        self.assertIn("previews/index_mobile.png", bundle_names)
 
     def test_manager_start_real_path_returns_design_direction_review(self) -> None:
         state = _adk_state("session_design_direction_review")
@@ -342,8 +354,9 @@ class DesignProductionTests(unittest.TestCase):
         completed_names = {artifact.name for artifact in completed.artifacts}
         self.assertIn("design_spec.md", completed_names)
         self.assertIn("handoff_manifest.json", completed_names)
+        self.assertIn("design_handoff_bundle.zip", completed_names)
         completed_payload = json.loads(resolve_workspace_path(completed.state_ref or "").read_text(encoding="utf-8"))
-        self.assertEqual(len(completed_payload["export_artifacts"]), 2)
+        self.assertEqual(len(completed_payload["export_artifacts"]), 3)
 
     def test_manager_expert_quality_failure_becomes_warning(self) -> None:
         state = _adk_state("session_design_expert_qc_fallback")
@@ -604,7 +617,7 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.view["view_type"], "artifacts")
         export_names = {artifact["name"] for artifact in result.view["export_artifacts"]}
-        self.assertEqual(export_names, {"design_spec.md", "handoff_manifest.json"})
+        self.assertEqual(export_names, {"design_spec.md", "handoff_manifest.json", "design_handoff_bundle.zip"})
         final_names = {artifact["name"] for artifact in result.view["artifacts"]}
         self.assertTrue(export_names.issubset(final_names))
 
