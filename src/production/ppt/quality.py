@@ -223,9 +223,12 @@ def _source_fact_coverage_check(state: PPTProductionState) -> PPTQualityCheck:
     matched_count = len(matched_facts)
     coverage_ratio = round(matched_count / len(facts), 3)
     details = {
+        "source_input_ids": document_summary.source_input_ids,
+        "source_document_details": _source_document_details(state, document_summary.source_input_ids),
         "fact_count": len(facts),
         "matched_fact_count": matched_count,
         "coverage_ratio": coverage_ratio,
+        "matched_facts": matched_facts[:3],
         "unmatched_facts": [fact for fact in facts if fact not in matched_facts][:3],
     }
     if matched_count:
@@ -271,6 +274,27 @@ def _combined_deck_text(state: PPTProductionState) -> str:
                 ]
             )
     return "\n".join(part for part in parts if part)
+
+
+def _source_document_details(state: PPTProductionState, source_input_ids: list[str]) -> list[dict[str, str]]:
+    """Resolve source document input ids to readable metadata for quality reports."""
+    inputs_by_id = {item.input_id: item for item in state.inputs}
+    details: list[dict[str, str]] = []
+    for input_id in source_input_ids:
+        entry = inputs_by_id.get(input_id)
+        if entry is None:
+            details.append({"input_id": input_id, "name": input_id, "path": "", "role": "", "status": "missing"})
+            continue
+        details.append(
+            {
+                "input_id": entry.input_id,
+                "name": entry.name,
+                "path": entry.path,
+                "role": entry.role,
+                "status": entry.status,
+            }
+        )
+    return details
 
 
 def _fact_matches_text(fact: str, text: str) -> bool:
