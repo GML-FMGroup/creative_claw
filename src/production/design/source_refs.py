@@ -21,6 +21,8 @@ _DERIVED_HANDOFF_NAMES = {
     "browser_diagnostics.json",
     "artifact_lineage.md",
     "artifact_lineage.json",
+    "page_handoff.md",
+    "page_handoff.json",
     "design_spec.md",
     "handoff_manifest.json",
     "design_tokens.json",

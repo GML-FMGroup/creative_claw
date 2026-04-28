@@ -158,6 +158,11 @@ def _report_refs(state: DesignProductionState, artifact_id: str) -> dict[str, li
         "browser_diagnostics_report_ids": [
             report.report_id for report in state.browser_diagnostics_reports if report.artifact_id == artifact_id
         ],
+        "page_handoff_report_ids": [
+            report.report_id
+            for report in state.page_handoff_reports
+            if any(item.artifact_id == artifact_id for item in report.items)
+        ],
         "quality_report_ids": [
             report.report_id for report in state.qc_reports if artifact_id in report.artifact_ids
         ],
@@ -206,6 +211,7 @@ def _metrics(
             "accessibility": len(state.accessibility_reports),
             "preview": len(state.preview_reports),
             "browser_diagnostics": len(state.browser_diagnostics_reports),
+            "page_handoff": len(state.page_handoff_reports),
             "quality": len(state.qc_reports),
             "pdf_export": len(state.pdf_export_reports),
         },

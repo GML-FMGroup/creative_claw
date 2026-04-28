@@ -39,7 +39,9 @@ from src.production.design.models import (
     DesignSystemExtractionReport,
     HtmlArtifact,
     HtmlValidationReport,
+    PageHandoffReport,
 )
+from src.production.design.page_handoff import page_handoff_json, page_handoff_markdown
 from src.production.design.quality import quality_report_markdown
 from src.production.design.source_refs import (
     latest_html_artifact,
@@ -135,6 +137,7 @@ def _handoff_manifest(
     latest_extraction = _latest_design_system_extraction_report(state)
     latest_accessibility = _latest_accessibility_report(state)
     latest_lineage = _latest_artifact_lineage_report(state)
+    latest_page_handoff = _latest_page_handoff_report(state)
     latest_source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "schema_version": "0.1.0",
@@ -154,6 +157,7 @@ def _handoff_manifest(
         "design_system_extraction_status": latest_extraction.status if latest_extraction is not None else "",
         "accessibility_status": latest_accessibility.status if latest_accessibility is not None else "",
         "artifact_lineage_status": latest_lineage.status if latest_lineage is not None else "",
+        "page_handoff_status": latest_page_handoff.status if latest_page_handoff is not None else "",
         "brief": state.brief.model_dump(mode="json") if state.brief is not None else None,
         "design_system": state.design_system.model_dump(mode="json") if state.design_system is not None else None,
         "design_system_audit_reports": [item.model_dump(mode="json") for item in state.design_system_audit_reports],
@@ -162,6 +166,7 @@ def _handoff_manifest(
         "accessibility_reports": [item.model_dump(mode="json") for item in state.accessibility_reports],
         "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
         "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
+        "page_handoff_reports": [item.model_dump(mode="json") for item in state.page_handoff_reports],
         "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
         "reference_assets": [item.model_dump(mode="json") for item in state.reference_assets],
         "html_artifacts": [_html_artifact_manifest_item(state, item) for item in state.html_artifacts],
@@ -180,8 +185,9 @@ def _handoff_manifest(
             "Accessibility reports are deterministic static checks over generated HTML.",
             "Browser diagnostics are derived from preview and PDF export reports.",
             "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
+            "Page handoff readiness is derived from LayoutPlan pages, variants, generated HTML artifacts, and linked reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma and production-code handoff outputs are intentionally outside P1k.",
+            "Figma, production-code handoff outputs, and full multi-page HTML generation are intentionally outside P1l.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -358,6 +364,23 @@ def _design_spec_markdown(
         for item in latest_lineage.items:
             replaced_by = f", replaced by {item.replaced_by_artifact_id}" if item.replaced_by_artifact_id else ""
             lines.append(f"  - {item.artifact_id}: v{item.version}, {item.status}, {item.build_mode or item.builder}{replaced_by}")
+    lines.extend(["", "## Page Handoff", ""])
+    if not state.page_handoff_reports:
+        lines.append("- No page handoff report was generated.")
+    else:
+        latest_page_handoff = state.page_handoff_reports[-1]
+        lines.append(f"- Status: {latest_page_handoff.status}")
+        lines.append(f"- Summary: {latest_page_handoff.summary}")
+        lines.append(f"- Ready items: {latest_page_handoff.metrics.get('ready_item_count', 0)}")
+        lines.append(f"- Total items: {latest_page_handoff.metrics.get('handoff_item_count', 0)}")
+        lines.append("- Pages:")
+        if not latest_page_handoff.items:
+            lines.append("  - None.")
+        for item in latest_page_handoff.items:
+            lines.append(
+                f"  - {item.page_title or item.page_id} ({item.variant_id}): {item.status}, "
+                f"{item.artifact_path or 'no artifact'}"
+            )
     lines.extend(["", "## Layout", ""])
     if state.layout_plan is None:
         lines.append("- No layout plan was generated.")
@@ -411,8 +434,9 @@ def _design_spec_markdown(
             "- Accessibility lint is deterministic and derived from static HTML semantics.",
             "- Browser diagnostics are deterministic reports derived from preview and PDF export facts.",
             "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
+            "- Page handoff readiness is deterministic and derived from layout pages, variants, and generated artifact reports.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma and production-code handoff outputs are intentionally outside P1k.",
+            "- Figma, production-code handoff outputs, and full multi-page HTML generation are intentionally outside P1l.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )
@@ -522,6 +546,10 @@ def _artifact_payload(
         return artifact_lineage_markdown(_latest_artifact_lineage_report(state)).encode("utf-8")
     if artifact.name == "artifact_lineage.json":
         return artifact_lineage_json(_latest_artifact_lineage_report(state)).encode("utf-8")
+    if artifact.name == "page_handoff.md":
+        return page_handoff_markdown(_latest_page_handoff_report(state)).encode("utf-8")
+    if artifact.name == "page_handoff.json":
+        return page_handoff_json(_latest_page_handoff_report(state)).encode("utf-8")
     return None
 
 
@@ -574,6 +602,10 @@ def _latest_browser_diagnostics_report(state: DesignProductionState) -> BrowserD
 
 def _latest_artifact_lineage_report(state: DesignProductionState) -> ArtifactLineageReport | None:
     return state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
+
+
+def _latest_page_handoff_report(state: DesignProductionState) -> PageHandoffReport | None:
+    return state.page_handoff_reports[-1] if state.page_handoff_reports else None
 
 
 def _latest_validation_report(state: DesignProductionState) -> HtmlValidationReport | None:

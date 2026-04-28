@@ -40,6 +40,7 @@ from src.production.design.models import (
     LayoutPlan,
     LayoutSection,
     PageBlueprint,
+    PageHandoffReport,
     PdfExportReport,
     PreviewReport,
 )
@@ -56,6 +57,11 @@ from src.production.design.design_system_extractor import (
 )
 from src.production.design.expert_runtime import DesignExpertRuntime
 from src.production.design.handoff import write_handoff_exports
+from src.production.design.page_handoff import (
+    build_page_handoff,
+    page_handoff_json,
+    page_handoff_markdown,
+)
 from src.production.design.placeholders import PlaceholderHtmlBuilder
 from src.production.design.quality import build_quality_report, quality_report_markdown
 from src.production.design.source_refs import (
@@ -95,6 +101,7 @@ _VIEW_TYPES = (
     "preview",
     "diagnostics",
     "lineage",
+    "pages",
     "quality",
     "events",
     "artifacts",
@@ -780,6 +787,7 @@ class DesignProductionManager:
             expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
+        page_handoff_report = _append_page_handoff(state)
         _append_artifact_lineage(state)
         state.progress_percent = max(state.progress_percent, 90)
         state.production_events.append(
@@ -792,6 +800,7 @@ class DesignProductionManager:
                     "validation_status": validation_report.status,
                     "design_system_extraction_status": extraction_report.status,
                     "accessibility_status": accessibility_report.status,
+                    "page_handoff_status": page_handoff_report.status,
                     "qc_status": qc_report.status,
                     "expert_qc_status": expert_qc_report.status if expert_qc_report is not None else "",
                 },
@@ -1048,6 +1057,26 @@ class DesignProductionManager:
                     ),
                 ]
             )
+        page_handoff_md_path = f"{state.production_session.root_dir}/reports/page_handoff.md"
+        page_handoff_json_path = f"{state.production_session.root_dir}/reports/page_handoff.json"
+        if state.page_handoff_reports:
+            state.page_handoff_reports[-1].report_path = page_handoff_md_path
+            final_artifacts.extend(
+                [
+                    WorkspaceFileRef(
+                        name="page_handoff.md",
+                        path=page_handoff_md_path,
+                        description="Design page and variant handoff readiness report.",
+                        source=self.capability,
+                    ),
+                    WorkspaceFileRef(
+                        name="page_handoff.json",
+                        path=page_handoff_json_path,
+                        description="Machine-readable Design page and variant handoff readiness report.",
+                        source=self.capability,
+                    ),
+                ]
+            )
         for report in state.pdf_export_reports:
             if report.status == "exported" and report.pdf_path:
                 final_artifacts.append(
@@ -1234,6 +1263,17 @@ class DesignProductionManager:
         )
         (root / "reports" / "artifact_lineage.md").write_text(
             artifact_lineage_markdown(latest_lineage),
+            encoding="utf-8",
+        )
+        latest_page_handoff = state.page_handoff_reports[-1] if state.page_handoff_reports else None
+        if latest_page_handoff is not None:
+            latest_page_handoff.report_path = f"{state.production_session.root_dir}/reports/page_handoff.md"
+        (root / "reports" / "page_handoff.json").write_text(
+            page_handoff_json(latest_page_handoff),
+            encoding="utf-8",
+        )
+        (root / "reports" / "page_handoff.md").write_text(
+            page_handoff_markdown(latest_page_handoff),
             encoding="utf-8",
         )
         latest_qc = state.qc_reports[-1] if state.qc_reports else None
@@ -1446,6 +1486,27 @@ def _append_artifact_lineage(state: DesignProductionState) -> ArtifactLineageRep
                 "status": report.status,
                 "latest_artifact_id": report.latest_artifact_id,
                 "artifact_count": report.metrics.get("artifact_count", 0),
+            },
+        )
+    )
+    return report
+
+
+def _append_page_handoff(state: DesignProductionState) -> PageHandoffReport:
+    """Build and store the latest page handoff readiness report."""
+    report = build_page_handoff(state)
+    report.report_path = f"{state.production_session.root_dir}/reports/page_handoff.md"
+    state.page_handoff_reports = [report]
+    state.production_events.append(
+        ProductionEvent(
+            event_type="page_handoff_built",
+            stage=state.stage,
+            message="Built page and variant handoff readiness report.",
+            metadata={
+                "report_id": report.report_id,
+                "status": report.status,
+                "ready_item_count": report.metrics.get("ready_item_count", 0),
+                "handoff_item_count": report.metrics.get("handoff_item_count", 0),
             },
         )
     )
@@ -1700,6 +1761,7 @@ def _preview_review_payload(state: DesignProductionState) -> ReviewPayload:
             {"kind": "html_artifacts", "artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts]},
             {"kind": "preview_reports", "reports": [_preview_report_payload(state, item) for item in state.preview_reports]},
             {"kind": "qc_reports", "reports": [item.model_dump(mode="json") for item in state.qc_reports]},
+            {"kind": "page_handoff_reports", "reports": [item.model_dump(mode="json") for item in state.page_handoff_reports]},
         ],
         options=[
             {"id": "approve", "label": "Approve final design"},
@@ -1721,6 +1783,7 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
     accessibility_report = _latest_accessibility_report_for_artifact(state, artifact_id)
     diagnostics_report = _latest_browser_diagnostics_report_for_artifact(state, artifact_id)
     lineage_report = state.artifact_lineage_reports[-1] if state.artifact_lineage_reports else None
+    page_handoff_report = state.page_handoff_reports[-1] if state.page_handoff_reports else None
     source_refs = list(latest_html.depends_on) if latest_html is not None else []
     return {
         "delivery": {
@@ -1753,12 +1816,19 @@ def _preview_review_metadata(state: DesignProductionState) -> dict[str, Any]:
                 if extraction_report is not None
                 else ""
             ),
+            "page_handoff_status": page_handoff_report.status if page_handoff_report is not None else "",
+            "page_handoff_report_path": (
+                page_handoff_report.report_path or f"{state.production_session.root_dir}/reports/page_handoff.md"
+                if page_handoff_report is not None
+                else ""
+            ),
         },
         "preview": _preview_review_summary(preview_reports),
         "design_system_extraction": _design_system_extraction_summary(extraction_report),
         "accessibility": _accessibility_summary(accessibility_report),
         "diagnostics": _browser_diagnostics_summary(diagnostics_report),
         "lineage": _artifact_lineage_summary(lineage_report),
+        "pages": _page_handoff_summary(page_handoff_report),
         "quality": _quality_review_summary(qc_report),
         "source_refs": source_refs,
         "source_ref_details": source_ref_details(state, source_refs),
@@ -1972,6 +2042,29 @@ def _artifact_lineage_summary(report: ArtifactLineageReport | None) -> dict[str,
     }
 
 
+def _page_handoff_summary(report: PageHandoffReport | None) -> dict[str, Any]:
+    """Build a compact page handoff summary for review metadata."""
+    if report is None:
+        return {
+            "status": "",
+            "summary": "",
+            "report_path": "",
+            "planned_page_count": 0,
+            "handoff_item_count": 0,
+            "ready_item_count": 0,
+            "missing_item_count": 0,
+        }
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "report_path": report.report_path or "",
+        "planned_page_count": report.metrics.get("planned_page_count", 0),
+        "handoff_item_count": report.metrics.get("handoff_item_count", 0),
+        "ready_item_count": report.metrics.get("ready_item_count", 0),
+        "missing_item_count": report.metrics.get("missing_item_count", 0),
+    }
+
+
 def _quality_review_summary(report: DesignQcReport | None) -> dict[str, Any]:
     """Build a concise QC summary for review metadata."""
     finding_counts = {"info": 0, "warning": 0, "error": 0}
@@ -2077,6 +2170,8 @@ def _build_production_view(state: DesignProductionState, view_type: str) -> dict
         return _diagnostics_view(state)
     if view_type == "lineage":
         return _lineage_view(state)
+    if view_type == "pages":
+        return _pages_view(state)
     if view_type == "quality":
         return _quality_view(state)
     if view_type == "events":
@@ -2122,6 +2217,7 @@ def _overview_view(state: DesignProductionState) -> dict[str, Any]:
                 "pdf_export_reports": len(state.pdf_export_reports),
                 "browser_diagnostics_reports": len(state.browser_diagnostics_reports),
                 "artifact_lineage_reports": len(state.artifact_lineage_reports),
+                "page_handoff_reports": len(state.page_handoff_reports),
                 "qc_reports": len(state.qc_reports),
                 "artifacts": len(state.artifacts),
                 "events": len(state.production_events),
@@ -2266,6 +2362,25 @@ def _lineage_view(state: DesignProductionState) -> dict[str, Any]:
     return view
 
 
+def _pages_view(state: DesignProductionState) -> dict[str, Any]:
+    view = _base_view(state, "pages")
+    view.update(
+        {
+            "layout_plan": state.layout_plan.model_dump(mode="json") if state.layout_plan is not None else None,
+            "page_handoff_reports": [item.model_dump(mode="json") for item in state.page_handoff_reports],
+            "latest_page_handoff": (
+                state.page_handoff_reports[-1].model_dump(mode="json")
+                if state.page_handoff_reports
+                else None
+            ),
+            "page_handoff_report_path": f"{state.production_session.root_dir}/reports/page_handoff.md",
+            "page_handoff_json_path": f"{state.production_session.root_dir}/reports/page_handoff.json",
+            "html_artifacts": [_html_artifact_payload(state, item) for item in state.html_artifacts],
+        }
+    )
+    return view
+
+
 def _quality_view(state: DesignProductionState) -> dict[str, Any]:
     view = _base_view(state, "quality")
     view.update(
@@ -2278,6 +2393,7 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
             "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
+            "page_handoff_reports": [item.model_dump(mode="json") for item in state.page_handoff_reports],
             "qc_reports": [item.model_dump(mode="json") for item in state.qc_reports],
             "html_validation_report_path": f"{state.production_session.root_dir}/reports/html_validation.json",
             "design_system_audit_report_path": f"{state.production_session.root_dir}/reports/design_system_audit.md",
@@ -2287,6 +2403,7 @@ def _quality_view(state: DesignProductionState) -> dict[str, Any]:
             "pdf_export_report_path": f"{state.production_session.root_dir}/reports/pdf_export_report.json",
             "browser_diagnostics_report_path": f"{state.production_session.root_dir}/reports/browser_diagnostics.md",
             "artifact_lineage_report_path": f"{state.production_session.root_dir}/reports/artifact_lineage.md",
+            "page_handoff_report_path": f"{state.production_session.root_dir}/reports/page_handoff.md",
             "qc_report_path": f"{state.production_session.root_dir}/reports/qc_report.md",
         }
     )
@@ -2312,6 +2429,7 @@ def _artifacts_view(state: DesignProductionState) -> dict[str, Any]:
             "pdf_export_reports": [item.model_dump(mode="json") for item in state.pdf_export_reports],
             "browser_diagnostics_reports": [item.model_dump(mode="json") for item in state.browser_diagnostics_reports],
             "artifact_lineage_reports": [item.model_dump(mode="json") for item in state.artifact_lineage_reports],
+            "page_handoff_reports": [item.model_dump(mode="json") for item in state.page_handoff_reports],
             "export_artifacts": [_workspace_file_payload(state, item) for item in state.export_artifacts],
         }
     )

@@ -390,6 +390,40 @@ class ArtifactLineageReport(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
+class PageHandoffItem(BaseModel):
+    """One planned page and variant delivery slot in a Design handoff."""
+
+    item_id: str = Field(default_factory=lambda: new_id("page_handoff_item"))
+    page_id: str = ""
+    page_title: str = ""
+    page_path: str = ""
+    variant_id: str = "default"
+    status: Literal["ready", "partial", "missing", "stale"] = "missing"
+    artifact_id: str = ""
+    artifact_path: str = ""
+    artifact_status: DesignArtifactStatus | None = None
+    artifact_version: int | None = None
+    builder: str = ""
+    report_refs: dict[str, list[str]] = Field(default_factory=dict)
+    artifact_refs: dict[str, list[str]] = Field(default_factory=dict)
+    source_refs: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class PageHandoffReport(BaseModel):
+    """State-derived multi-page and multi-variant Design handoff readiness report."""
+
+    report_id: str = Field(default_factory=lambda: new_id("page_handoff"))
+    layout_plan_id: str = ""
+    build_mode: DesignBuildMode = "single_html"
+    status: Literal["ready", "partial", "empty"] = "empty"
+    summary: str = ""
+    items: list[PageHandoffItem] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    report_path: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class DesignQcFinding(BaseModel):
     """One explainable quality finding for a design artifact."""
 
@@ -433,6 +467,7 @@ class DesignProductionState(ProductionState):
     accessibility_reports: list[AccessibilityReport] = Field(default_factory=list)
     browser_diagnostics_reports: list[BrowserDiagnosticsReport] = Field(default_factory=list)
     artifact_lineage_reports: list[ArtifactLineageReport] = Field(default_factory=list)
+    page_handoff_reports: list[PageHandoffReport] = Field(default_factory=list)
     qc_reports: list[DesignQcReport] = Field(default_factory=list)
     revision_history: list[dict[str, Any]] = Field(default_factory=list)
     export_artifacts: list[WorkspaceFileRef] = Field(default_factory=list)

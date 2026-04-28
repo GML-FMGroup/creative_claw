@@ -77,6 +77,10 @@ Design production now derives a deterministic accessibility report from each val
 
 Design production now derives a deterministic design-system extraction report from each generated HTML artifact. The report summarizes CSS custom properties, colors, typography, spacing/radius/shadow values, media breakpoints, and selectors found in the generated HTML/CSS, alongside DesignSystemSpec token usage. Extraction output is persisted under `reports/design_system_extraction.*`, exposed through `view_type="design_system_extraction"` and the design-system/quality views, included in preview review metadata, linked from artifact lineage, and packaged in final handoff exports.
 
+## P1l Page Handoff
+
+Design production now derives deterministic page and variant handoff readiness from `LayoutPlan.pages`, optional `variation_plan`, generated `HtmlArtifact` records, and linked validation/preview/QC/accessibility/diagnostics/export reports. This does not change the current single-HTML generation path; it creates the durable report contract needed before full multi-page generation. Page handoff output is persisted under `reports/page_handoff.*`, exposed through `view_type="pages"` and quality/artifact views, included in preview review metadata, linked from artifact lineage, and packaged in final handoff exports.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
@@ -91,6 +95,7 @@ Design production now derives a deterministic design-system extraction report fr
 - `placeholders.py`: deterministic P0a HTML builder.
 - `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
 - `handoff.py`: deterministic Design spec, handoff manifest, and ZIP bundle exports for completed production runs.
+- `page_handoff.py`: deterministic page and variant handoff readiness reports derived from production state.
 - `source_refs.py`: source-reference enrichment helpers for views, reviews, and handoff files.
 - `tokens.py`: deterministic JSON and CSS token handoff exports derived from `DesignSystemSpec`.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
