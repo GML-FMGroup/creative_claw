@@ -319,13 +319,14 @@ class PPTProductionTests(unittest.TestCase):
             root = Path(tmpdir)
             source = root / "business.md"
             source.write_text("Revenue grew 20% in Q1. Enterprise retention improved by 6 points.", encoding="utf-8")
+            source_ref = workspace_relative_path(source)
 
             state = _adk_state("session_ppt_source_fact_coverage")
             manager = PPTProductionManager(preview_renderer=_FakePreviewRenderer())
             started = asyncio.run(
                 manager.start(
                     user_prompt="做一份 3 页的 Q1 业务汇报，给高管看。",
-                    input_files=[workspace_relative_path(source)],
+                    input_files=[source_ref],
                     placeholder_assets=False,
                     render_settings={"target_pages": 3, "style_preset": "business_executive"},
                     adk_state=state,
@@ -388,8 +389,12 @@ class PPTProductionTests(unittest.TestCase):
         self.assertEqual(preview_view_items_with_refs[0]["source_refs"], source_input_ids)
         self.assertIn("title", preview_items_with_refs[0])
         self.assertIn("deck_slide_status", preview_view_items_with_refs[0])
+        self.assertEqual(review_items_with_refs[0]["source_ref_details"][0]["name"], "business.md")
+        self.assertEqual(preview_items_with_refs[0]["source_ref_details"][0]["name"], "business.md")
+        self.assertEqual(preview_view_items_with_refs[0]["source_ref_details"][0]["path"], source_ref)
         self.assertEqual(manifest_slides_with_refs[0]["source_refs"], source_input_ids)
-        self.assertIn(f"Source refs: {source_input_ids[0]}", deck_spec_md.read_text(encoding="utf-8"))
+        self.assertEqual(manifest_slides_with_refs[0]["source_ref_details"][0]["name"], "business.md")
+        self.assertIn(f"Source refs: business.md({source_input_ids[0]})", deck_spec_md.read_text(encoding="utf-8"))
 
     def test_quality_report_warns_when_source_facts_are_omitted(self) -> None:
         now = utc_now_iso()

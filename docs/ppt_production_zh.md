@@ -176,7 +176,7 @@ generated/{adk_session_id}/production/{ppt_session_id}/
   quality_report.json
 ```
 
-`state.json` 是事实源；Markdown/JSON 视图、preview 和 render manifest 都是投影，可由 state 重建。`view_type="manifest"` 会返回同一份结构化清单，适合 App 或 CLI 一次性读取交付路径。`deck_spec`、`deck_spec.md`、preview review payload、`view_type="previews"` 和 render manifest 会保留 slide 级 `source_refs`，用于轻量追踪页面来自哪些源文档；这不是精确页码/段落引用。质量报告会做确定性结构/内容/交付检查；`quality_report.md` 会列出每个 check 的状态、摘要和关键 details。当源文档成功抽取出 `salient_facts` 时，还会检查至少有一个源事实进入 outline 或 deck spec，未覆盖时给 warning，便于人工复核事实遗漏风险。
+`state.json` 是事实源；Markdown/JSON 视图、preview 和 render manifest 都是投影，可由 state 重建。`view_type="manifest"` 会返回同一份结构化清单，适合 App 或 CLI 一次性读取交付路径。`deck_spec`、`deck_spec.md`、preview review payload、`view_type="previews"` 和 render manifest 会保留 slide 级 `source_refs`，并在投影里提供 `source_ref_details`（源文件名、路径、输入角色和状态），用于轻量追踪页面来自哪些源文档；这不是精确页码/段落引用。质量报告会做确定性结构/内容/交付检查；`quality_report.md` 会列出每个 check 的状态、摘要和关键 details。当源文档成功抽取出 `salient_facts` 时，还会检查至少有一个源事实进入 outline 或 deck spec，未覆盖时给 warning，便于人工复核事实遗漏风险。
 
 P1e/P1f/P1g segment 产物是中间产物：`SlidePreview.segment_path` 会记录每页单独的可编辑 `.pptx`，`regenerate_stale_segments` 会覆盖 stale 页面的 segment，并通过 `page_preview_review` 暴露给用户确认，但它们不会作为最终交付文件写入 `final_file_paths`。用户需要检查页面级状态时，通过 `view_type="previews"` 查看；需要同时查看 final、preview、segment 和 quality 路径时，通过 `view_type="manifest"` 查看。
 
