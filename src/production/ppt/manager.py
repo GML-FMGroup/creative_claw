@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from src.production.ppt.models import (
     PPTOutline,
     PPTOutlineEntry,
     PPTProductionState,
+    SlidePreview,
     TemplateSummary,
 )
 from src.production.ppt.preview_renderer import PreviewRendererService
@@ -53,6 +55,7 @@ _VIEW_TYPES = (
     "deck_spec",
     "previews",
     "quality",
+    "manifest",
     "events",
     "artifacts",
 )
@@ -121,6 +124,27 @@ class PPTProductionManager:
             )
         )
         try:
+            if _should_pause_for_brief_review(state, placeholder_assets=placeholder_assets):
+                state.status = "needs_user_review"
+                state.stage = "brief_review"
+                state.progress_percent = 10
+                state.active_breakpoint = ProductionBreakpoint(
+                    stage=state.stage,
+                    review_payload=_brief_review_payload(state),
+                )
+                state.production_events.append(
+                    ProductionEvent(
+                        event_type="brief_review_required",
+                        stage=state.stage,
+                        message="Prepared a PPT brief review before outline planning.",
+                        metadata={"input_count": len(state.inputs), "target_pages": settings.target_pages},
+                    )
+                )
+                self._save_projection_files(state)
+                self.store.save_state(state)
+                self.store.project_pointer_to_adk_state(adk_state, state)
+                return self._result_from_state(state, message="Please review the PPT brief before outline generation.")
+
             state.outline = _build_outline(
                 brief=state.brief_summary,
                 settings=settings,
@@ -247,7 +271,7 @@ class PPTProductionManager:
             return self._result_from_state(state, message="PPT production was cancelled.")
 
         if decision == "revise":
-            return self._revise_outline_and_pause(state, user_response=response, adk_state=adk_state)
+            return self._revise_active_breakpoint_and_pause(state, user_response=response, adk_state=adk_state)
 
         if decision != "approve":
             state.production_events.append(
@@ -262,6 +286,37 @@ class PPTProductionManager:
             self.store.save_state(state)
             self.store.project_pointer_to_adk_state(adk_state, state)
             return self._result_from_state(state, message="Please respond with decision=approve, revise, or cancel.")
+
+        if state.active_breakpoint.stage == "brief_review":
+            state.active_breakpoint = None
+            state.outline = _build_outline(
+                brief=state.brief_summary,
+                settings=state.render_settings,
+                inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
+            )
+            state.stage = "outline_planning"
+            state.progress_percent = max(state.progress_percent, 15)
+            state.status = "needs_user_review"
+            state.stage = "outline_review"
+            state.progress_percent = max(state.progress_percent, 20)
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_outline_review_payload(state),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="outline_review_required",
+                    stage=state.stage,
+                    message="Approved PPT brief and prepared a PPT outline before PPTX generation.",
+                    metadata={"outline_id": state.outline.outline_id, "slide_count": len(state.outline.entries)},
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(state, message="PPT brief approved. Please review the generated outline.")
 
         if state.active_breakpoint.stage == "outline_review":
             if state.outline is not None:
@@ -284,6 +339,8 @@ class PPTProductionManager:
                 complete=False,
                 message_prefix="Deck spec approved.",
             )
+        if state.active_breakpoint.stage == "page_preview_review":
+            return self._approve_page_preview_and_pause(state, adk_state=adk_state)
         if state.active_breakpoint.stage == "final_preview_review":
             state.status = "completed"
             state.stage = "completed"
@@ -377,10 +434,11 @@ class PPTProductionManager:
         if isinstance(state_or_result, ProductionRunResult):
             return state_or_result
         state = state_or_result
+        response = _scope_page_preview_revision_response(state, normalize_user_response(user_response))
         return self._result_from_state(
             state,
             message="Loaded PPT revision impact analysis. No production state was changed.",
-            view=build_revision_impact_view(state, user_response),
+            view=build_revision_impact_view(state, response),
         )
 
     async def apply_revision(
@@ -395,7 +453,7 @@ class PPTProductionManager:
         if isinstance(state_or_result, ProductionRunResult):
             return state_or_result
         state = state_or_result
-        response = normalize_user_response(user_response)
+        response = _scope_page_preview_revision_response(state, normalize_user_response(user_response))
         notes = _revision_notes_from_response(response)
         impact_view = build_revision_impact_view(state, response)
         if not notes:
@@ -412,7 +470,202 @@ class PPTProductionManager:
                 view=impact_view,
                 error=ProductionErrorInfo(code="ppt_revision_target_unmatched", message="Revision target was not found."),
             )
-        return self._apply_revision_notes_and_pause(state, notes=notes, user_response=response, adk_state=adk_state)
+        return self._apply_revision_by_impact(state, notes=notes, user_response=response, impact_view=impact_view, adk_state=adk_state)
+
+    async def regenerate_stale_segments(self, *, production_session_id: str | None, adk_state) -> ProductionRunResult:
+        """Regenerate stale slide segment PPTX files and preview PNGs without rebuilding the final deck."""
+        state_or_result = self._load_state_or_not_found(production_session_id, adk_state)
+        if isinstance(state_or_result, ProductionRunResult):
+            return state_or_result
+        state = state_or_result
+        if state.deck_spec is None:
+            return self._result_from_state(
+                state,
+                message="PPT deck spec is required before regenerating stale slide segments.",
+                error=ProductionErrorInfo(
+                    code="ppt_deck_spec_required",
+                    message="PPT deck spec is required before regenerating stale slide segments.",
+                ),
+            )
+        target_slide_ids = _stale_preview_slide_ids(state)
+        if not target_slide_ids:
+            return self._result_from_state(
+                state,
+                message="No stale PPT slide previews need regeneration.",
+                view=_build_production_view(state, "previews"),
+            )
+        target_slides = _slides_matching_ids(state.deck_spec, target_slide_ids)
+        if not target_slides:
+            return self._result_from_state(
+                state,
+                message="No matching stale PPT deck slides were found for regeneration.",
+                error=ProductionErrorInfo(
+                    code="ppt_stale_slide_not_found",
+                    message="No matching stale PPT deck slides were found for regeneration.",
+                ),
+            )
+        try:
+            session_root = self.store.session_root(state.production_session)
+            state.stage = "slide_segment_regeneration"
+            state.progress_percent = max(state.progress_percent, 74)
+            _publish_ppt_progress(
+                adk_state,
+                state,
+                title="Regenerating stale PPT slides",
+                detail=f"Refreshing {len(target_slide_ids)} stale slide preview/segment artifact(s).",
+            )
+            regenerated_ids = self._regenerate_slide_segment_previews(
+                state,
+                slides=target_slides,
+                session_root=session_root,
+            )
+            state.final_artifact = None
+            state.quality_report = None
+            state.artifacts = _artifact_refs(state)
+            state.stale_items = _ensure_stale_items(
+                _remove_slide_preview_stale_items(state.stale_items, set(regenerated_ids)),
+                ["final", "quality"],
+            )
+            state.status = "needs_user_review"
+            state.stage = "page_preview_review"
+            state.progress_percent = max(state.progress_percent, 76)
+            state.active_breakpoint = ProductionBreakpoint(
+                stage=state.stage,
+                review_payload=_page_preview_review_payload(state, regenerated_ids),
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="page_preview_review_required",
+                    stage=state.stage,
+                    message="Regenerated stale PPT slide segment artifacts and paused for page preview review.",
+                    metadata={"slide_ids": regenerated_ids, "remaining_stale_items": state.stale_items},
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            self.store.project_pointer_to_adk_state(adk_state, state)
+            return self._result_from_state(
+                state,
+                message=f"Regenerated {len(regenerated_ids)} stale PPT slide preview/segment artifact(s). Please review the refreshed page preview.",
+            )
+        except Exception as exc:
+            state.status = "failed"
+            state.stage = "failed"
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_stale_slide_regeneration_failed",
+                    stage=state.stage,
+                    message=f"PPT stale slide regeneration failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            self._save_projection_files(state)
+            self.store.save_state(state)
+            return self._result_from_state(
+                state,
+                message="PPT stale slide regeneration failed.",
+                error=ProductionErrorInfo(
+                    code="ppt_stale_slide_regeneration_failed",
+                    message=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+
+    def _approve_page_preview_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
+        review_payload = state.active_breakpoint.review_payload if state.active_breakpoint else None
+        reviewed_slide_ids = _review_payload_slide_ids(review_payload)
+        _approve_page_previews(state, reviewed_slide_ids)
+        state.stale_items = _remove_deck_slide_stale_items(state.stale_items, reviewed_slide_ids)
+        state.artifacts = _artifact_refs(state)
+        state.status = "needs_user_review"
+        state.stage = "deck_spec_review"
+        state.progress_percent = max(state.progress_percent, 78)
+        state.active_breakpoint = ProductionBreakpoint(
+            stage=state.stage,
+            review_payload=_deck_spec_review_payload(state),
+        )
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_page_preview_approved",
+                stage=state.stage,
+                message="User approved regenerated PPT page previews; returned to deck spec review before final rebuild.",
+                metadata={"slide_ids": sorted(reviewed_slide_ids), "remaining_stale_items": state.stale_items},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(
+            state,
+            message="Regenerated PPT page preview was approved. Approve the deck spec to rebuild the full final PPTX.",
+        )
+
+    def _regenerate_slide_segment_previews(
+        self,
+        state: PPTProductionState,
+        *,
+        slides: list[DeckSlide],
+        session_root: Path,
+    ) -> list[str]:
+        regenerated_ids: list[str] = []
+        for slide in slides:
+            updated_preview = self._regenerate_slide_segment_preview(
+                state,
+                slide=slide,
+                session_root=session_root,
+            )
+            _replace_preview_for_slide(state.slide_previews, updated_preview)
+            regenerated_ids.append(slide.slide_id)
+        return regenerated_ids
+
+    def _regenerate_slide_segment_preview(
+        self,
+        state: PPTProductionState,
+        *,
+        slide: DeckSlide,
+        session_root: Path,
+    ) -> SlidePreview:
+        segment_spec = DeckSpec(
+            title=state.deck_spec.title if state.deck_spec else "PPT Slide Segment",
+            slides=[slide.model_copy(deep=True)],
+        )
+        segment_paths = self.deck_builder.build_slide_segments(
+            deck_spec=segment_spec,
+            render_settings=state.render_settings,
+            output_dir=session_root / "segments",
+        )
+        segment_path = segment_paths.get(slide.slide_id, "")
+        temp_preview_dir = session_root / "preview" / "_stale_segments" / f"slide-{slide.sequence_index:02d}"
+        shutil.rmtree(temp_preview_dir, ignore_errors=True)
+        rendered_previews = self.preview_renderer.render(
+            pptx_path=segment_path,
+            deck_spec=segment_spec,
+            render_settings=state.render_settings,
+            output_dir=temp_preview_dir,
+        )
+        if not rendered_previews:
+            raise RuntimeError(f"No preview was rendered for stale slide {slide.sequence_index}.")
+        rendered_preview = rendered_previews[0]
+        stable_preview_path = session_root / "preview" / f"slide-{slide.sequence_index:02d}.png"
+        stable_preview_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(resolve_workspace_path(rendered_preview.preview_path), stable_preview_path)
+        shutil.rmtree(temp_preview_dir, ignore_errors=True)
+
+        existing = _preview_by_slide_id(state).get(slide.slide_id)
+        metadata = dict(rendered_preview.metadata)
+        metadata.update(
+            {
+                "regenerated_from": "stale_slide_segment",
+                "temporary_preview_path": rendered_preview.preview_path,
+            }
+        )
+        return SlidePreview(
+            preview_id=existing.preview_id if existing is not None else rendered_preview.preview_id,
+            slide_id=slide.slide_id,
+            sequence_index=slide.sequence_index,
+            preview_path=workspace_relative_path(stable_preview_path),
+            segment_path=segment_path,
+            status="generated",
+            metadata=metadata,
+        )
 
     def _load_state_or_not_found(self, production_session_id: str | None, adk_state) -> PPTProductionState | ProductionRunResult:
         context = _context_from_adk_state(adk_state)
@@ -439,20 +692,68 @@ class PPTProductionManager:
                 ),
             )
 
-    def _revise_outline_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+    def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         notes = _revision_notes_from_response(user_response)
         if notes:
-            return self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
+            if state.active_breakpoint is not None and state.active_breakpoint.stage == "brief_review":
+                return self._apply_brief_revision_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
+            scoped_response = _scope_page_preview_revision_response(state, user_response)
+            impact_view = build_revision_impact_view(state, scoped_response)
+            return self._apply_revision_by_impact(state, notes=notes, user_response=scoped_response, impact_view=impact_view, adk_state=adk_state)
         state.production_events.append(
             ProductionEvent(
-                event_type="outline_revision_notes_required",
+                event_type="revision_notes_required",
                 stage=state.stage,
-                message="Outline revision requested without concrete notes.",
+                message="Revision requested without concrete notes.",
                 metadata={"user_response": user_response},
             )
         )
         self.store.save_state(state)
-        return self._result_from_state(state, message="Please provide revision notes for the PPT outline.")
+        return self._result_from_state(state, message="Please provide revision notes for the PPT review.")
+
+    def _apply_brief_revision_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+        """Apply pre-outline brief revision notes and remain at brief review."""
+        state.brief_summary = _append_revision_note(state.brief_summary, notes)
+        state.outline = None
+        state.deck_spec = None
+        state.slide_previews = []
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = []
+        state.stale_items = ["brief", "outline", "deck_spec", "slide_previews", "final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "stage": "brief_review"})
+        state.status = "needs_user_review"
+        state.stage = "brief_review"
+        state.progress_percent = max(10, min(state.progress_percent, 19))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_brief_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_brief_revision_applied",
+                stage=state.stage,
+                message="Applied PPT brief revision notes and remained at brief review.",
+                metadata={"user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT brief revision was applied. Please review the updated brief.")
+
+    def _apply_revision_by_impact(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        matched_targets = impact_view.get("matched_targets") or []
+        if _has_only_target_kind(matched_targets, "deck_slide") and state.deck_spec is not None:
+            return self._apply_deck_slide_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
+        if _has_only_target_kind(matched_targets, "outline_entry") and state.outline is not None:
+            return self._apply_outline_entry_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
+        return self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
 
     def _apply_revision_notes_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         state.brief_summary = _append_revision_note(state.brief_summary, notes)
@@ -486,6 +787,83 @@ class PPTProductionManager:
         self.store.save_state(state)
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="PPT revision was applied. Please review the updated outline.")
+
+    def _apply_outline_entry_revision_and_pause(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        matched_targets: list[dict[str, Any]],
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        target_ids = _target_ids(matched_targets, "outline_entry")
+        for entry in state.outline.entries if state.outline is not None else []:
+            if entry.slide_id in target_ids:
+                _append_revision_to_outline_entry(entry, notes)
+        state.deck_spec = None
+        state.slide_previews = []
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = []
+        state.stale_items = impact_view.get("stale_items") or ["deck_spec", "slide_previews", "final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "matched_targets": matched_targets})
+        state.status = "needs_user_review"
+        state.stage = "outline_review"
+        state.progress_percent = max(20, min(state.progress_percent, 45))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_outline_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_outline_entry_revision_applied",
+                stage=state.stage,
+                message="Applied targeted outline revision and paused at outline review.",
+                metadata={"target_ids": target_ids, "user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT outline revision was applied. Please review the updated outline.")
+
+    def _apply_deck_slide_revision_and_pause(
+        self,
+        state: PPTProductionState,
+        *,
+        notes: str,
+        matched_targets: list[dict[str, Any]],
+        user_response: dict[str, Any],
+        impact_view: dict[str, Any],
+        adk_state,
+    ) -> ProductionRunResult:
+        target_ids = _target_ids(matched_targets, "deck_slide")
+        for slide in state.deck_spec.slides if state.deck_spec is not None else []:
+            if slide.slide_id in target_ids:
+                _append_revision_to_deck_slide(slide, notes)
+        if state.deck_spec is not None:
+            state.deck_spec.status = "draft"
+        _mark_target_previews_stale(state, target_ids)
+        state.final_artifact = None
+        state.quality_report = None
+        state.artifacts = _artifact_refs(state)
+        state.stale_items = impact_view.get("stale_items") or [f"slide_preview:{target_id}" for target_id in sorted(target_ids)] + ["final", "quality"]
+        state.revision_history.append({"notes": notes, "user_response": user_response, "matched_targets": matched_targets})
+        state.status = "needs_user_review"
+        state.stage = "deck_spec_review"
+        state.progress_percent = max(42, min(state.progress_percent, 70))
+        state.active_breakpoint = ProductionBreakpoint(stage=state.stage, review_payload=_deck_spec_review_payload(state))
+        state.production_events.append(
+            ProductionEvent(
+                event_type="ppt_deck_slide_revision_applied",
+                stage=state.stage,
+                message="Applied targeted deck slide revision and paused at deck spec review.",
+                metadata={"target_ids": target_ids, "user_response": user_response},
+            )
+        )
+        self._save_projection_files(state)
+        self.store.save_state(state)
+        self.store.project_pointer_to_adk_state(adk_state, state)
+        return self._result_from_state(state, message="PPT deck slide revision was applied. Please review the updated deck spec.")
 
     def _build_deck_spec_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
         """Build an executable deck spec and pause for user review."""
@@ -559,6 +937,12 @@ class PPTProductionManager:
                 render_settings=state.render_settings,
                 output_dir=session_root / "preview",
             )
+            segment_paths = self.deck_builder.build_slide_segments(
+                deck_spec=state.deck_spec,
+                render_settings=state.render_settings,
+                output_dir=session_root / "segments",
+            )
+            _attach_segment_paths(state.slide_previews, segment_paths)
             state.final_artifact.preview_paths = [item.preview_path for item in state.slide_previews]
             state.stage = "quality_check"
             state.progress_percent = 90
@@ -675,6 +1059,12 @@ class PPTProductionManager:
         if state.quality_report is not None:
             (root / "quality_report.json").write_text(state.quality_report.model_dump_json(indent=2), encoding="utf-8")
         (root / "quality_report.md").write_text(quality_report_markdown(state.quality_report), encoding="utf-8")
+        manifest = _render_manifest(state)
+        (root / "render_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (root / "render_manifest.md").write_text(_render_manifest_markdown(manifest), encoding="utf-8")
 
 
 def _context_from_adk_state(adk_state) -> dict[str, Any]:
@@ -709,6 +1099,7 @@ def _normalize_render_settings(payload: dict[str, Any]) -> PPTRenderSettings:
         style_preset=style,  # type: ignore[arg-type]
         pipeline=pipeline,  # type: ignore[arg-type]
         template_edit_mode=str(payload.get("template_edit_mode", "auto") or "auto").strip() or "auto",
+        brief_review=bool(payload.get("brief_review", False)),
         deck_spec_review=bool(payload.get("deck_spec_review", True)),
         skip_review=bool(payload.get("skip_review", False)),
     )
@@ -806,8 +1197,168 @@ def _apply_input_context_to_outline(
         entries[0].bullet_points.append("Source documents are attached, but no supported text was extracted yet.")
 
 
+def _has_only_target_kind(matched_targets: list[dict[str, Any]], kind: str) -> bool:
+    kinds = {str(item.get("kind", "") or "") for item in matched_targets}
+    return bool(kinds) and kinds == {kind}
+
+
+def _target_ids(matched_targets: list[dict[str, Any]], kind: str) -> set[str]:
+    return {str(item.get("id", "") or "") for item in matched_targets if item.get("kind") == kind and item.get("id")}
+
+
+def _append_revision_to_outline_entry(entry: PPTOutlineEntry, notes: str) -> None:
+    bullet = _revision_bullet(notes)
+    if bullet not in entry.bullet_points:
+        entry.bullet_points.append(bullet)
+    entry.speaker_notes = _append_revision_note(entry.speaker_notes, notes)
+    entry.status = "draft"
+
+
+def _append_revision_to_deck_slide(slide: DeckSlide, notes: str) -> None:
+    bullet = _revision_bullet(notes)
+    if bullet not in slide.bullets:
+        slide.bullets.append(bullet)
+    slide.speaker_notes = _append_revision_note(slide.speaker_notes, notes)
+    slide.status = "draft"
+
+
+def _revision_bullet(notes: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(notes or "").strip())
+    if len(cleaned) > 180:
+        cleaned = cleaned[:177].rstrip() + "..."
+    return f"Revision note: {cleaned or 'Update requested.'}"
+
+
+def _mark_target_previews_stale(state: PPTProductionState, target_ids: set[str]) -> None:
+    for preview in state.slide_previews:
+        if preview.slide_id in target_ids:
+            preview.status = "stale"
+
+
+def _attach_segment_paths(previews: list[SlidePreview], segment_paths: dict[str, str]) -> None:
+    for preview in previews:
+        preview.segment_path = segment_paths.get(preview.slide_id, "")
+
+
+def _preview_by_slide_id(state: PPTProductionState) -> dict[str, SlidePreview]:
+    return {preview.slide_id: preview for preview in state.slide_previews}
+
+
+def _replace_preview_for_slide(previews: list[SlidePreview], updated_preview: SlidePreview) -> None:
+    for index, preview in enumerate(previews):
+        if preview.slide_id == updated_preview.slide_id:
+            previews[index] = updated_preview
+            return
+    previews.append(updated_preview)
+    previews.sort(key=lambda preview: preview.sequence_index)
+
+
+def _stale_preview_slide_ids(state: PPTProductionState) -> set[str]:
+    slide_ids = {preview.slide_id for preview in state.slide_previews if preview.status == "stale"}
+    for item in state.stale_items:
+        prefix, _, identifier = str(item).partition(":")
+        if prefix == "slide_preview" and identifier:
+            slide_ids.add(identifier)
+    return slide_ids
+
+
+def _slides_matching_ids(deck_spec: DeckSpec, slide_ids: set[str]) -> list[DeckSlide]:
+    return [slide for slide in deck_spec.slides if slide.slide_id in slide_ids]
+
+
+def _remove_slide_preview_stale_items(stale_items: list[str], regenerated_slide_ids: set[str]) -> list[str]:
+    stale_preview_markers = {f"slide_preview:{slide_id}" for slide_id in regenerated_slide_ids}
+    return [item for item in stale_items if item not in stale_preview_markers]
+
+
+def _remove_deck_slide_stale_items(stale_items: list[str], approved_slide_ids: set[str]) -> list[str]:
+    stale_deck_slide_markers = {f"deck_slide:{slide_id}" for slide_id in approved_slide_ids}
+    return [item for item in stale_items if item not in stale_deck_slide_markers]
+
+
+def _ensure_stale_items(stale_items: list[str], required_items: list[str]) -> list[str]:
+    merged = list(stale_items)
+    for item in required_items:
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def _review_payload_slide_ids(payload: ReviewPayload | None) -> set[str]:
+    if payload is None:
+        return set()
+    slide_ids: set[str] = set()
+    for item in payload.items:
+        slide_id = str(item.get("slide_id") or item.get("id") or "").strip()
+        if slide_id:
+            slide_ids.add(slide_id)
+    return slide_ids
+
+
+def _scope_page_preview_revision_response(state: PPTProductionState, response: dict[str, Any]) -> dict[str, Any]:
+    """Default page-preview revise requests to the slide(s) currently under review."""
+    if state.active_breakpoint is None or state.active_breakpoint.stage != "page_preview_review":
+        return response
+    if _has_explicit_revision_target(response):
+        return response
+    targets = _review_payload_deck_slide_targets(state.active_breakpoint.review_payload)
+    if not targets:
+        return response
+    scoped = dict(response)
+    scoped["targets"] = targets
+    return scoped
+
+
+def _has_explicit_revision_target(response: dict[str, Any]) -> bool:
+    if response.get("targets"):
+        return True
+    target_fields = (
+        "target_id",
+        "id",
+        "target_kind",
+        "kind",
+        "target_label",
+        "label",
+        "slide_number",
+        "slide",
+        "sequence_index",
+        "slide_index",
+    )
+    return any(str(response.get(field, "") or "").strip() for field in target_fields)
+
+
+def _review_payload_deck_slide_targets(payload: ReviewPayload) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    for item in payload.items:
+        slide_id = str(item.get("slide_id") or item.get("id") or "").strip()
+        if not slide_id:
+            continue
+        sequence_index = str(item.get("sequence_index", "") or "").strip()
+        title = str(item.get("title", "") or "").strip()
+        label = f"Deck slide {sequence_index}: {title}".strip()
+        targets.append({"kind": "deck_slide", "id": slide_id, "label": label})
+    return targets
+
+
+def _approve_page_previews(state: PPTProductionState, slide_ids: set[str]) -> None:
+    for preview in state.slide_previews:
+        if preview.slide_id in slide_ids:
+            preview.status = "approved"
+    if state.deck_spec is None:
+        return
+    for slide in state.deck_spec.slides:
+        if slide.slide_id in slide_ids:
+            slide.status = "approved"
+    if state.deck_spec.slides and all(slide.status == "approved" for slide in state.deck_spec.slides):
+        state.deck_spec.status = "approved"
+
+
 def _should_pause_for_deck_spec_review(state: PPTProductionState) -> bool:
     return bool(state.render_settings.deck_spec_review and not state.render_settings.skip_review)
+
+
+def _should_pause_for_brief_review(state: PPTProductionState, *, placeholder_assets: bool) -> bool:
+    return bool(state.render_settings.brief_review and not state.render_settings.skip_review and not placeholder_assets)
 
 
 def _approve_deck_spec(deck_spec: DeckSpec | None) -> None:
@@ -930,21 +1481,161 @@ def _artifact_refs(state: PPTProductionState) -> list[WorkspaceFileRef]:
         WorkspaceFileRef(
             name=Path(preview.preview_path).name,
             path=preview.preview_path,
-            description=f"Preview image for slide {preview.sequence_index}.",
+            description=f"{preview.status.title()} preview image for slide {preview.sequence_index}.",
             source="ppt",
         )
         for preview in state.slide_previews
     )
-    root = state.production_session.root_dir
-    artifacts.append(
-        WorkspaceFileRef(
-            name="quality_report.md",
-            path=f"{root}/quality_report.md",
-            description="Deterministic PPT quality report.",
-            source="ppt",
+    if state.quality_report is not None:
+        root = state.production_session.root_dir
+        artifacts.append(
+            WorkspaceFileRef(
+                name="quality_report.md",
+                path=f"{root}/quality_report.md",
+                description="Deterministic PPT quality report.",
+                source="ppt",
+            )
         )
-    )
+    if _has_render_manifest_outputs(state):
+        root = state.production_session.root_dir
+        artifacts.append(
+            WorkspaceFileRef(
+                name="render_manifest.md",
+                path=f"{root}/render_manifest.md",
+                description="PPT delivery manifest with final, preview, segment, and quality paths.",
+                source="ppt",
+            )
+        )
     return artifacts
+
+
+def _has_render_manifest_outputs(state: PPTProductionState) -> bool:
+    return bool(state.final_artifact is not None or state.slide_previews or state.quality_report is not None)
+
+
+def _render_manifest(state: PPTProductionState) -> dict[str, Any]:
+    final_pptx_path = state.final_artifact.pptx_path if state.final_artifact is not None else ""
+    quality_report_path = (
+        state.quality_report.report_path
+        if state.quality_report is not None and state.quality_report.report_path
+        else f"{state.production_session.root_dir}/quality_report.json"
+    )
+    deck_slides = {slide.slide_id: slide for slide in state.deck_spec.slides} if state.deck_spec is not None else {}
+    slides = []
+    for preview in sorted(state.slide_previews, key=lambda item: item.sequence_index):
+        slide = deck_slides.get(preview.slide_id)
+        slides.append(
+            {
+                "slide_id": preview.slide_id,
+                "sequence_index": preview.sequence_index,
+                "title": slide.title if slide is not None else "",
+                "layout_type": slide.layout_type if slide is not None else "",
+                "deck_slide_status": slide.status if slide is not None else "",
+                "preview_status": preview.status,
+                "preview_path": preview.preview_path,
+                "segment_path": preview.segment_path,
+            }
+        )
+
+    return {
+        "manifest_version": "0.1.0",
+        "production_session_id": state.production_session.production_session_id,
+        "capability": state.production_session.capability,
+        "status": state.status,
+        "stage": state.stage,
+        "progress_percent": state.progress_percent,
+        "state_ref": f"{state.production_session.root_dir}/state.json",
+        "manifest_path": f"{state.production_session.root_dir}/render_manifest.json",
+        "manifest_markdown_path": f"{state.production_session.root_dir}/render_manifest.md",
+        "brief_summary": state.brief_summary,
+        "render_settings": state.render_settings.model_dump(mode="json"),
+        "inputs": [item.model_dump(mode="json") for item in state.inputs],
+        "document_summary": _review_summary_state(state.document_summary),
+        "template_summary": _review_summary_state(state.template_summary),
+        "outline": _outline_manifest(state),
+        "deck_spec": _deck_spec_manifest(state),
+        "delivery": {
+            "final_pptx_path": final_pptx_path,
+            "preview_count": len(state.slide_previews),
+            "segment_count": len([preview for preview in state.slide_previews if preview.segment_path]),
+            "quality_report_path": quality_report_path if state.quality_report is not None else "",
+            "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md",
+            "quality_status": state.quality_report.status if state.quality_report is not None else "",
+        },
+        "slides": slides,
+        "stale_items": state.stale_items,
+        "warnings": state.warnings,
+        "artifacts": [item.model_dump(mode="json") for item in state.artifacts],
+    }
+
+
+def _outline_manifest(state: PPTProductionState) -> dict[str, Any] | None:
+    if state.outline is None:
+        return None
+    return {
+        "outline_id": state.outline.outline_id,
+        "title": state.outline.title,
+        "target_pages": state.outline.target_pages,
+        "slide_count": len(state.outline.entries),
+        "status": state.outline.status,
+        "path": f"{state.production_session.root_dir}/outline.json",
+        "markdown_path": f"{state.production_session.root_dir}/outline.md",
+    }
+
+
+def _deck_spec_manifest(state: PPTProductionState) -> dict[str, Any] | None:
+    if state.deck_spec is None:
+        return None
+    return {
+        "deck_spec_id": state.deck_spec.deck_spec_id,
+        "title": state.deck_spec.title,
+        "slide_count": len(state.deck_spec.slides),
+        "status": state.deck_spec.status,
+        "path": f"{state.production_session.root_dir}/deck_spec.json",
+        "markdown_path": f"{state.production_session.root_dir}/deck_spec.md",
+    }
+
+
+def _render_manifest_markdown(manifest: dict[str, Any]) -> str:
+    delivery = manifest.get("delivery") or {}
+    lines = [
+        "# PPT Render Manifest",
+        "",
+        f"Session: {manifest.get('production_session_id', '')}",
+        f"Status: {manifest.get('status', '')}",
+        f"Stage: {manifest.get('stage', '')}",
+        "",
+        "## Delivery",
+        "",
+        f"- Final PPTX: {delivery.get('final_pptx_path') or 'Not generated yet'}",
+        f"- Preview count: {delivery.get('preview_count', 0)}",
+        f"- Segment count: {delivery.get('segment_count', 0)}",
+        f"- Quality report: {delivery.get('quality_report_path') or 'Not generated yet'}",
+        f"- Quality status: {delivery.get('quality_status') or 'Not generated yet'}",
+        "",
+    ]
+    slides = manifest.get("slides") or []
+    if slides:
+        lines.extend(["## Slides", ""])
+        for slide in slides:
+            lines.append(
+                "- "
+                f"{slide.get('sequence_index')}. {slide.get('title') or slide.get('slide_id')} "
+                f"preview={slide.get('preview_status') or 'none'} "
+                f"segment={slide.get('segment_path') or 'none'}"
+            )
+        lines.append("")
+    stale_items = manifest.get("stale_items") or []
+    if stale_items:
+        lines.extend(["## Stale Items", ""])
+        lines.extend(f"- {item}" for item in stale_items)
+        lines.append("")
+    warnings = manifest.get("warnings") or []
+    if warnings:
+        lines.extend(["## Warnings", ""])
+        lines.extend(f"- {warning}" for warning in warnings)
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
@@ -975,22 +1666,78 @@ def _outline_review_payload(state: PPTProductionState) -> ReviewPayload:
     )
 
 
+def _brief_review_payload(state: PPTProductionState) -> ReviewPayload:
+    settings = state.render_settings
+    return ReviewPayload(
+        review_type="ppt_brief_review",
+        title="Review PPT Brief",
+        summary="Approve this brief to generate a PPT outline, or revise the direction before planning.",
+        items=[
+            {
+                "id": "ppt_brief",
+                "brief_summary": state.brief_summary,
+                "target_pages": settings.target_pages,
+                "aspect_ratio": settings.aspect_ratio,
+                "style_preset": settings.style_preset,
+                "pipeline": settings.pipeline,
+                "template_edit_mode": settings.template_edit_mode,
+                "input_count": len(state.inputs),
+                "inputs": [
+                    {
+                        "id": item.input_id,
+                        "name": item.name,
+                        "role": item.role,
+                        "status": item.status,
+                        "warning": item.warning,
+                    }
+                    for item in state.inputs
+                ],
+                "document_summary": _review_summary_state(state.document_summary),
+                "template_summary": _review_summary_state(state.template_summary),
+                "warnings": state.warnings,
+            }
+        ],
+        options=[
+            {"decision": "approve", "label": "Approve brief and generate outline"},
+            {"decision": "revise", "label": "Revise brief", "requires_notes": True},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
+
+
+def _review_summary_state(summary: DocumentSummary | TemplateSummary | None) -> dict[str, Any] | None:
+    if summary is None:
+        return None
+    return {
+        "status": summary.status,
+        "summary": summary.summary,
+        "warnings": summary.warnings,
+    }
+
+
 def _deck_spec_review_payload(state: PPTProductionState) -> ReviewPayload:
     deck_spec = state.deck_spec
     items = []
+    preview_by_slide_id = _preview_by_slide_id(state)
     if deck_spec is not None:
-        items = [
-            {
-                "id": slide.slide_id,
-                "sequence_index": slide.sequence_index,
-                "title": slide.title,
-                "layout_type": slide.layout_type,
-                "bullets": slide.bullets,
-                "visual_notes": slide.visual_notes,
-                "speaker_notes": slide.speaker_notes,
-            }
-            for slide in deck_spec.slides
-        ]
+        items = []
+        for slide in deck_spec.slides:
+            preview = preview_by_slide_id.get(slide.slide_id)
+            items.append(
+                {
+                    "id": slide.slide_id,
+                    "sequence_index": slide.sequence_index,
+                    "title": slide.title,
+                    "layout_type": slide.layout_type,
+                    "bullets": slide.bullets,
+                    "visual_notes": slide.visual_notes,
+                    "speaker_notes": slide.speaker_notes,
+                    "status": slide.status,
+                    "preview_status": preview.status if preview is not None else "",
+                    "preview_path": preview.preview_path if preview is not None else "",
+                    "segment_path": preview.segment_path if preview is not None else "",
+                }
+            )
     return ReviewPayload(
         review_type="ppt_deck_spec_review",
         title="Review PPT Deck Spec",
@@ -1018,6 +1765,29 @@ def _final_preview_review_payload(state: PPTProductionState) -> ReviewPayload:
     )
 
 
+def _page_preview_review_payload(state: PPTProductionState, slide_ids: list[str]) -> ReviewPayload:
+    selected_ids = set(slide_ids)
+    items = [
+        preview.model_dump(mode="json")
+        for preview in state.slide_previews
+        if preview.slide_id in selected_ids
+    ]
+    return ReviewPayload(
+        review_type="ppt_page_preview_review",
+        title="Review Regenerated PPT Page Preview",
+        summary=(
+            "Approve these regenerated page previews to return to deck spec review. "
+            "The full final PPTX and quality report remain stale until the deck spec is approved and rebuilt."
+        ),
+        items=items,
+        options=[
+            {"decision": "approve", "label": "Approve regenerated pages and review deck spec"},
+            {"decision": "revise", "label": "Revise regenerated page", "requires_notes": True},
+            {"decision": "cancel", "label": "Cancel production"},
+        ],
+    )
+
+
 def _build_production_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
     base = _base_view(state, view_type)
     if view_type == "overview":
@@ -1030,6 +1800,7 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
                     "outline_slides": len(state.outline.entries) if state.outline is not None else 0,
                     "deck_spec_slides": len(state.deck_spec.slides) if state.deck_spec is not None else 0,
                     "previews": len(state.slide_previews),
+                    "stale_previews": len([item for item in state.slide_previews if item.status == "stale"]),
                     "artifacts": len(state.artifacts),
                     "events": len(state.production_events),
                 },
@@ -1065,6 +1836,8 @@ def _build_production_view(state: PPTProductionState, view_type: str) -> dict[st
         base.update({"previews": [item.model_dump(mode="json") for item in state.slide_previews], "preview_index_path": f"{state.production_session.root_dir}/preview/index.json"})
     elif view_type == "quality":
         base.update({"quality_report": state.quality_report.model_dump(mode="json") if state.quality_report else None, "quality_report_path": f"{state.production_session.root_dir}/quality_report.json", "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md"})
+    elif view_type == "manifest":
+        base.update({"manifest": _render_manifest(state), "manifest_path": f"{state.production_session.root_dir}/render_manifest.json", "manifest_markdown_path": f"{state.production_session.root_dir}/render_manifest.md"})
     elif view_type == "events":
         base.update({"events": [item.model_dump(mode="json") for item in state.production_events], "events_path": f"{state.production_session.root_dir}/events.jsonl"})
     elif view_type == "artifacts":
@@ -1082,6 +1855,7 @@ def _base_view(state: PPTProductionState, view_type: str) -> dict[str, Any]:
         "progress_percent": state.progress_percent,
         "state_ref": f"{state.production_session.root_dir}/state.json",
         "project_root": state.production_session.root_dir,
+        "stale_items": state.stale_items,
     }
 
 
