@@ -104,6 +104,37 @@
       }
     },
     {
+      "eval_id": "start_multi_page_microsite_preserves_pages",
+      "conversation": [
+        {
+          "invocation_id": "start_multi_page_microsite_preserves_pages_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请为一个 AI 客服 SaaS 做一个多页面 HTML microsite，不是单页 landing page。需要首页 index.html、产品页 product.html、价格页 pricing.html。先进入设计方向 review，保留这些页面结构。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_multi_page_microsite",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
       "eval_id": "view_preview_and_quality_after_generation",
       "conversation": [
         {

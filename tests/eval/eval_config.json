@@ -71,6 +71,13 @@
           }
         },
         {
+          "rubric_id": "design_multi_page_preserves_page_intent",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for a multi-page HTML website, microsite, or app, the agent uses run_design_production with design_settings.build_mode set to multi_html and preserves explicitly requested pages in design_settings.pages with safe relative .html paths instead of collapsing the request into a single landing page."
+          }
+        },
+        {
           "rubric_id": "design_view_for_preview_or_quality",
           "type": "TOOL_USE_QUALITY",
           "rubric_content": {
