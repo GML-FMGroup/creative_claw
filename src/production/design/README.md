@@ -17,13 +17,21 @@ Design production is intentionally separate from one-shot image generation, edit
 
 ## P0b-A Non-placeholder Flow
 
-When `placeholder_design=false`, `start` now uses internal structured Design experts to prepare the brief, design system, and layout plan, then pauses at `design_direction_review`. Approving that breakpoint calls `HtmlBuilderExpert` to generate a baseline single-file HTML artifact, then runs the same static validation, optional browser preview, and deterministic QC before pausing at `preview_review`.
+When `placeholder_design=false`, `start` now uses internal structured Design experts to prepare the brief, design system, and layout plan, then pauses at `design_direction_review`. Approving that breakpoint calls `HtmlBuilderExpert` to generate a baseline single-file HTML artifact, then runs static validation, optional browser preview, deterministic QC, and supplemental expert QC before pausing at `preview_review`.
 
 The internal experts are encapsulated behind `DesignProductionManager`; they are not top-level orchestrator experts and do not own production state.
 
 ## P0b-B Revision Flow
 
-At `preview_review`, a `decision=revise` response now runs revision impact analysis from `DesignProductionState`, marks previous HTML artifacts stale, and asks `HtmlBuilderExpert` for a full-page revision build. P0 keeps section-aware impact metadata, but still rebuilds the single-page HTML artifact instead of assembling section fragments. The rebuilt artifact uses `HtmlBuilderExpert.variant`, then runs validator, preview, and deterministic QC before returning to `preview_review`.
+At `preview_review`, a `decision=revise` response now runs revision impact analysis from `DesignProductionState`, marks previous HTML artifacts stale, and asks `HtmlBuilderExpert` for a full-page revision build. P0 keeps section-aware impact metadata, but still rebuilds the single-page HTML artifact instead of assembling section fragments. The rebuilt artifact uses `HtmlBuilderExpert.variant`, then runs validator, preview, deterministic QC, and supplemental expert QC before returning to `preview_review`.
+
+## P0b-C Expert Quality Feedback
+
+Expert and revision HTML builds now run supplemental `DesignQCExpert` assessment after validator and preview facts are available. Deterministic validator and preview checks remain the hard fact source; expert findings are merged as informational or warning-level guidance, and expert QC failure records a warning instead of failing production.
+
+## P0b-E Lightweight Handoff
+
+When a Design production run reaches final approval, the manager now writes deterministic handoff exports under `exports/`: `design_spec.md` for human review and `handoff_manifest.json` for machine-readable downstream use. These files are derived from `DesignProductionState`, recorded in `export_artifacts`, and projected with the final HTML, preview screenshots, and QC report. P0b-E does not generate PDF, ZIP, Figma, or production-code handoff outputs.
 
 ## Package Responsibilities
 
@@ -31,9 +39,10 @@ At `preview_review`, a `decision=revise` response now runs revision impact analy
 - `manager.py`: production state machine, review checkpoints, revision handling, views, projection files, and final artifact projection.
 - `models.py`: typed design state, brief, design system, layout plan, HTML artifact, preview report, and QC report models.
 - `placeholders.py`: deterministic P0a HTML builder.
-- `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction and baseline HTML generation.
+- `expert_runtime.py`: internal ADK structured-output experts for non-placeholder Design direction, HTML generation, and supplemental quality feedback.
+- `handoff.py`: deterministic Design spec and handoff manifest exports for completed production runs.
 - `prompt_catalog.py` and `prompts/`: packaged prompt templates used by the internal Design experts.
-- `quality.py`: deterministic P0 quality report generation.
+- `quality.py`: deterministic P0 quality report generation and supplemental expert finding merge.
 - `impact.py`: read-only P0 revision impact analysis.
 - `tools/asset_ingestor.py`: reference asset registration and copying.
 - `tools/html_validator.py`: static HTML validation.

@@ -1,0 +1,328 @@
+{
+  "eval_set_id": "design_p0",
+  "name": "Design P0 behavior",
+  "description": "Checks that the orchestrator routes HTML-centered design work through Design production, uses review gates, reads production views for preview/QC, and handles revision impact separately from application.",
+  "eval_cases": [
+    {
+      "eval_id": "start_saas_landing_requires_design_review",
+      "conversation": [
+        {
+          "invocation_id": "start_saas_landing_requires_design_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请为一个 AI 客服 SaaS 做一页 HTML landing page。先给我设计方向、模块顺序和视觉系统，不要直接生成最终图。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_landing_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_dashboard_ui_requires_design_review",
+      "conversation": [
+        {
+          "invocation_id": "start_dashboard_ui_requires_design_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "做一个电商运营后台 dashboard 的 HTML UI mockup，重点是 GMV、库存预警、异常订单。先进入设计方向 review。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_dashboard_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_product_detail_with_reference_asset",
+      "conversation": [
+        {
+          "invocation_id": "start_product_detail_with_reference_asset_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "基于我刚上传的产品图，做一个单页 HTML 产品详情页，突出高级感、参数和购买 CTA。先给设计方向，不要直接做 PNG。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_product_reference",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [
+            {
+              "name": "product.png",
+              "path": "input/eval_product.png",
+              "description": "product reference image",
+              "source": "channel"
+            }
+          ],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "view_preview_and_quality_after_generation",
+      "conversation": [
+        {
+          "invocation_id": "view_preview_and_quality_after_generation_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请做一个 B2B 数据平台的一页 HTML landing page。先给设计方向 review。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "view_preview_and_quality_after_generation_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "设计方向确认，继续生成 HTML 预览，但不要最终交付。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "view_preview_and_quality_after_generation_3",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "现在把这个 design 的 preview 和质量报告给我看一下。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_preview_quality",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "analyze_hero_revision_impact",
+      "conversation": [
+        {
+          "invocation_id": "analyze_hero_revision_impact_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "帮我做一个 AI 写作工具的一页 HTML landing page。先给设计方向。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "analyze_hero_revision_impact_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "方向确认，生成 HTML 预览。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "analyze_hero_revision_impact_3",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "如果我只把 hero 改成更产品导向，会影响哪些 section、HTML artifact 和 QC？先不要真的改。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_hero_impact",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "apply_confirmed_hero_revision",
+      "conversation": [
+        {
+          "invocation_id": "apply_confirmed_hero_revision_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "帮我做一个 AI 写作工具的一页 HTML landing page。先给设计方向。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "apply_confirmed_hero_revision_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "方向确认，生成 HTML 预览。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "apply_confirmed_hero_revision_3",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "确认修改：把 hero 改成更产品导向，突出编辑器界面和立即试用按钮。应用后回到预览 review。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_apply_hero_revision",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "poster_png_should_not_use_design_production",
+      "conversation": [
+        {
+          "invocation_id": "poster_png_should_not_use_design_production_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "给我生成一张新品发布会海报 PNG，适合朋友圈传播，不需要 HTML 页面。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_boundary_png",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "editable_ppt_should_not_use_design_production",
+      "conversation": [
+        {
+          "invocation_id": "editable_ppt_should_not_use_design_production_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请做一份可编辑的 PPTX 商业汇报 deck，先给大纲 review，不要做 HTML 页面。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "design_eval_user",
+        "state": {
+          "sid": "eval_design_boundary_ppt",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "design_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    }
+  ]
+}

@@ -20,8 +20,9 @@ def build_quality_report(
     preview_reports: list[PreviewReport],
     brief: DesignBrief | None,
     layout_plan: LayoutPlan | None,
+    expert_report: DesignQcReport | None = None,
 ) -> DesignQcReport:
-    """Build a deterministic P0 quality report from validator and preview facts."""
+    """Build a P0 quality report from hard facts plus optional expert guidance."""
     findings: list[DesignQcFinding] = []
     for issue in validation_report.issues:
         findings.append(
@@ -97,8 +98,11 @@ def build_quality_report(
             )
         )
 
+    deterministic_has_error = any(finding.severity == "error" for finding in findings)
+    findings.extend(_supplemental_expert_findings(expert_report))
+
     status = "pass"
-    if any(finding.severity == "error" for finding in findings):
+    if deterministic_has_error:
         status = "fail"
     elif any(finding.severity == "warning" for finding in findings):
         status = "warning"
@@ -113,6 +117,46 @@ def build_quality_report(
         summary=summary,
         findings=findings,
     )
+
+
+def _supplemental_expert_findings(expert_report: DesignQcReport | None) -> list[DesignQcFinding]:
+    """Return expert findings normalized so they cannot create hard failures."""
+    if expert_report is None:
+        return []
+    if not expert_report.findings and expert_report.status != "pass":
+        return [
+            DesignQcFinding(
+                severity="warning",
+                category="visual",
+                target="DesignQCExpert",
+                summary=expert_report.summary or "DesignQCExpert reported a quality concern.",
+                recommendation="Review the generated HTML and request a revision if the concern is visible.",
+            )
+        ]
+
+    normalized: list[DesignQcFinding] = []
+    for finding in expert_report.findings:
+        severity = "warning" if finding.severity == "error" else finding.severity
+        normalized.append(
+            DesignQcFinding(
+                severity=severity,
+                category=finding.category,
+                target=finding.target,
+                summary=finding.summary,
+                recommendation=finding.recommendation,
+            )
+        )
+    if expert_report.status != "pass" and not any(finding.severity == "warning" for finding in normalized):
+        normalized.append(
+            DesignQcFinding(
+                severity="warning",
+                category="visual",
+                target="DesignQCExpert",
+                summary=expert_report.summary or "DesignQCExpert reported a quality concern.",
+                recommendation="Review the generated HTML and request a revision if the concern is visible.",
+            )
+        )
+    return normalized
 
 
 def quality_report_markdown(report: DesignQcReport | None) -> str:
@@ -143,4 +187,3 @@ def quality_report_markdown(report: DesignQcReport | None) -> str:
             ]
         )
     return "\n".join(lines).rstrip() + "\n"
-
