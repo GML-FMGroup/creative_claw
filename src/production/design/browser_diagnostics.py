@@ -6,6 +6,12 @@ import json
 from collections import Counter
 from typing import Any, Literal, cast
 
+from src.production.design.browser_environment import (
+    BROWSER_REMEDIATION,
+    browser_environment_metadata,
+    browser_environment_recommendation,
+    classify_browser_environment_issue,
+)
 from src.production.design.models import (
     BrowserDiagnosticsFinding,
     BrowserDiagnosticsReport,
@@ -106,13 +112,14 @@ def _preview_findings(preview_reports: list[PreviewReport]) -> list[BrowserDiagn
     for report in preview_reports:
         target = f"preview:{report.viewport}"
         if _preview_is_unavailable(report):
+            issue_text = _issue_text(report.issues)
             findings.append(
                 _finding(
                     severity="warning",
                     category="environment",
                     target=target,
                     summary=f"Browser preview is unavailable for {report.viewport}.",
-                    recommendation="Install or enable Playwright browser support, then rerun preview rendering.",
+                    recommendation=browser_environment_recommendation(issue_text) or BROWSER_REMEDIATION,
                     evidence=_preview_evidence(report),
                 )
             )
@@ -184,13 +191,14 @@ def _pdf_findings(pdf_reports: list[PdfExportReport]) -> list[BrowserDiagnostics
                 )
             continue
         if report.status == "unavailable":
+            issue_text = _issue_text(report.issues)
             findings.append(
                 _finding(
                     severity="warning",
                     category="environment",
                     target=target,
                     summary="PDF export is unavailable in the current browser environment.",
-                    recommendation="Install or enable Playwright browser support, then rerun PDF export.",
+                    recommendation=browser_environment_recommendation(issue_text) or BROWSER_REMEDIATION,
                     evidence=_pdf_evidence(report),
                 )
             )
@@ -243,6 +251,14 @@ def _metrics(
         "pdf_exported_count": len([report for report in pdf_reports if report.status == "exported"]),
         "pdf_unavailable_count": len([report for report in pdf_reports if report.status == "unavailable"]),
         "pdf_failed_count": len([report for report in pdf_reports if report.status == "failed"]),
+        "browser_environment_status": _browser_environment_status(
+            preview_reports=preview_reports,
+            pdf_reports=pdf_reports,
+        ),
+        "browser_environment_remediation": _browser_environment_remediation(
+            preview_reports=preview_reports,
+            pdf_reports=pdf_reports,
+        ),
         "finding_counts": {
             "info": finding_counts.get("info", 0),
             "warning": finding_counts.get("warning", 0),
@@ -289,25 +305,63 @@ def _pdf_reports_for_artifact(state: DesignProductionState, artifact_id: str) ->
 def _preview_is_unavailable(report: PreviewReport) -> bool:
     if report.layout_metrics.get("preview") == "unavailable":
         return True
-    return any("playwright is not available" in issue.lower() for issue in report.issues)
+    return classify_browser_environment_issue(_issue_text(report.issues)) is not None
 
 
 def _preview_evidence(report: PreviewReport) -> dict[str, Any]:
-    return {
+    evidence = {
         "report_id": report.report_id,
         "viewport": report.viewport,
         "issues": report.issues[:5],
         "screenshot_path": report.screenshot_path,
     }
+    evidence.update(browser_environment_metadata(_issue_text(report.issues)))
+    return evidence
 
 
 def _pdf_evidence(report: PdfExportReport) -> dict[str, Any]:
-    return {
+    evidence = {
         "report_id": report.report_id,
         "status": report.status,
         "pdf_path": report.pdf_path,
         "issues": report.issues[:5],
     }
+    evidence.update(browser_environment_metadata(_issue_text(report.issues)))
+    return evidence
+
+
+def _browser_environment_status(
+    *,
+    preview_reports: list[PreviewReport],
+    pdf_reports: list[PdfExportReport],
+) -> str:
+    if any(_preview_is_unavailable(report) for report in preview_reports):
+        return "unavailable"
+    if any(report.status == "unavailable" for report in pdf_reports):
+        return "unavailable"
+    if not preview_reports:
+        return "unchecked"
+    return "ready"
+
+
+def _browser_environment_remediation(
+    *,
+    preview_reports: list[PreviewReport],
+    pdf_reports: list[PdfExportReport],
+) -> str:
+    for issue_text in [_issue_text(report.issues) for report in preview_reports]:
+        recommendation = browser_environment_recommendation(issue_text)
+        if recommendation:
+            return recommendation
+    for issue_text in [_issue_text(report.issues) for report in pdf_reports]:
+        recommendation = browser_environment_recommendation(issue_text)
+        if recommendation:
+            return recommendation
+    return ""
+
+
+def _issue_text(issues: list[str]) -> str:
+    return "\n".join(issues)
 
 
 def _finding(

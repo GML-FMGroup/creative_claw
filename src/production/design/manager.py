@@ -2251,6 +2251,7 @@ def _browser_diagnostics_summary(report: BrowserDiagnosticsReport | None) -> dic
                 "category": finding.category,
                 "target": finding.target,
                 "summary": finding.summary,
+                "recommendation": finding.recommendation,
             }
             for finding in report.findings
             if finding.severity in {"warning", "error"}

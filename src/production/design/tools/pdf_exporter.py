@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from src.production.design.browser_environment import (
+    browser_runtime_issue,
+    classify_browser_environment_issue,
+    playwright_package_missing_issue,
+)
 from src.production.design.models import PdfExportReport
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
@@ -39,7 +44,7 @@ class HtmlPdfExporter:
                 artifact_id=artifact_id,
                 source_html_path=source_html_path,
                 status="unavailable",
-                issue=f"Playwright is not available: {type(exc).__name__}",
+                issue=playwright_package_missing_issue(exc),
             )
 
         try:
@@ -55,11 +60,17 @@ class HtmlPdfExporter:
                 finally:
                     await browser.close()
         except Exception as exc:
+            issue = browser_runtime_issue(context="PDF export", exc=exc)
+            status: Literal["unavailable", "failed"] = (
+                "unavailable"
+                if classify_browser_environment_issue(issue) is not None
+                else "failed"
+            )
             return _pdf_export_report(
                 artifact_id=artifact_id,
                 source_html_path=source_html_path,
-                status="failed",
-                issue=f"PDF export failed: {type(exc).__name__}: {exc}",
+                status=status,
+                issue=issue if status == "unavailable" else f"PDF export failed: {type(exc).__name__}: {exc}",
             )
 
         if not output_path.exists() or output_path.stat().st_size <= 0:

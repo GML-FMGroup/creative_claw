@@ -78,6 +78,42 @@ class _FakePreviewRenderer:
         ]
 
 
+class _UnavailablePreviewRenderer:
+    async def render(self, *, artifact_id: str, html_path, output_dir: Path, viewports=None):
+        return [
+            PreviewReport(
+                artifact_id=artifact_id,
+                viewport="desktop",
+                valid=False,
+                issues=[
+                    "Browser environment is unavailable for preview rendering: "
+                    "Playwright browser executable is not installed."
+                ],
+                layout_metrics={
+                    "preview": "unavailable",
+                    "browser_environment": "runtime_unavailable",
+                    "remediation": "Install Playwright Chromium browser support with "
+                    "`python -m playwright install chromium`, then rerun Design preview or PDF export.",
+                },
+            ),
+            PreviewReport(
+                artifact_id=artifact_id,
+                viewport="mobile",
+                valid=False,
+                issues=[
+                    "Browser environment is unavailable for preview rendering: "
+                    "Playwright browser executable is not installed."
+                ],
+                layout_metrics={
+                    "preview": "unavailable",
+                    "browser_environment": "runtime_unavailable",
+                    "remediation": "Install Playwright Chromium browser support with "
+                    "`python -m playwright install chromium`, then rerun Design preview or PDF export.",
+                },
+            ),
+        ]
+
+
 class _FakePdfExporter:
     async def export(self, *, artifact_id: str, html_path, output_path: Path) -> PdfExportReport:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,6 +530,42 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("reports/qc_report.md", bundle_names)
         self.assertTrue(any(name.startswith("previews/index_") and name.endswith("_desktop.png") for name in bundle_names))
         self.assertTrue(any(name.startswith("previews/index_") and name.endswith("_mobile.png") for name in bundle_names))
+
+    def test_manager_preview_unavailable_includes_browser_remediation(self) -> None:
+        state = _adk_state("session_design_preview_unavailable")
+        manager = DesignProductionManager(preview_renderer=_UnavailablePreviewRenderer())
+
+        result = asyncio.run(
+            manager.start(
+                user_prompt="Design a SaaS landing page for a browser diagnostics test",
+                input_files=[],
+                placeholder_design=True,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        diagnostics = payload["browser_diagnostics_reports"][0]
+        self.assertEqual(diagnostics["status"], "warning")
+        self.assertEqual(diagnostics["metrics"]["preview_unavailable_count"], 2)
+        self.assertEqual(diagnostics["metrics"]["browser_environment_status"], "unavailable")
+        self.assertIn(
+            "python -m playwright install chromium",
+            diagnostics["metrics"]["browser_environment_remediation"],
+        )
+        environment_findings = [
+            finding
+            for finding in diagnostics["findings"]
+            if finding["category"] == "environment"
+        ]
+        self.assertEqual(len(environment_findings), 2)
+        self.assertTrue(
+            all(
+                "python -m playwright install chromium" in finding["recommendation"]
+                for finding in environment_findings
+            )
+        )
 
     def test_manager_start_placeholder_multi_html_generates_all_pages(self) -> None:
         state = _adk_state("session_design_placeholder_multi")
@@ -930,6 +1002,14 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["pdf_export_reports"][0]["status"], "unavailable")
         self.assertIn("Playwright is not available", completed_payload["pdf_export_reports"][0]["issues"][0])
         self.assertEqual(completed_payload["browser_diagnostics_reports"][0]["status"], "warning")
+        self.assertEqual(
+            completed_payload["browser_diagnostics_reports"][0]["metrics"]["browser_environment_status"],
+            "unavailable",
+        )
+        self.assertIn(
+            "python -m playwright install chromium",
+            completed_payload["browser_diagnostics_reports"][0]["metrics"]["browser_environment_remediation"],
+        )
         diagnostic_summaries = [
             finding["summary"]
             for finding in completed_payload["browser_diagnostics_reports"][0]["findings"]

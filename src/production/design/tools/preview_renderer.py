@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.production.design.browser_environment import (
+    browser_environment_metadata,
+    browser_runtime_issue,
+    playwright_package_missing_issue,
+)
 from src.production.design.models import PreviewReport, ViewportSpec
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
@@ -33,11 +38,12 @@ class HtmlPreviewRenderer:
         try:
             from playwright.async_api import async_playwright
         except Exception as exc:
+            reason = playwright_package_missing_issue(exc)
             return [
                 _preview_unavailable_report(
                     artifact_id=artifact_id,
                     viewport=viewport,
-                    reason=f"Playwright is not available: {type(exc).__name__}",
+                    reason=reason,
                 )
                 for viewport in selected_viewports
             ]
@@ -60,11 +66,12 @@ class HtmlPreviewRenderer:
                 finally:
                     await browser.close()
         except Exception as exc:
+            reason = browser_runtime_issue(context="preview rendering", exc=exc)
             reports = [
                 _preview_unavailable_report(
                     artifact_id=artifact_id,
                     viewport=viewport,
-                    reason=f"Browser preview failed: {type(exc).__name__}: {exc}",
+                    reason=reason,
                 )
                 for viewport in selected_viewports
             ]
@@ -122,11 +129,16 @@ async def _render_one_viewport(
 
 def _preview_unavailable_report(*, artifact_id: str, viewport: ViewportSpec, reason: str) -> PreviewReport:
     """Build a warning-style preview report when browser rendering cannot run."""
+    metrics: dict[str, Any] = {
+        "width": viewport.width,
+        "height": viewport.height,
+        "preview": "unavailable",
+    }
+    metrics.update(browser_environment_metadata(reason))
     return PreviewReport(
         artifact_id=artifact_id,
         viewport=viewport.name,
         valid=False,
         issues=[reason],
-        layout_metrics={"width": viewport.width, "height": viewport.height, "preview": "unavailable"},
+        layout_metrics=metrics,
     )
-
