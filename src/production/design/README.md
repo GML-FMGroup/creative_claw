@@ -97,6 +97,18 @@ Design preview and PDF export now share deterministic browser environment classi
 
 The internal `LayoutPlannerExpert` now receives the requested build mode, full design settings, and compact requested page specs. For `design_settings.build_mode="multi_html"`, the structured layout prompt asks the model to produce one `PageBlueprint` per requested page, or a small cohesive site map when no page specs are provided. The manager still owns durable state and invokes `HtmlBuilderExpert` once per target page.
 
+## P1q Multi-page Eval Routing
+
+The orchestrator instructions and Design ADK eval assets now preserve explicit multi-page HTML requests. The `start_multi_page_microsite_preserves_pages` eval case requires `run_design_production` to keep `design_settings.build_mode="multi_html"` and requested page specs instead of compressing a microsite request into a single landing page.
+
+## P1r Strict ADK Schemas
+
+The internal Design structured-output experts now expose ADK-facing strict schemas and convert those responses back into the production models owned by `DesignProductionManager`. This keeps Google ADK structured output compatible with strict JSON schema backends while preserving the existing production state boundary.
+
+## P1 Completion Record
+
+See [Design P1 completion record](../../../docs/design_p1_completion_zh.md) for the acceptance scope, verification commands, live eval scope, known limits, and P2 boundary.
+
 ## Package Responsibilities
 
 - `tool.py`: ADK tool boundary for `run_design_production`.
