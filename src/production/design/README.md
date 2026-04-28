@@ -9,7 +9,7 @@ Design production is intentionally separate from one-shot image generation, edit
 1. `start` creates a production session.
 2. Reference assets are copied into the production session.
 3. Deterministic placeholder brief, design system, and layout plan are prepared.
-4. `PlaceholderHtmlBuilder` creates a single-file HTML artifact.
+4. `PlaceholderHtmlBuilder` creates one HTML artifact by default, or one artifact per planned page when `design_settings.build_mode="multi_html"` is explicitly requested.
 5. `HtmlValidator` checks portability, local references, structure, and duplicate ids.
 6. `HtmlPreviewRenderer` attempts browser screenshots and records warnings if browser automation is unavailable.
 7. Deterministic QC summarizes validator and preview results.
@@ -17,7 +17,7 @@ Design production is intentionally separate from one-shot image generation, edit
 
 ## P0b-A Non-placeholder Flow
 
-When `placeholder_design=false`, `start` now uses internal structured Design experts to prepare the brief, design system, and layout plan, then pauses at `design_direction_review`. Approving that breakpoint calls `HtmlBuilderExpert` to generate a baseline single-file HTML artifact, then runs static validation, optional browser preview, deterministic QC, and supplemental expert QC before pausing at `preview_review`.
+When `placeholder_design=false`, `start` now uses internal structured Design experts to prepare the brief, design system, and layout plan, then pauses at `design_direction_review`. Approving that breakpoint calls `HtmlBuilderExpert` to generate baseline HTML artifacts, then runs static validation, optional browser preview, deterministic QC, and supplemental expert QC before pausing at `preview_review`.
 
 The internal experts are encapsulated behind `DesignProductionManager`; they are not top-level orchestrator experts and do not own production state.
 
@@ -79,7 +79,11 @@ Design production now derives a deterministic design-system extraction report fr
 
 ## P1l Page Handoff
 
-Design production now derives deterministic page and variant handoff readiness from `LayoutPlan.pages`, optional `variation_plan`, generated `HtmlArtifact` records, and linked validation/preview/QC/accessibility/diagnostics/export reports. This does not change the current single-HTML generation path; it creates the durable report contract needed before full multi-page generation. Page handoff output is persisted under `reports/page_handoff.*`, exposed through `view_type="pages"` and quality/artifact views, included in preview review metadata, linked from artifact lineage, and packaged in final handoff exports.
+Design production now derives deterministic page and variant handoff readiness from `LayoutPlan.pages`, optional `variation_plan`, generated `HtmlArtifact` records, and linked validation/preview/QC/accessibility/diagnostics/export reports. Page handoff output is persisted under `reports/page_handoff.*`, exposed through `view_type="pages"` and quality/artifact views, included in preview review metadata, linked from artifact lineage, and packaged in final handoff exports.
+
+## P1m Multi-page Build Foundation
+
+Design production can now process page-scoped HTML artifacts. The default remains `single_html`, but explicit `design_settings.build_mode="multi_html"` makes the build pipeline generate, validate, preview, extract design-system usage, lint accessibility, run QC, and report handoff readiness for each planned page. This establishes the durable multi-page artifact flow while keeping revision behavior conservative.
 
 ## Package Responsibilities
 

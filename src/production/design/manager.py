@@ -29,6 +29,7 @@ from src.production.design.models import (
     DesignBrief,
     DesignQcFinding,
     DesignQcReport,
+    DesignBuildMode,
     DesignProductionState,
     DesignSystemAuditReport,
     DesignSystemExtractionReport,
@@ -159,7 +160,7 @@ class DesignProductionManager:
             stage="initializing",
             progress_percent=5,
             design_genre=genre,
-            build_mode="single_html",
+            build_mode=_build_mode_from_settings(design_settings or {}),
             requested_exports=_requested_exports_from_settings(design_settings or {}),
         )
         state.production_events.append(
@@ -731,18 +732,77 @@ class DesignProductionManager:
         _ensure_design_dirs(session_root)
         state.stage = "html_building"
         state.progress_percent = max(state.progress_percent, 55)
-        if builder_mode in {"expert", "revision"}:
-            artifact = await self._build_expert_html_artifact(
+        target_pages = _target_pages_for_html_build(state, builder_mode=builder_mode)
+        built_artifacts: list[HtmlArtifact] = []
+        last_processing: dict[str, Any] = {}
+        for page in target_pages:
+            state.stage = "html_building"
+            artifact = await self._build_html_artifact_for_page(
                 session_root=session_root,
                 state=state,
+                page=page,
                 builder_mode=builder_mode,
                 revision_request=revision_request,
                 revision_impact=revision_impact,
             )
-        else:
-            artifact = self.placeholder_builder.build(session_root=session_root, state=state)
-        state.html_artifacts.append(artifact)
+            state.html_artifacts.append(artifact)
+            built_artifacts.append(artifact)
+            last_processing = await self._validate_preview_and_qc_artifact(
+                session_root=session_root,
+                state=state,
+                artifact=artifact,
+                builder_mode=builder_mode,
+            )
 
+        page_handoff_report = _append_page_handoff(state)
+        _append_artifact_lineage(state)
+        state.progress_percent = max(state.progress_percent, 90)
+        state.production_events.append(
+            ProductionEvent(
+                event_type="html_artifacts_built",
+                stage=state.stage,
+                message=f"Built, validated, previewed, and checked {len(built_artifacts)} HTML artifact(s).",
+                metadata={
+                    "artifact_ids": [artifact.artifact_id for artifact in built_artifacts],
+                    "page_ids": [artifact.page_id for artifact in built_artifacts],
+                    "build_mode": state.build_mode,
+                    "page_handoff_status": page_handoff_report.status,
+                    "last_qc_status": getattr(last_processing.get("qc_report"), "status", ""),
+                },
+            )
+        )
+
+    async def _build_html_artifact_for_page(
+        self,
+        *,
+        session_root: Path,
+        state: DesignProductionState,
+        page: PageBlueprint,
+        builder_mode: str,
+        revision_request: dict[str, Any] | None = None,
+        revision_impact: dict[str, Any] | None = None,
+    ) -> HtmlArtifact:
+        """Build one page-scoped HTML artifact with the selected builder."""
+        if builder_mode in {"expert", "revision"}:
+            return await self._build_expert_html_artifact(
+                session_root=session_root,
+                state=state,
+                page=page,
+                builder_mode=builder_mode,
+                revision_request=revision_request,
+                revision_impact=revision_impact,
+            )
+        return self.placeholder_builder.build(session_root=session_root, state=state, page=page)
+
+    async def _validate_preview_and_qc_artifact(
+        self,
+        *,
+        session_root: Path,
+        state: DesignProductionState,
+        artifact: HtmlArtifact,
+        builder_mode: str,
+    ) -> dict[str, Any]:
+        """Validate, preview, and quality-check one generated HTML artifact."""
         state.stage = "html_validation"
         validation_report = self.html_validator.validate(
             artifact.path,
@@ -787,9 +847,6 @@ class DesignProductionManager:
             expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
-        page_handoff_report = _append_page_handoff(state)
-        _append_artifact_lineage(state)
-        state.progress_percent = max(state.progress_percent, 90)
         state.production_events.append(
             ProductionEvent(
                 event_type="html_artifact_built",
@@ -797,15 +854,23 @@ class DesignProductionManager:
                 message="Built, validated, previewed, and checked one HTML artifact.",
                 metadata={
                     "artifact_id": artifact.artifact_id,
+                    "page_id": artifact.page_id,
                     "validation_status": validation_report.status,
                     "design_system_extraction_status": extraction_report.status,
                     "accessibility_status": accessibility_report.status,
-                    "page_handoff_status": page_handoff_report.status,
                     "qc_status": qc_report.status,
                     "expert_qc_status": expert_qc_report.status if expert_qc_report is not None else "",
                 },
             )
         )
+        return {
+            "validation_report": validation_report,
+            "design_system_extraction_report": extraction_report,
+            "accessibility_report": accessibility_report,
+            "preview_reports": preview_reports,
+            "qc_report": qc_report,
+            "expert_qc_report": expert_qc_report,
+        }
 
     async def _assess_expert_quality(
         self,
@@ -865,6 +930,7 @@ class DesignProductionManager:
         *,
         session_root: Path,
         state: DesignProductionState,
+        page: PageBlueprint | None = None,
         builder_mode: str,
         revision_request: dict[str, Any] | None = None,
         revision_impact: dict[str, Any] | None = None,
@@ -872,7 +938,8 @@ class DesignProductionManager:
         """Build and persist one HTML artifact with HtmlBuilderExpert."""
         if state.brief is None or state.design_system is None or state.layout_plan is None or not state.layout_plan.pages:
             raise ValueError("brief, design_system, and layout_plan are required before expert HTML generation")
-        page = state.layout_plan.pages[0]
+        page = page or state.layout_plan.pages[0]
+        layout_plan = _layout_plan_for_page(state.layout_plan, page)
         output_dir = session_root / "artifacts"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / _html_output_filename(
@@ -883,7 +950,7 @@ class DesignProductionManager:
         html_output = await self.expert_runtime.build_html(
             brief=state.brief,
             design_system=state.design_system,
-            layout_plan=state.layout_plan,
+            layout_plan=layout_plan,
             reference_assets=state.reference_assets,
             build_mode="revision" if builder_mode == "revision" else "baseline",
             revision_request=revision_request,
@@ -908,6 +975,7 @@ class DesignProductionManager:
                 "expert_notes": html_output.notes,
                 "model_name": getattr(self.expert_runtime, "model_name", ""),
                 "build_mode": "revision" if builder_mode == "revision" else "baseline",
+                "production_build_mode": state.build_mode,
                 "revision_id": (revision_request or {}).get("revision_id", ""),
             },
         )
@@ -915,12 +983,11 @@ class DesignProductionManager:
     def _finalize_artifacts(self, state: DesignProductionState) -> None:
         final_artifacts: list[WorkspaceFileRef] = []
         session_root = self.store.session_root(state.production_session)
-        latest_html = state.html_artifacts[-1] if state.html_artifacts else None
-        if latest_html is not None:
+        for html_artifact in _active_html_artifacts(state):
             final_artifacts.append(
                 WorkspaceFileRef(
-                    name=Path(latest_html.path).name,
-                    path=latest_html.path,
+                    name=Path(html_artifact.path).name,
+                    path=html_artifact.path,
                     description="Generated HTML design artifact.",
                     source=self.capability,
                 )
@@ -1320,6 +1387,48 @@ def _normalize_view_type(view_type: str | None) -> str | None:
     return value if value in _VIEW_TYPES else None
 
 
+def _build_mode_from_settings(design_settings: dict[str, Any]) -> DesignBuildMode:
+    """Return the requested HTML build mode, defaulting to single-page output."""
+    raw = str(
+        design_settings.get("build_mode")
+        or design_settings.get("html_build_mode")
+        or design_settings.get("output_mode")
+        or ""
+    ).strip().lower().replace("-", "_")
+    if raw in {"multi_html", "multi_page", "multipage", "multi"}:
+        return "multi_html"
+    if design_settings.get("multi_page") is True:
+        return "multi_html"
+    return "single_html"
+
+
+def _target_pages_for_html_build(state: DesignProductionState, *, builder_mode: str) -> list[PageBlueprint]:
+    """Return the page targets for the current HTML build pass."""
+    if state.layout_plan is None or not state.layout_plan.pages:
+        raise ValueError("layout_plan with at least one page is required before HTML generation")
+    if state.build_mode == "multi_html" and builder_mode != "revision":
+        return list(state.layout_plan.pages)
+    return [state.layout_plan.pages[0]]
+
+
+def _layout_plan_for_page(layout_plan: LayoutPlan, page: PageBlueprint) -> LayoutPlan:
+    """Return a one-page layout plan preserving the parent plan metadata."""
+    return LayoutPlan(
+        layout_plan_id=layout_plan.layout_plan_id,
+        version=layout_plan.version,
+        pages=[page],
+        global_notes=layout_plan.global_notes,
+    )
+
+
+def _active_html_artifacts(state: DesignProductionState) -> list[HtmlArtifact]:
+    """Return active HTML artifacts, falling back to the latest draft artifact."""
+    active = [artifact for artifact in state.html_artifacts if artifact.status in {"valid", "approved"}]
+    if active:
+        return active
+    return state.html_artifacts[-1:] if state.html_artifacts else []
+
+
 def _normalize_page_path(path: str | None) -> str:
     """Return a safe single-file HTML artifact path."""
     value = str(path or "").strip() or "index.html"
@@ -1614,7 +1723,11 @@ def _prepare_placeholder_planning_state(
         audience=str(design_settings.get("audience") or _default_audience(genre)),
         primary_action=str(design_settings.get("primary_action") or _default_primary_action(genre)),
         selling_points=_selling_points_from_prompt(user_prompt),
-        content_requirements=["Single-file HTML", "Responsive desktop and mobile layout", "Stable section ids"],
+        content_requirements=[
+            "One HTML file per planned page" if state.build_mode == "multi_html" else "Single-file HTML",
+            "Responsive desktop and mobile layout",
+            "Stable section ids",
+        ],
         constraints=["No local absolute paths", "No required external runtime dependency"],
         notes="P0a placeholder brief generated deterministically for production pipeline validation.",
     )
@@ -1636,7 +1749,12 @@ def _prepare_placeholder_planning_state(
         component_tokens={"button": {"height": "40px", "radius": "8px"}},
         notes="P0a placeholder design system.",
     )
-    state.layout_plan = _placeholder_layout_plan(genre=genre, brief=state.brief)
+    state.layout_plan = _placeholder_layout_plan(
+        genre=genre,
+        brief=state.brief,
+        build_mode=state.build_mode,
+        design_settings=design_settings,
+    )
     _append_design_system_audit(state)
     state.production_events.append(
         ProductionEvent(
@@ -1679,18 +1797,72 @@ def _selling_points_from_prompt(user_prompt: str) -> list[str]:
     cleaned = user_prompt.strip()
     if not cleaned:
         return ["Clear value proposition", "Responsive structure", "Reviewable HTML artifact"]
-    return [cleaned[:80], "Reviewable production state", "Portable single-file HTML"]
+    return [cleaned[:80], "Reviewable production state", "Portable HTML artifacts"]
 
 
-def _placeholder_layout_plan(*, genre: str, brief: DesignBrief) -> LayoutPlan:
-    section_titles = {
-        "ui_design": ["Top Filters", "KPI Overview", "Operational Detail", "Alerts and Next Actions"],
-        "product_detail_page": ["Product Hero", "Core Benefits", "Scenario Details", "Final Contact CTA"],
-        "landing_page": ["Hero", "Value Proposition", "Feature System", "Final CTA"],
-    }.get(genre, ["Hero", "Content", "Proof", "CTA"])
-    sections = [
+def _placeholder_layout_plan(
+    *,
+    genre: str,
+    brief: DesignBrief,
+    build_mode: DesignBuildMode,
+    design_settings: dict[str, Any],
+) -> LayoutPlan:
+    page_specs = _placeholder_page_specs(genre=genre, build_mode=build_mode, design_settings=design_settings)
+    pages = [
+        PageBlueprint(
+            title=spec["title"],
+            path=spec["path"],
+            sections=_placeholder_sections(
+                genre=genre,
+                brief=brief,
+                section_titles=spec["sections"],
+                page_slug=Path(spec["path"]).stem,
+            ),
+            device_targets=brief.device_targets,
+        )
+        for spec in page_specs
+    ]
+    notes = "P0a multi-page placeholder layout." if build_mode == "multi_html" else "P0a single-page placeholder layout."
+    return LayoutPlan(pages=pages, global_notes=notes)
+
+
+def _placeholder_page_specs(
+    *,
+    genre: str,
+    build_mode: DesignBuildMode,
+    design_settings: dict[str, Any],
+) -> list[dict[str, Any]]:
+    raw_pages = design_settings.get("pages")
+    specs: list[dict[str, Any]] = []
+    if isinstance(raw_pages, list):
+        for index, raw_page in enumerate(raw_pages, start=1):
+            if not isinstance(raw_page, dict):
+                continue
+            title = str(raw_page.get("title") or raw_page.get("name") or f"Page {index}").strip() or f"Page {index}"
+            path = _normalize_page_path(str(raw_page.get("path") or _path_from_title(title, index=index)))
+            sections = _section_titles_from_page_settings(raw_page.get("sections"))
+            specs.append({"title": title, "path": path, "sections": sections or _default_section_titles(genre)})
+    if specs:
+        return specs if build_mode == "multi_html" else [specs[0]]
+    if build_mode == "multi_html":
+        return [
+            {"title": _page_title(genre), "path": "index.html", "sections": _default_section_titles(genre)},
+            {"title": "Design Details", "path": "details.html", "sections": ["Overview", "Interaction Model", "Responsive States"]},
+            {"title": "Conversion Path", "path": "conversion.html", "sections": ["Offer", "Proof", "Final Action"]},
+        ]
+    return [{"title": _page_title(genre), "path": "index.html", "sections": _default_section_titles(genre)}]
+
+
+def _placeholder_sections(
+    *,
+    genre: str,
+    brief: DesignBrief,
+    section_titles: list[str],
+    page_slug: str,
+) -> list[LayoutSection]:
+    return [
         LayoutSection(
-            section_id=_stable_section_id(title),
+            section_id=_stable_section_id(f"{page_slug}-{title}" if page_slug != "index" else title),
             title=title,
             purpose=_section_purpose(title, genre=genre),
             content=[
@@ -1702,12 +1874,36 @@ def _placeholder_layout_plan(*, genre: str, brief: DesignBrief) -> LayoutPlan:
         )
         for title in section_titles
     ]
-    page = PageBlueprint(
-        title=_page_title(genre),
-        sections=sections,
-        device_targets=brief.device_targets,
-    )
-    return LayoutPlan(pages=[page], global_notes="P0a single-page placeholder layout.")
+
+
+def _default_section_titles(genre: str) -> list[str]:
+    section_titles = {
+        "ui_design": ["Top Filters", "KPI Overview", "Operational Detail", "Alerts and Next Actions"],
+        "product_detail_page": ["Product Hero", "Core Benefits", "Scenario Details", "Final Contact CTA"],
+        "landing_page": ["Hero", "Value Proposition", "Feature System", "Final CTA"],
+    }.get(genre, ["Hero", "Content", "Proof", "CTA"])
+    return section_titles
+
+
+def _section_titles_from_page_settings(raw_sections: Any) -> list[str]:
+    if not isinstance(raw_sections, list):
+        return []
+    titles: list[str] = []
+    for index, raw_section in enumerate(raw_sections, start=1):
+        if isinstance(raw_section, dict):
+            title = str(raw_section.get("title") or raw_section.get("name") or f"Section {index}").strip()
+        else:
+            title = str(raw_section).strip()
+        if title:
+            titles.append(title)
+    return titles
+
+
+def _path_from_title(title: str, *, index: int) -> str:
+    slug = _stable_section_id(title).strip("-") or f"page-{index}"
+    if index == 1 and slug in {"home", "index", "landing-page", "design-landing-page"}:
+        return "index.html"
+    return f"{slug}.html"
 
 
 def _stable_section_id(title: str) -> str:

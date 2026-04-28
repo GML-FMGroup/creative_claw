@@ -187,7 +187,7 @@ def _handoff_manifest(
             "Artifact lineage is derived from HTML artifact status, revision history, and linked reports.",
             "Page handoff readiness is derived from LayoutPlan pages, variants, generated HTML artifacts, and linked reports.",
             "PDF is an optional export derived from the approved HTML artifact.",
-            "Figma, production-code handoff outputs, and full multi-page HTML generation are intentionally outside P1l.",
+            "Figma and production-code handoff outputs remain outside P1m.",
             "Screenshots are included only when browser preview rendering is available.",
         ],
     }
@@ -436,7 +436,7 @@ def _design_spec_markdown(
             "- Artifact lineage is deterministic and derived from artifact statuses, revision history, and linked reports.",
             "- Page handoff readiness is deterministic and derived from layout pages, variants, and generated artifact reports.",
             "- PDF export is optional and derived from the approved HTML artifact.",
-            "- Figma, production-code handoff outputs, and full multi-page HTML generation are intentionally outside P1l.",
+            "- Figma and production-code handoff outputs remain outside P1m.",
             "- Browser screenshots may be unavailable in environments without browser automation dependencies.",
         ]
     )

@@ -5,22 +5,28 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from src.production.design.models import DesignProductionState, HtmlArtifact
+from src.production.design.models import DesignProductionState, HtmlArtifact, PageBlueprint
 from src.runtime.workspace import workspace_relative_path
 
 
 class PlaceholderHtmlBuilder:
-    """Build a deterministic single-file HTML artifact for P0a validation."""
+    """Build deterministic single-file HTML artifacts for P0a validation."""
 
-    def build(self, *, session_root: Path, state: DesignProductionState) -> HtmlArtifact:
+    def build(
+        self,
+        *,
+        session_root: Path,
+        state: DesignProductionState,
+        page: PageBlueprint | None = None,
+    ) -> HtmlArtifact:
         """Write one self-contained HTML file and return its artifact record."""
         if state.layout_plan is None or not state.layout_plan.pages:
             raise ValueError("layout_plan with at least one page is required")
-        page = state.layout_plan.pages[0]
+        page = page or state.layout_plan.pages[0]
         output_dir = session_root / "artifacts"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / page.path
-        output_path.write_text(_render_placeholder_html(state), encoding="utf-8")
+        output_path = output_dir / _safe_html_filename(page.path)
+        output_path.write_text(_render_placeholder_html(state, page=page), encoding="utf-8")
         return HtmlArtifact(
             page_id=page.page_id,
             path=workspace_relative_path(output_path),
@@ -32,10 +38,10 @@ class PlaceholderHtmlBuilder:
         )
 
 
-def _render_placeholder_html(state: DesignProductionState) -> str:
+def _render_placeholder_html(state: DesignProductionState, *, page: PageBlueprint | None = None) -> str:
     brief = state.brief
     design_system = state.design_system
-    page = state.layout_plan.pages[0] if state.layout_plan and state.layout_plan.pages else None
+    page = page or (state.layout_plan.pages[0] if state.layout_plan and state.layout_plan.pages else None)
     title = html.escape(page.title if page else "Design Preview")
     goal = html.escape(brief.goal if brief else "Generated HTML design preview")
     audience = html.escape(brief.audience if brief else "Target audience")
@@ -276,6 +282,14 @@ def _render_placeholder_html(state: DesignProductionState) -> str:
 </body>
 </html>
 """
+
+
+def _safe_html_filename(path: str | None) -> str:
+    value = str(path or "").strip() or "index.html"
+    candidate = Path(value)
+    if candidate.is_absolute() or ".." in candidate.parts or candidate.suffix.lower() != ".html":
+        return "index.html"
+    return candidate.name
 
 
 def _render_section(index: int, section) -> str:
