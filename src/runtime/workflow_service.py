@@ -6,6 +6,7 @@ import json
 import uuid
 
 from google.adk.artifacts import InMemoryArtifactService
+from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
@@ -133,14 +134,34 @@ def _render_orchestration_history(history: list[dict[str, str]], limit: int = 8)
 class CreativeClawRuntime:
     """Run Creative Claw workflow for normalized channel messages."""
 
-    def __init__(self) -> None:
-        self.session_service = InMemorySessionService()
-        self.artifact_service = InMemoryArtifactService()
+    def __init__(
+        self,
+        *,
+        session_service: InMemorySessionService | None = None,
+        artifact_service: InMemoryArtifactService | None = None,
+        expert_agents: dict[str, BaseAgent] | None = None,
+    ) -> None:
+        """Initialize runtime services.
+
+        Optional dependency injection is intended for automated tests that need
+        deterministic expert stubs or direct access to the in-memory session
+        service. Default channel behavior remains unchanged.
+        """
+        self.session_service = session_service or InMemorySessionService()
+        self.artifact_service = artifact_service or InMemoryArtifactService()
         self._session_keys: dict[str, str] = {}
-        self.expert_agents = build_expert_agents(app_name=SYS_CONFIG.app_name)
+        self.expert_agents = (
+            expert_agents
+            if expert_agents is not None
+            else build_expert_agents(app_name=SYS_CONFIG.app_name)
+        )
 
         self.workspace_root = workspace_root()
         self.generated_dir = generated_root()
+
+    def resolve_session_id(self, *, channel: str, chat_id: str) -> str | None:
+        """Return the ADK session id for a channel conversation if it exists."""
+        return self._session_keys.get(f"{channel}:{chat_id}")
 
     async def run_message(self, inbound: InboundMessage):
         """Execute one inbound message and yield workflow events."""
