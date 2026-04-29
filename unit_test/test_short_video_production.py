@@ -500,6 +500,42 @@ class ShortVideoProductionTests(unittest.TestCase):
         asset_payload = json.loads(resolve_workspace_path(asset_review.state_ref or "").read_text(encoding="utf-8"))
         self.assertEqual(asset_payload["asset_plan"]["selected_ratio"], "9:16")
 
+    def test_social_storyboard_reserves_two_second_hook(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="做一个 8 秒小红书短片，前 2 秒要有强钩子，然后展示核心价值",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"duration_seconds": 8},
+            adk_state=state,
+        ))
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        shots = state_payload["storyboard"]["shots"]
+        durations = [shot["duration_seconds"] for shot in shots]
+        self.assertEqual(durations, [2.0, 4.0, 2.0])
+        self.assertEqual(round(sum(durations), 2), 8.0)
+
+    def test_product_storyboard_reserves_cta_time(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="make a 10 second product ad for a premium smart mug with a clear CTA",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"duration_seconds": 10},
+            adk_state=state,
+        ))
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        shots = state_payload["storyboard"]["shots"]
+        durations = [shot["duration_seconds"] for shot in shots]
+        self.assertEqual(durations, [2.5, 5.0, 2.5])
+        self.assertEqual(shots[-1]["purpose"], "Trust close and call to action")
+
     def test_manager_start_accepts_seedance_fast_model_settings(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
@@ -707,6 +743,31 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertIn('猫B says "嗯嗯。。两万五"', visual_prompt)
         self.assertIn("with no narrator reading the task description", visual_prompt)
         self.assertIn("Do not render subtitles", visual_prompt)
+
+    def test_cartoon_storyboard_reserves_reaction_time_when_requested(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+        prompt = "\n".join(
+            [
+                "做一个 8 秒两只猫咪的卡通短剧",
+                "猫A: 你今天怎么这么得意？",
+                "猫B: 因为我找到零食了。",
+                "两只猫咪对视停顿 1 秒，然后爆笑摔倒",
+            ]
+        )
+
+        result = asyncio.run(manager.start(
+            user_prompt=prompt,
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16", "duration_seconds": 8},
+            adk_state=state,
+        ))
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        durations = [shot["duration_seconds"] for shot in state_payload["storyboard"]["shots"]]
+        self.assertEqual(durations, [2.5, 2.5, 3.0])
+        self.assertEqual(round(sum(durations), 2), 8.0)
 
     def test_cartoon_dialogue_parser_ignores_field_like_labels(self) -> None:
         state = _adk_state()

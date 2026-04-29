@@ -2030,7 +2030,7 @@ def _product_ad_storyboard_shots(
     duration_seconds: float,
     reference_asset_ids: list[str],
 ) -> list[ShortVideoStoryboardShot]:
-    durations = _split_storyboard_durations(duration_seconds, 3)
+    durations = _product_ad_storyboard_durations(duration_seconds)
     return [
         ShortVideoStoryboardShot(
             sequence_index=1,
@@ -2069,13 +2069,18 @@ def _cartoon_storyboard_shots(
     reference_asset_ids: list[str],
 ) -> list[ShortVideoStoryboardShot]:
     dialogue_lines = _extract_dialogue_lines(brief)
-    durations = _split_storyboard_durations(duration_seconds, 3)
     if dialogue_lines:
         first_dialogue = dialogue_lines[: max(1, len(dialogue_lines) // 2)]
         second_dialogue = dialogue_lines[max(1, len(dialogue_lines) // 2):]
     else:
         first_dialogue = []
         second_dialogue = []
+    durations = _cartoon_storyboard_durations(
+        brief=brief,
+        duration_seconds=duration_seconds,
+        first_dialogue_count=len(first_dialogue),
+        second_dialogue_count=len(second_dialogue),
+    )
     return [
         ShortVideoStoryboardShot(
             sequence_index=1,
@@ -2115,7 +2120,7 @@ def _social_storyboard_shots(
     duration_seconds: float,
     reference_asset_ids: list[str],
 ) -> list[ShortVideoStoryboardShot]:
-    durations = _split_storyboard_durations(duration_seconds, 3)
+    durations = _social_storyboard_durations(duration_seconds)
     return [
         ShortVideoStoryboardShot(
             sequence_index=1,
@@ -2155,6 +2160,108 @@ def _split_storyboard_durations(total_seconds: float, count: int) -> list[float]
     base = round(total / count, 2)
     durations = [base for _ in range(count)]
     durations[-1] = round(max(1.0, total - sum(durations[:-1])), 2)
+    return durations
+
+
+def _product_ad_storyboard_durations(total_seconds: float) -> list[float]:
+    """Allocate product-ad time to reveal, benefit proof, and CTA beats."""
+    total = _storyboard_total_seconds(total_seconds, 3)
+    minimum = _storyboard_minimum_shot_duration(total)
+    reveal = min(max(3.0, minimum), max(2.0, total * 0.25, minimum))
+    cta = min(max(3.0, minimum), max(2.0, total * 0.25, minimum))
+    benefit = max(minimum, total - reveal - cta)
+    return _normalize_storyboard_durations([reveal, benefit, cta], total, minimum_seconds=minimum)
+
+
+def _social_storyboard_durations(total_seconds: float) -> list[float]:
+    """Allocate social-short time with an explicit two-second opening hook."""
+    total = _storyboard_total_seconds(total_seconds, 3)
+    minimum = _storyboard_minimum_shot_duration(total)
+    hook = max(minimum, 2.0 if total >= 4.0 else max(1.0, total - 2.0))
+    close = min(max(3.0, minimum), max(2.0, total * 0.25, minimum))
+    main = max(minimum, total - hook - close)
+    return _normalize_storyboard_durations([hook, main, close], total, minimum_seconds=minimum)
+
+
+def _cartoon_storyboard_durations(
+    *,
+    brief: str,
+    duration_seconds: float,
+    first_dialogue_count: int,
+    second_dialogue_count: int,
+) -> list[float]:
+    """Allocate cartoon timing across setup dialogue, punchline, and reaction."""
+    total = _storyboard_total_seconds(duration_seconds, 3)
+    minimum = _storyboard_minimum_shot_duration(total)
+    reaction = max(minimum, _cartoon_reaction_duration(brief, total))
+    remaining = max(2.0, total - reaction)
+    first_weight = max(1.0, float(first_dialogue_count or 1))
+    second_weight = max(1.0, float(second_dialogue_count or 1))
+    weight_total = first_weight + second_weight
+    first = remaining * (first_weight / weight_total)
+    second = remaining - first
+    return _normalize_storyboard_durations([first, second, reaction], total, minimum_seconds=minimum)
+
+
+def _cartoon_reaction_duration(brief: str, total_seconds: float) -> float:
+    """Return reaction-beat duration based on explicit pause or comedy cues."""
+    normalized = str(brief or "").lower()
+    reaction_tokens = (
+        "停顿",
+        "对视",
+        "爆笑",
+        "摔倒",
+        "反应",
+        "pause",
+        "stare",
+        "reaction",
+        "laugh",
+        "fall",
+    )
+    if any(token in normalized for token in reaction_tokens):
+        return min(4.0, max(3.0, total_seconds * 0.35))
+    return min(3.0, max(2.0, total_seconds * 0.25))
+
+
+def _storyboard_total_seconds(total_seconds: float, count: int) -> float:
+    """Return a storyboard duration that can support at least one second per shot."""
+    try:
+        value = float(total_seconds)
+    except (TypeError, ValueError):
+        value = 0.0
+    return max(value, float(count))
+
+
+def _storyboard_minimum_shot_duration(total_seconds: float) -> float:
+    """Return a shot minimum that keeps long storyboards provider-segmentable."""
+    return 4.0 if float(total_seconds or 0.0) > 15.0 else 1.0
+
+
+def _normalize_storyboard_durations(
+    parts: list[float],
+    total_seconds: float,
+    *,
+    minimum_seconds: float = 1.0,
+) -> list[float]:
+    """Scale and round shot durations while preserving the requested total."""
+    if not parts:
+        return []
+    minimum = max(1.0, float(minimum_seconds or 1.0))
+    total = max(_storyboard_total_seconds(total_seconds, len(parts)), minimum * len(parts))
+    if total <= minimum * len(parts):
+        return [minimum for _ in parts]
+    sanitized = [max(minimum, float(part or 0.0)) for part in parts]
+    weights = [max(0.0, part - minimum) for part in sanitized]
+    weight_total = sum(weights)
+    if weight_total <= 0:
+        weights = [1.0 for _ in sanitized]
+        weight_total = sum(weights)
+    remaining = total - minimum * float(len(parts))
+    durations = [
+        round(minimum + remaining * (weight / weight_total), 2)
+        for weight in weights
+    ]
+    durations[-1] = round(max(minimum, total - sum(durations[:-1])), 2)
     return durations
 
 
