@@ -265,7 +265,9 @@ class ShortVideoQualityReport(BaseModel):
 class ShortVideoProductionState(ProductionState):
     """Persisted state for short-video production."""
 
+    original_brief: str = ""
     brief_summary: str = ""
+    revision_history: list[dict[str, Any]] = Field(default_factory=list)
     reference_assets: list[ReferenceAssetEntry] = Field(default_factory=list)
     planning_context: dict[str, Any] = Field(default_factory=dict)
     storyboard: ShortVideoStoryboard | None = None

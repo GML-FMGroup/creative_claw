@@ -18,6 +18,9 @@ from src.production.short_video.models import (
 )
 from src.runtime.workspace import workspace_relative_path
 
+SEEDANCE_REFERENCE_ASSET_LIMIT = 9
+VEO_REFERENCE_ASSET_LIMIT = 3
+
 
 class ShortVideoProviderError(RuntimeError):
     """Raised when a short-video provider cannot complete a generation step."""
@@ -139,6 +142,14 @@ class RoutedShortVideoProviderRuntime:
         )
 
 
+def reference_asset_limit_for_provider(provider: str) -> int:
+    """Return the maximum reference assets sent to one short-video provider call."""
+    normalized = str(provider or "").strip().lower()
+    if normalized == "veo":
+        return VEO_REFERENCE_ASSET_LIMIT
+    return SEEDANCE_REFERENCE_ASSET_LIMIT
+
+
 class SeedanceNativeAudioProviderRuntime:
     """Provider runtime that uses Seedance 2.0 native audio-video generation."""
 
@@ -172,7 +183,9 @@ class SeedanceNativeAudioProviderRuntime:
                 f"got {duration_seconds}."
             )
 
-        input_paths = [item.path for item in reference_assets if item.status == "valid"][:9]
+        input_paths = [
+            item.path for item in reference_assets if item.status == "valid"
+        ][:SEEDANCE_REFERENCE_ASSET_LIMIT]
         mode = "reference_asset" if input_paths else "prompt"
         current_model_name = asset_plan.planned_video_model_name or self.model_name
         current_resolution = asset_plan.planned_video_resolution or self.resolution
@@ -270,7 +283,9 @@ class VeoTtsProviderRuntime:
                 f"Veo currently supports duration_seconds 4, 6, or 8 in this adapter; got {duration_seconds}."
             )
 
-        input_paths = [item.path for item in reference_assets if item.status == "valid"][:3]
+        input_paths = [
+            item.path for item in reference_assets if item.status == "valid"
+        ][:VEO_REFERENCE_ASSET_LIMIT]
         mode = "reference_asset" if input_paths else "prompt"
         result = await video_tools.veo_video_generation_tool(
             asset_plan.shot_plan.visual_prompt,

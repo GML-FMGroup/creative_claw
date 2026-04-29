@@ -2,6 +2,7 @@ import unittest
 import os
 import requests
 import sys
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -396,6 +397,43 @@ class VideoGenerationToolTests(unittest.IsolatedAsyncioTestCase):
                 "generate_audio": True,
             },
         )
+
+    async def test_seedance_tool_accepts_more_than_three_reference_images(self) -> None:
+        create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))
+        get_mock = MagicMock(return_value=SimpleNamespace(status="failed", error="mock error"))
+        fake_client = SimpleNamespace(
+            content_generation=SimpleNamespace(
+                tasks=SimpleNamespace(
+                    create=create_mock,
+                    get=get_mock,
+                )
+            )
+        )
+        fake_module = SimpleNamespace(Ark=MagicMock(return_value=fake_client))
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            image_paths = []
+            for index in range(4):
+                image_path = os.path.join(tmpdir, f"reference_{index}.png")
+                Image.new("RGB", (64, 64), color=(index * 20, 40, 80)).save(image_path)
+                image_paths.append(image_path)
+
+            with (
+                patch.dict(os.environ, {"ARK_API_KEY": "test-key"}, clear=False),
+                patch.dict(sys.modules, {"volcenginesdkarkruntime": fake_module}),
+            ):
+                result = await video_tools.seedance_video_generation_tool(
+                    "keep the product identity consistent",
+                    input_paths=image_paths,
+                    mode="reference_asset",
+                    duration_seconds=8,
+                )
+
+        self.assertEqual(result["status"], "error")
+        create_mock.assert_called_once()
+        content = create_mock.call_args.kwargs["content"]
+        reference_items = [item for item in content if item.get("role") == "reference_image"]
+        self.assertEqual(len(reference_items), 4)
 
     async def test_seedance_tool_passes_2_fast_audio_parameters(self) -> None:
         create_mock = MagicMock(return_value=SimpleNamespace(id="task-1"))

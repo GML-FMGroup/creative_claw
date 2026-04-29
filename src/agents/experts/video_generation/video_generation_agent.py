@@ -169,7 +169,7 @@ class VideoGenerationAgent(CreativeExpert):
                 if provider == "seedance"
                 else video_tools.normalize_video_seed(current_parameters.get("seed"))
             )
-            video_tools._validate_mode_input_paths(mode, input_paths)
+            video_tools._validate_mode_input_paths(provider, mode, input_paths)
         except ValueError as exc:
             error_text = f"{self.name} got invalid parameters: {exc}"
             current_output = {"status": "error", "message": error_text}

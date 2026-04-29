@@ -69,6 +69,13 @@ _VIDEO_PROVIDER_CAPABILITIES = {
         "durations_by_mode": {
             "*": tuple([-1, *range(4, 16)]),
         },
+        "input_counts_by_mode": {
+            "prompt": (0, 0),
+            "first_frame": (1, 1),
+            "first_frame_and_last_frame": (2, 2),
+            "reference_asset": (1, 9),
+            "reference_style": (1, 9),
+        },
         "default_duration_seconds": 5,
     },
     "veo": {
@@ -86,6 +93,14 @@ _VIDEO_PROVIDER_CAPABILITIES = {
         "durations_by_mode": {
             "*": (4, 6, 8),
         },
+        "input_counts_by_mode": {
+            "prompt": (0, 0),
+            "first_frame": (1, 1),
+            "first_frame_and_last_frame": (2, 2),
+            "reference_asset": (1, 3),
+            "reference_style": (1, 3),
+            "video_extension": (1, 1),
+        },
         "default_duration_seconds": 8,
     },
     "kling": {
@@ -101,6 +116,12 @@ _VIDEO_PROVIDER_CAPABILITIES = {
         "durations_by_mode": {
             "*": tuple(range(3, 16)),
             "multi_reference": (5, 10),
+        },
+        "input_counts_by_mode": {
+            "prompt": (0, 0),
+            "first_frame": (1, 1),
+            "first_frame_and_last_frame": (2, 2),
+            "multi_reference": (2, 4),
         },
         "default_duration_seconds": 5,
     },
@@ -231,6 +252,19 @@ def get_supported_video_durations(provider: str, *, mode: str = VIDEO_GENERATION
     durations_by_mode: dict[str, tuple[int, ...]] = provider_capabilities["durations_by_mode"]  # type: ignore[assignment]
     normalized_mode = str(mode or VIDEO_GENERATION_DEFAULT_MODE).strip().lower() or VIDEO_GENERATION_DEFAULT_MODE
     return tuple(durations_by_mode.get(normalized_mode, durations_by_mode.get("*", ())))
+
+
+def get_supported_video_input_count(
+    provider: str,
+    *,
+    mode: str = VIDEO_GENERATION_DEFAULT_MODE,
+) -> tuple[int, int] | None:
+    """Return the min and max input count for one provider mode, if inputs are supported."""
+    current_provider = normalize_video_provider(provider)
+    provider_capabilities = _VIDEO_PROVIDER_CAPABILITIES[current_provider]
+    counts_by_mode: dict[str, tuple[int, int]] = provider_capabilities.get("input_counts_by_mode", {})  # type: ignore[assignment]
+    normalized_mode = str(mode or VIDEO_GENERATION_DEFAULT_MODE).strip().lower() or VIDEO_GENERATION_DEFAULT_MODE
+    return counts_by_mode.get(normalized_mode)
 
 
 def get_default_video_duration(provider: str) -> int | None:

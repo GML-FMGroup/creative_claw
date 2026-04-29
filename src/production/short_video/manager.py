@@ -52,6 +52,7 @@ from src.production.short_video.providers import (
     RoutedShortVideoProviderRuntime,
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
+    reference_asset_limit_for_provider,
 )
 from src.production.short_video.quality import build_quality_report, quality_report_markdown
 from src.production.short_video.renderer import TimelineRenderer
@@ -113,6 +114,7 @@ class ShortVideoProductionManager:
             status="running",
             stage="initializing",
             progress_percent=5,
+            original_brief=_brief_summary(user_prompt),
             brief_summary=_brief_summary(user_prompt),
             reference_assets=_reference_assets_from_input_files(
                 input_files=input_files,
@@ -405,10 +407,24 @@ class ShortVideoProductionManager:
         target_kinds = _revision_target_kinds(impact_view)
         if state.asset_plan is None and state.storyboard is not None:
             state.brief_summary = _append_revision_note(state.brief_summary, revision_notes)
+            _record_revision_history(
+                state,
+                stage="storyboard_review",
+                notes=revision_notes,
+                user_response=response,
+                metadata={
+                    "target_kinds": sorted(target_kinds),
+                    "impact_level": impact_view.get("impact_level", ""),
+                },
+            )
             state.storyboard = _build_short_video_storyboard(
                 user_prompt=state.brief_summary,
                 reference_assets=_valid_reference_assets(state),
-                selected_ratio=state.storyboard.selected_ratio or state.planning_context.get("selected_ratio"),
+                selected_ratio=(
+                    state.storyboard.selected_ratio
+                    or state.planning_context.get("selected_ratio")
+                    or _default_aspect_ratio_for_video_type(_planning_video_type(state))
+                ),
                 duration_seconds=_planning_duration_seconds(state),
                 video_type=_planning_video_type(state),
             )
@@ -450,6 +466,16 @@ class ShortVideoProductionManager:
                 ),
             )
         state.brief_summary = _append_revision_note(state.brief_summary, revision_notes)
+        _record_revision_history(
+            state,
+            stage="asset_plan_review",
+            notes=revision_notes,
+            user_response=response,
+            metadata={
+                "target_kinds": sorted(target_kinds),
+                "impact_level": impact_view.get("impact_level", ""),
+            },
+        )
         _apply_revision_to_asset_plan(
             state,
             notes=revision_notes,
@@ -777,7 +803,10 @@ class ShortVideoProductionManager:
         video_model_name = _requested_video_model_name(render_settings_payload, video_provider)
         video_resolution = _requested_video_resolution(render_settings_payload, video_provider, video_model_name)
         video_type = _requested_video_type(user_prompt, render_settings_payload)
-        selected_ratio = _explicit_aspect_ratio(render_settings_payload)
+        selected_ratio = _initial_selected_ratio(
+            render_settings_payload,
+            video_type=video_type,
+        )
         state.planning_context = {
             "user_prompt": user_prompt,
             "render_settings": dict(render_settings_payload),
@@ -843,12 +872,14 @@ class ShortVideoProductionManager:
             user_response,
             state.storyboard.selected_ratio or state.planning_context.get("selected_ratio"),
         )
+        video_provider, video_model_name, video_resolution = _planning_provider_settings(state)
+        video_type = _planning_video_type(state)
+        if selected_ratio is None:
+            selected_ratio = _default_aspect_ratio_for_video_type(video_type)
         state.storyboard.selected_ratio = selected_ratio  # type: ignore[assignment]
         state.storyboard.status = "approved"
         state.planning_context["selected_ratio"] = selected_ratio
         duration_seconds = _planning_duration_seconds(state)
-        video_provider, video_model_name, video_resolution = _planning_provider_settings(state)
-        video_type = _planning_video_type(state)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
@@ -902,10 +933,18 @@ class ShortVideoProductionManager:
         notes = str(user_response.get("notes", "") or user_response.get("message", "") or "").strip()
         if notes:
             state.brief_summary = f"{state.brief_summary}\n\nStoryboard revision notes: {notes}"
+            _record_revision_history(
+                state,
+                stage="storyboard_review",
+                notes=notes,
+                user_response=user_response,
+            )
         selected_ratio = _resume_selected_ratio(
             user_response,
             state.storyboard.selected_ratio if state.storyboard is not None else state.planning_context.get("selected_ratio"),
         )
+        if selected_ratio is None:
+            selected_ratio = _default_aspect_ratio_for_video_type(_planning_video_type(state))
         state.planning_context["selected_ratio"] = selected_ratio
         state.storyboard = _build_short_video_storyboard(
             user_prompt=state.brief_summary,
@@ -949,7 +988,15 @@ class ShortVideoProductionManager:
         notes = str(user_response.get("notes", "") or user_response.get("message", "") or "").strip()
         if notes:
             state.brief_summary = f"{state.brief_summary}\n\nRevision notes: {notes}"
+            _record_revision_history(
+                state,
+                stage="asset_plan_review",
+                notes=notes,
+                user_response=user_response,
+            )
         current_ratio = state.asset_plan.selected_ratio if state.asset_plan is not None else state.planning_context.get("selected_ratio")
+        if current_ratio is None:
+            current_ratio = _default_aspect_ratio_for_video_type(_planning_video_type(state))
         duration_seconds = state.asset_plan.duration_seconds if state.asset_plan is not None else _planning_duration_seconds(state)
         current_provider, current_model_name, current_resolution = _asset_plan_provider_settings(state.asset_plan)
         state.asset_plan = _build_short_video_asset_plan(
@@ -1006,12 +1053,13 @@ class ShortVideoProductionManager:
         video_provider = _requested_short_video_provider(render_settings_payload)
         video_model_name = _requested_video_model_name(render_settings_payload, video_provider)
         video_resolution = _requested_video_resolution(render_settings_payload, video_provider, video_model_name)
+        video_type = _requested_video_type(user_prompt, render_settings_payload)
         state.asset_plan = _build_short_video_asset_plan(
             user_prompt=user_prompt,
             reference_assets=state.reference_assets,
-            selected_ratio=_explicit_aspect_ratio(render_settings_payload),
+            selected_ratio=_initial_selected_ratio(render_settings_payload, video_type=video_type),
             duration_seconds=duration_seconds,
-            video_type=_requested_video_type(user_prompt, render_settings_payload),
+            video_type=video_type,
             video_provider=video_provider,
             video_model_name=video_model_name,
             video_resolution=video_resolution,
@@ -1095,6 +1143,10 @@ class ShortVideoProductionManager:
         state.asset_plan.selected_ratio = selected_ratio
         state.asset_plan.status = "approved"
         state.active_breakpoint = None
+        _record_provider_reference_asset_limit_warning(
+            state,
+            provider=state.asset_plan.planned_video_provider,
+        )
         if _has_partial_shot_regeneration_pending(state):
             _prepare_partial_shot_regeneration(
                 state,
@@ -2329,26 +2381,45 @@ def _looks_like_dialogue_speaker(label: str) -> bool:
     }
     if normalized in field_labels:
         return False
-    speaker_markers = (
+    speaker_labels = {
+        "旁白",
+        "narrator",
+    }
+    if normalized in speaker_labels:
+        return True
+    speaker_prefixes = (
         "角色",
         "人物",
-        "猫",
-        "狗",
-        "男",
-        "女",
         "旁白",
         "主播",
-        "a",
-        "b",
+        "猫咪",
+        "猫",
+        "狗狗",
+        "狗",
+        "男主",
+        "女主",
+        "男",
+        "女",
         "character",
-        "narrator",
+        "host",
         "cat",
         "dog",
-        "host",
     )
-    if any(marker in normalized for marker in speaker_markers):
+    if any(_speaker_label_matches_prefix(normalized, prefix) for prefix in speaker_prefixes):
         return True
-    return bool(re.fullmatch(r"[a-z0-9一二三四五六七八九十]{1,4}", normalized))
+    if re.fullmatch(r"[ab](?:\s*[\d一二三四五六七八九十])?", normalized):
+        return True
+    return bool(re.fullmatch(r"[一二三四五六七八九十]{1,4}", normalized))
+
+
+def _speaker_label_matches_prefix(normalized: str, prefix: str) -> bool:
+    """Return true for compact speaker labels like `cat a` or `猫A`."""
+    if normalized == prefix:
+        return True
+    suffix = normalized[len(prefix):].strip() if normalized.startswith(prefix) else ""
+    if not suffix:
+        return False
+    return bool(re.fullmatch(r"[-_ ]?[a-z0-9一二三四五六七八九十]{1,3}", suffix))
 
 
 def _requests_no_subtitles(brief: str) -> bool:
@@ -2615,6 +2686,82 @@ def _build_voiceover_text_from_storyboard(
 
 def _valid_reference_assets(state: ShortVideoProductionState) -> list[ReferenceAssetEntry]:
     return [item for item in state.reference_assets if item.status == "valid"]
+
+
+def _record_revision_history(
+    state: ShortVideoProductionState,
+    *,
+    stage: str,
+    notes: str,
+    user_response: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Append one user revision entry to persisted short-video state."""
+    state.revision_history.append(
+        {
+            "stage": stage,
+            "notes": notes,
+            "user_response": dict(user_response),
+            "metadata": dict(metadata or {}),
+        }
+    )
+
+
+def _record_provider_reference_asset_limit_warning(
+    state: ShortVideoProductionState,
+    *,
+    provider: str,
+) -> None:
+    """Record when valid reference assets exceed the selected provider call limit."""
+    normalized_provider = _normalize_short_video_provider(provider)
+    valid_references = _valid_reference_assets(state)
+    limit = reference_asset_limit_for_provider(normalized_provider)
+    if len(valid_references) <= limit:
+        return
+
+    sent_references = valid_references[:limit]
+    omitted_references = valid_references[limit:]
+    omitted_ids = [item.reference_asset_id for item in omitted_references]
+    warning_key = f"{normalized_provider}:{limit}:{','.join(omitted_ids)}"
+    if any(
+        event.event_type == "reference_asset_limit_warning"
+        and event.metadata.get("warning_key") == warning_key
+        for event in state.production_events
+    ):
+        return
+
+    warning_text = (
+        f"{normalized_provider} accepts {limit} reference asset(s) per generation call in this adapter; "
+        "extra valid reference assets were kept in state but not sent to the provider."
+    )
+    for reference in omitted_references:
+        _append_reference_asset_warning(reference, warning_text)
+
+    state.production_events.append(
+        ProductionEvent(
+            event_type="reference_asset_limit_warning",
+            stage=state.stage,
+            message=warning_text,
+            metadata={
+                "warning_key": warning_key,
+                "provider": normalized_provider,
+                "limit": limit,
+                "valid_reference_asset_count": len(valid_references),
+                "sent_reference_asset_ids": [item.reference_asset_id for item in sent_references],
+                "omitted_reference_asset_ids": omitted_ids,
+            },
+        )
+    )
+
+
+def _append_reference_asset_warning(reference: ReferenceAssetEntry, warning_text: str) -> None:
+    """Append one warning string to reference metadata without overwriting existing metadata."""
+    warnings = reference.metadata.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    if warning_text not in warnings:
+        warnings.append(warning_text)
+    reference.metadata["warnings"] = warnings
 
 
 def _replacement_reference_id(response: dict[str, Any]) -> str:
@@ -2960,7 +3107,11 @@ def _build_shot_asset_plans(
                 segment_index=1,
                 storyboard_shot_ids=[],
                 storyboard_sequence_indexes=[],
-                duration_seconds=_provider_segment_duration(asset_plan.duration_seconds),
+                duration_seconds=_provider_segment_duration(
+                    asset_plan.duration_seconds,
+                    video_provider=asset_plan.planned_video_provider,
+                    has_reference_assets=bool(asset_plan.reference_asset_ids),
+                ),
                 visual_prompt=asset_plan.shot_plan.visual_prompt,
                 voiceover_text=asset_plan.shot_plan.voiceover_text,
                 reference_asset_ids=asset_plan.reference_asset_ids,
@@ -3030,7 +3181,11 @@ def _shot_asset_plan_from_group(
     shots: list[ShortVideoStoryboardShot],
 ) -> ShortVideoShotAssetPlan:
     """Build one segment-level plan from one storyboard shot group."""
-    duration_seconds = _provider_segment_duration(sum(float(shot.duration_seconds or 1.0) for shot in shots))
+    duration_seconds = _provider_segment_duration(
+        sum(float(shot.duration_seconds or 1.0) for shot in shots),
+        video_provider=asset_plan.planned_video_provider,
+        has_reference_assets=bool(asset_plan.reference_asset_ids),
+    )
     visual_prompt = _shot_segment_visual_prompt(asset_plan, storyboard, segment_index, shots)
     voiceover_text = _shot_segment_voiceover_text(asset_plan, shots)
     return ShortVideoShotAssetPlan(
@@ -3050,8 +3205,13 @@ def _shot_asset_plan_from_group(
     )
 
 
-def _provider_segment_duration(duration_seconds: float) -> float:
-    """Return an integer Seedance-compatible segment duration."""
+def _provider_segment_duration(
+    duration_seconds: float,
+    *,
+    video_provider: str,
+    has_reference_assets: bool = False,
+) -> float:
+    """Return an integer provider-compatible segment duration."""
     try:
         value = float(duration_seconds)
     except (TypeError, ValueError):
@@ -3059,7 +3219,22 @@ def _provider_segment_duration(duration_seconds: float) -> float:
     rounded = int(value)
     if value > rounded:
         rounded += 1
+    provider = _normalize_short_video_provider(video_provider)
+    if provider == "veo":
+        if has_reference_assets:
+            return 8.0
+        return float(_ceil_supported_duration(rounded, (4, 6, 8)))
     return float(min(15, max(4, rounded)))
+
+
+def _ceil_supported_duration(value: int, supported_values: tuple[int, ...]) -> int:
+    """Return the smallest supported duration at or above value, capped to the provider max."""
+    if not supported_values:
+        return value
+    for candidate in sorted(supported_values):
+        if value <= candidate:
+            return candidate
+    return max(supported_values)
 
 
 def _shot_segment_visual_prompt(
@@ -3689,6 +3864,19 @@ def _normalize_render_settings(payload: dict[str, Any]) -> ShortVideoRenderSetti
 def _explicit_aspect_ratio(payload: dict[str, Any]) -> str | None:
     aspect_ratio = str(payload.get("aspect_ratio", "") or "").strip()
     return aspect_ratio if aspect_ratio in {"16:9", "9:16", "1:1"} else None
+
+
+def _initial_selected_ratio(payload: dict[str, Any], *, video_type: str) -> str:
+    """Return the user-selected aspect ratio or a visible default for the video type."""
+    return _explicit_aspect_ratio(payload) or _default_aspect_ratio_for_video_type(video_type)
+
+
+def _default_aspect_ratio_for_video_type(video_type: str) -> str:
+    """Return the default review ratio when the user did not explicitly choose one."""
+    normalized_video_type = _normalize_video_type(video_type) or "product_ad"
+    if normalized_video_type == "product_ad":
+        return "16:9"
+    return "9:16"
 
 
 def _resume_selected_ratio(response: dict[str, Any], current_ratio: str | None) -> str | None:

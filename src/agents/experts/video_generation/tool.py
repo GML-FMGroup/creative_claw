@@ -32,6 +32,7 @@ from src.agents.experts.video_generation.capabilities import (
     VIDEO_GENERATION_VEO_MODEL_NAME,
     get_default_video_duration,
     get_default_video_resolution,
+    get_supported_video_input_count,
     normalize_provider_video_aspect_ratio,
     normalize_provider_video_duration,
     normalize_provider_video_mode,
@@ -208,19 +209,22 @@ def _read_workspace_video_as_genai_video(path: str) -> types.Video:
     return types.Video.from_file(location=str(resolve_workspace_path(path)))
 
 
-def _validate_mode_input_paths(mode: str, input_paths: list[str]) -> None:
+def _validate_mode_input_paths(provider: str, mode: str, input_paths: list[str]) -> None:
     """Validate mode-specific input count constraints before provider calls."""
     current_count = len(input_paths)
-    if mode == "first_frame" and current_count != 1:
-        raise ValueError("mode=first_frame requires exactly one input image.")
-    if mode == "first_frame_and_last_frame" and current_count != 2:
-        raise ValueError("mode=first_frame_and_last_frame requires exactly two input images.")
-    if mode == "multi_reference" and not 2 <= current_count <= 4:
-        raise ValueError("mode=multi_reference requires between two and four input images.")
-    if mode in {"reference_asset", "reference_style"} and not 1 <= current_count <= 3:
-        raise ValueError(f"mode={mode} requires between one and three input images.")
-    if mode == "video_extension" and current_count != 1:
-        raise ValueError("mode=video_extension requires exactly one input video.")
+    supported_count = get_supported_video_input_count(provider, mode=mode)
+    if supported_count is None:
+        if current_count:
+            raise ValueError(f"provider={provider} mode={mode} does not accept input files.")
+        return
+    min_count, max_count = supported_count
+    if not min_count <= current_count <= max_count:
+        if min_count == max_count:
+            noun = "video" if mode == "video_extension" else "image"
+            raise ValueError(f"provider={provider} mode={mode} requires exactly {min_count} input {noun}(s).")
+        raise ValueError(
+            f"provider={provider} mode={mode} requires between {min_count} and {max_count} input image(s)."
+        )
 
 
 def _validate_veo_constraints(
@@ -733,7 +737,7 @@ async def seedance_video_generation_tool(
             model_name=current_model,
             generate_audio=current_generate_audio,
         )
-        _validate_mode_input_paths(current_mode, current_paths)
+        _validate_mode_input_paths("seedance", current_mode, current_paths)
     except ValueError as exc:
         return {
             "status": "error",
@@ -883,7 +887,7 @@ async def veo_video_generation_tool(
     try:
         current_person_generation = normalize_person_generation(person_generation)
         current_seed = normalize_video_seed(seed)
-        _validate_mode_input_paths(current_mode, current_paths)
+        _validate_mode_input_paths("veo", current_mode, current_paths)
         _validate_veo_constraints(
             mode=current_mode,
             resolution=current_resolution,
@@ -1020,7 +1024,7 @@ async def kling_video_generation_tool(
     try:
         _validate_kling_constraints(mode=current_mode, input_paths=current_paths)
         if current_mode != "prompt":
-            _validate_mode_input_paths(current_mode, current_paths)
+            _validate_mode_input_paths("kling", current_mode, current_paths)
         current_model_name = _resolve_kling_model_name(model_name, mode=current_mode)
         if current_mode != "prompt":
             _validate_kling_input_images(mode=current_mode, input_paths=current_paths)
