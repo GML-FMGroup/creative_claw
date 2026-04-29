@@ -52,6 +52,7 @@ from src.production.short_video.providers import (
     RoutedShortVideoProviderRuntime,
     ShortVideoProviderError,
     ShortVideoProviderRuntime,
+    reference_asset_limit_for_provider,
 )
 from src.production.short_video.quality import build_quality_report, quality_report_markdown
 from src.production.short_video.renderer import TimelineRenderer
@@ -1095,6 +1096,10 @@ class ShortVideoProductionManager:
         state.asset_plan.selected_ratio = selected_ratio
         state.asset_plan.status = "approved"
         state.active_breakpoint = None
+        _record_provider_reference_asset_limit_warning(
+            state,
+            provider=state.asset_plan.planned_video_provider,
+        )
         if _has_partial_shot_regeneration_pending(state):
             _prepare_partial_shot_regeneration(
                 state,
@@ -2617,6 +2622,63 @@ def _valid_reference_assets(state: ShortVideoProductionState) -> list[ReferenceA
     return [item for item in state.reference_assets if item.status == "valid"]
 
 
+def _record_provider_reference_asset_limit_warning(
+    state: ShortVideoProductionState,
+    *,
+    provider: str,
+) -> None:
+    """Record when valid reference assets exceed the selected provider call limit."""
+    normalized_provider = _normalize_short_video_provider(provider)
+    valid_references = _valid_reference_assets(state)
+    limit = reference_asset_limit_for_provider(normalized_provider)
+    if len(valid_references) <= limit:
+        return
+
+    sent_references = valid_references[:limit]
+    omitted_references = valid_references[limit:]
+    omitted_ids = [item.reference_asset_id for item in omitted_references]
+    warning_key = f"{normalized_provider}:{limit}:{','.join(omitted_ids)}"
+    if any(
+        event.event_type == "reference_asset_limit_warning"
+        and event.metadata.get("warning_key") == warning_key
+        for event in state.production_events
+    ):
+        return
+
+    warning_text = (
+        f"{normalized_provider} accepts {limit} reference asset(s) per generation call in this adapter; "
+        "extra valid reference assets were kept in state but not sent to the provider."
+    )
+    for reference in omitted_references:
+        _append_reference_asset_warning(reference, warning_text)
+
+    state.production_events.append(
+        ProductionEvent(
+            event_type="reference_asset_limit_warning",
+            stage=state.stage,
+            message=warning_text,
+            metadata={
+                "warning_key": warning_key,
+                "provider": normalized_provider,
+                "limit": limit,
+                "valid_reference_asset_count": len(valid_references),
+                "sent_reference_asset_ids": [item.reference_asset_id for item in sent_references],
+                "omitted_reference_asset_ids": omitted_ids,
+            },
+        )
+    )
+
+
+def _append_reference_asset_warning(reference: ReferenceAssetEntry, warning_text: str) -> None:
+    """Append one warning string to reference metadata without overwriting existing metadata."""
+    warnings = reference.metadata.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    if warning_text not in warnings:
+        warnings.append(warning_text)
+    reference.metadata["warnings"] = warnings
+
+
 def _replacement_reference_id(response: dict[str, Any]) -> str:
     for key in ("replace_reference_asset_id", "replace_reference_id", "replaces"):
         value = str(response.get(key, "") or "").strip()
@@ -2960,7 +3022,11 @@ def _build_shot_asset_plans(
                 segment_index=1,
                 storyboard_shot_ids=[],
                 storyboard_sequence_indexes=[],
-                duration_seconds=_provider_segment_duration(asset_plan.duration_seconds),
+                duration_seconds=_provider_segment_duration(
+                    asset_plan.duration_seconds,
+                    video_provider=asset_plan.planned_video_provider,
+                    has_reference_assets=bool(asset_plan.reference_asset_ids),
+                ),
                 visual_prompt=asset_plan.shot_plan.visual_prompt,
                 voiceover_text=asset_plan.shot_plan.voiceover_text,
                 reference_asset_ids=asset_plan.reference_asset_ids,
@@ -3030,7 +3096,11 @@ def _shot_asset_plan_from_group(
     shots: list[ShortVideoStoryboardShot],
 ) -> ShortVideoShotAssetPlan:
     """Build one segment-level plan from one storyboard shot group."""
-    duration_seconds = _provider_segment_duration(sum(float(shot.duration_seconds or 1.0) for shot in shots))
+    duration_seconds = _provider_segment_duration(
+        sum(float(shot.duration_seconds or 1.0) for shot in shots),
+        video_provider=asset_plan.planned_video_provider,
+        has_reference_assets=bool(asset_plan.reference_asset_ids),
+    )
     visual_prompt = _shot_segment_visual_prompt(asset_plan, storyboard, segment_index, shots)
     voiceover_text = _shot_segment_voiceover_text(asset_plan, shots)
     return ShortVideoShotAssetPlan(
@@ -3050,8 +3120,13 @@ def _shot_asset_plan_from_group(
     )
 
 
-def _provider_segment_duration(duration_seconds: float) -> float:
-    """Return an integer Seedance-compatible segment duration."""
+def _provider_segment_duration(
+    duration_seconds: float,
+    *,
+    video_provider: str,
+    has_reference_assets: bool = False,
+) -> float:
+    """Return an integer provider-compatible segment duration."""
     try:
         value = float(duration_seconds)
     except (TypeError, ValueError):
@@ -3059,7 +3134,22 @@ def _provider_segment_duration(duration_seconds: float) -> float:
     rounded = int(value)
     if value > rounded:
         rounded += 1
+    provider = _normalize_short_video_provider(video_provider)
+    if provider == "veo":
+        if has_reference_assets:
+            return 8.0
+        return float(_ceil_supported_duration(rounded, (4, 6, 8)))
     return float(min(15, max(4, rounded)))
+
+
+def _ceil_supported_duration(value: int, supported_values: tuple[int, ...]) -> int:
+    """Return the smallest supported duration at or above value, capped to the provider max."""
+    if not supported_values:
+        return value
+    for candidate in sorted(supported_values):
+        if value <= candidate:
+            return candidate
+    return max(supported_values)
 
 
 def _shot_segment_visual_prompt(

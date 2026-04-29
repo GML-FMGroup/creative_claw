@@ -541,6 +541,89 @@ class ShortVideoProductionTests(unittest.TestCase):
         self.assertEqual(providers_item["planned_video_provider"], "veo")
         self.assertEqual(providers_item["provider_label"], "Veo + ByteDance TTS")
 
+    def test_manager_veo_segment_duration_quantizes_to_supported_value(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager()
+
+        result = asyncio.run(manager.start(
+            user_prompt="make a Veo product ad with a seven second target",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={
+                "provider": "veo_tts",
+                "aspect_ratio": "9:16",
+                "duration_seconds": 7,
+            },
+            adk_state=state,
+        ))
+        result = _approve_storyboard(
+            manager,
+            production_session_id=result.production_session_id,
+            adk_state=state,
+        )
+
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(state_payload["shot_asset_plans"][0]["duration_seconds"], 8.0)
+
+    def test_manager_veo_reference_assets_force_eight_seconds_and_warn_on_truncation(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            provider_runtime=_FakeProviderRuntime(),
+            renderer=_FakeRenderer(),
+            validator=_FakeValidator(),
+        )
+
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            input_files = []
+            for index in range(4):
+                reference_path = Path(tmpdir) / f"product_{index}.png"
+                reference_path.write_bytes(b"product-reference")
+                input_files.append(
+                    {
+                        "name": reference_path.name,
+                        "path": workspace_relative_path(reference_path),
+                    }
+                )
+
+            started = asyncio.run(manager.start(
+                user_prompt="make a Veo product ad from these product references",
+                input_files=input_files,
+                placeholder_assets=False,
+                render_settings={
+                    "provider": "veo_tts",
+                    "aspect_ratio": "9:16",
+                    "duration_seconds": 6,
+                },
+                adk_state=state,
+            ))
+            asset_review = _approve_storyboard(
+                manager,
+                production_session_id=started.production_session_id,
+                adk_state=state,
+            )
+            shot_review = _approve_asset_plan_to_shot_review(
+                manager,
+                production_session_id=started.production_session_id,
+                adk_state=state,
+            )
+
+        asset_review_payload = json.loads(resolve_workspace_path(asset_review.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(asset_review_payload["shot_asset_plans"][0]["duration_seconds"], 8.0)
+        shot_payload = json.loads(resolve_workspace_path(shot_review.state_ref or "").read_text(encoding="utf-8"))
+        warning_events = [
+            event
+            for event in shot_payload["production_events"]
+            if event["event_type"] == "reference_asset_limit_warning"
+        ]
+        self.assertEqual(len(warning_events), 1)
+        self.assertEqual(warning_events[0]["metadata"]["limit"], 3)
+        self.assertEqual(len(warning_events[0]["metadata"]["omitted_reference_asset_ids"]), 1)
+        omitted_id = warning_events[0]["metadata"]["omitted_reference_asset_ids"][0]
+        omitted_reference = next(
+            item for item in shot_payload["reference_assets"] if item["reference_asset_id"] == omitted_id
+        )
+        self.assertIn("warnings", omitted_reference["metadata"])
+
     def test_manager_start_rejects_unsupported_short_video_provider(self) -> None:
         state = _adk_state()
         manager = ShortVideoProductionManager()
