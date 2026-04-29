@@ -45,6 +45,7 @@ from src.production.design.models import (
     PageHandoffReport,
     PdfExportReport,
     PreviewReport,
+    ViewportSpec,
 )
 from src.production.design.component_inventory import (
     build_component_inventory,
@@ -108,6 +109,12 @@ _VIEW_TYPES = (
     "events",
     "artifacts",
 )
+_DEFAULT_PREVIEW_DEVICE_TARGETS = ("desktop", "mobile")
+_PREVIEW_VIEWPORT_BY_DEVICE = {
+    "desktop": ViewportSpec(name="desktop", width=1440, height=1000),
+    "tablet": ViewportSpec(name="tablet", width=820, height=1180),
+    "mobile": ViewportSpec(name="mobile", width=390, height=844),
+}
 
 
 class DesignProductionManager:
@@ -883,6 +890,7 @@ class DesignProductionManager:
             artifact_id=artifact.artifact_id,
             html_path=artifact.path,
             output_dir=session_root / "previews",
+            viewports=_preview_viewports_for_artifact(state, artifact),
         )
         state.preview_reports.extend(preview_reports)
         _append_browser_diagnostics(state, artifact)
@@ -1495,6 +1503,35 @@ def _layout_plan_for_page(layout_plan: LayoutPlan, page: PageBlueprint) -> Layou
         pages=[page],
         global_notes=layout_plan.global_notes,
     )
+
+
+def _preview_viewports_for_artifact(state: DesignProductionState, artifact: HtmlArtifact) -> list[ViewportSpec]:
+    """Return preview viewports requested by the artifact's page targets."""
+    page = _page_for_artifact(state, artifact)
+    raw_targets = page.device_targets if page is not None else []
+    targets = [str(target or "").strip().lower() for target in raw_targets]
+    if not targets:
+        targets = list(_DEFAULT_PREVIEW_DEVICE_TARGETS)
+    viewports: list[ViewportSpec] = []
+    seen: set[str] = set()
+    for target in targets:
+        viewport = _PREVIEW_VIEWPORT_BY_DEVICE.get(target)
+        if viewport is None or viewport.name in seen:
+            continue
+        viewports.append(viewport)
+        seen.add(viewport.name)
+    if viewports:
+        return viewports
+    return [_PREVIEW_VIEWPORT_BY_DEVICE[name] for name in _DEFAULT_PREVIEW_DEVICE_TARGETS]
+
+
+def _page_for_artifact(state: DesignProductionState, artifact: HtmlArtifact) -> PageBlueprint | None:
+    """Return the planned page associated with one HTML artifact."""
+    pages = state.layout_plan.pages if state.layout_plan is not None else []
+    for page in pages:
+        if page.page_id == artifact.page_id:
+            return page
+    return None
 
 
 def _active_html_artifacts(state: DesignProductionState) -> list[HtmlArtifact]:
