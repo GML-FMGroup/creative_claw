@@ -14,6 +14,9 @@ from src.production.design.models import PdfExportReport
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
+_PAGE_GOTO_TIMEOUT_MS = 15_000
+
+
 class HtmlPdfExporter:
     """Export an HTML artifact to PDF using browser print support."""
 
@@ -53,7 +56,11 @@ class HtmlPdfExporter:
                 try:
                     page = await browser.new_page()
                     try:
-                        await page.goto(resolved_html_path.as_uri(), wait_until="networkidle")
+                        await page.goto(
+                            resolved_html_path.as_uri(),
+                            wait_until="networkidle",
+                            timeout=_PAGE_GOTO_TIMEOUT_MS,
+                        )
                         await page.pdf(path=str(output_path), format="A4", print_background=True)
                     finally:
                         await page.close()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from src.production.design.models import (
+    AccessibilityReport,
     DesignBrief,
     DesignQcFinding,
     DesignQcReport,
@@ -20,6 +21,7 @@ def build_quality_report(
     preview_reports: list[PreviewReport],
     brief: DesignBrief | None,
     layout_plan: LayoutPlan | None,
+    accessibility_report: AccessibilityReport | None = None,
     expert_report: DesignQcReport | None = None,
 ) -> DesignQcReport:
     """Build a P0 quality report from hard facts plus optional expert guidance."""
@@ -98,6 +100,8 @@ def build_quality_report(
             )
         )
 
+    findings.extend(_accessibility_findings(accessibility_report))
+
     deterministic_has_error = any(finding.severity == "error" for finding in findings)
     findings.extend(_supplemental_expert_findings(expert_report))
 
@@ -117,6 +121,36 @@ def build_quality_report(
         summary=summary,
         findings=findings,
     )
+
+
+def _accessibility_findings(report: AccessibilityReport | None) -> list[DesignQcFinding]:
+    """Convert accessibility lint findings into main QC findings."""
+    if report is None:
+        return []
+    converted: list[DesignQcFinding] = []
+    for finding in report.findings:
+        if finding.severity not in {"warning", "error"}:
+            continue
+        converted.append(
+            DesignQcFinding(
+                severity=finding.severity,
+                category="accessibility",
+                target=finding.target,
+                summary=finding.summary,
+                recommendation=finding.recommendation,
+            )
+        )
+    if report.status == "fail" and not any(finding.severity == "error" for finding in converted):
+        converted.append(
+            DesignQcFinding(
+                severity="error",
+                category="accessibility",
+                target=report.path,
+                summary=report.summary or "Accessibility report failed.",
+                recommendation="Fix accessibility errors before approval.",
+            )
+        )
+    return converted
 
 
 def _supplemental_expert_findings(expert_report: DesignQcReport | None) -> list[DesignQcFinding]:
