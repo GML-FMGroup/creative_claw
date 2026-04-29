@@ -392,7 +392,8 @@ class DesignProductionManager:
                 revision_request=revision_request,
                 adk_state=adk_state,
             )
-        state.revision_history.append(revision_request)
+        impact_view = build_revision_impact_view(state, revision_request)
+        state.revision_history.append(_revision_history_entry(revision_request, impact_view=impact_view))
         state.production_events.append(
             ProductionEvent(
                 event_type="design_direction_revised",
@@ -405,7 +406,7 @@ class DesignProductionManager:
             state,
             message="Revision captured. Review the updated direction before building the page.",
             adk_state=adk_state,
-            view=build_revision_impact_view(state, revision_request),
+            view=impact_view,
         )
 
     def _load_state_or_error(self, production_session_id: str | None, adk_state) -> DesignProductionState | ProductionRunResult:
@@ -478,19 +479,22 @@ class DesignProductionManager:
         adk_state,
     ) -> ProductionRunResult:
         """Capture direction-level revision notes before HTML generation."""
-        state.revision_history.append(response)
+        revision_request = normalize_revision_request(response)
+        impact_view = build_revision_impact_view(state, revision_request)
+        state.revision_history.append(_revision_history_entry(revision_request, impact_view=impact_view))
         state.production_events.append(
             ProductionEvent(
                 event_type="design_direction_revised",
                 stage=state.stage,
                 message="User requested design revisions; returning to design direction review.",
-                metadata={"user_response": response},
+                metadata={"user_response": revision_request},
             )
         )
         return self._pause_for_design_direction_review(
             state,
             message="Design revision notes were captured. Review the updated direction before rebuilding.",
             adk_state=adk_state,
+            view=impact_view,
         )
 
     async def _build_and_complete_placeholder(self, state: DesignProductionState, *, adk_state) -> ProductionRunResult:
@@ -572,13 +576,9 @@ class DesignProductionManager:
     ) -> ProductionRunResult:
         """Apply a preview-stage revision by rebuilding affected HTML page artifacts."""
         impact_view = build_revision_impact_view(state, revision_request)
-        revision_entry = dict(revision_request)
-        revision_entry["revision_id"] = impact_view.get("revision_id", "")
-        revision_entry["impact"] = {
-            key: value
-            for key, value in impact_view.items()
-            if key not in {"available_targets", "revision_request"}
-        }
+        revision_request_for_build = dict(revision_request)
+        revision_request_for_build["revision_id"] = impact_view.get("revision_id", "")
+        revision_entry = _revision_history_entry(revision_request_for_build, impact_view=impact_view)
         state.revision_history.append(revision_entry)
         stale_reason = _revision_stale_reason(revision_entry)
         affected_page_ids = set(_revision_page_ids(state, impact_view))
@@ -604,7 +604,7 @@ class DesignProductionManager:
             await self._build_html_validation_preview_and_qc(
                 state,
                 builder_mode="revision",
-                revision_request=revision_entry,
+                revision_request=revision_request_for_build,
                 revision_impact=impact_view,
             )
         except Exception as exc:
@@ -1007,7 +1007,7 @@ class DesignProductionManager:
         output_path = output_dir / _html_output_filename(
             page.path,
             revision=builder_mode == "revision",
-            next_version=len(state.html_artifacts) + 1,
+            next_version=_next_html_version_for_page(state, page.page_id),
         )
         previous_html_context = previous_html_override if previous_html_override is not None else ""
         if previous_html_override is None and builder_mode == "revision":
@@ -1541,6 +1541,62 @@ def _html_output_filename(path: str | None, *, revision: bool, next_version: int
     candidate = Path(safe_name)
     version = max(int(next_version or 2), 2)
     return f"{candidate.stem}_v{version}{candidate.suffix}"
+
+
+def _next_html_version_for_page(state: DesignProductionState, page_id: str) -> int:
+    """Return the next artifact version number for one page."""
+    page_artifact_count = sum(1 for artifact in state.html_artifacts if artifact.page_id == page_id)
+    return page_artifact_count + 1
+
+
+def _revision_history_entry(
+    revision_request: dict[str, Any],
+    *,
+    impact_view: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a compact persisted revision history entry."""
+    impact = impact_view or {}
+    entry: dict[str, Any] = {
+        "revision_id": str(impact.get("revision_id") or revision_request.get("revision_id") or ""),
+        "notes": str(revision_request.get("notes") or ""),
+        "targets": _compact_revision_targets(revision_request.get("targets") or []),
+    }
+    decision = str(revision_request.get("decision") or "").strip()
+    if decision:
+        entry["decision"] = decision
+    if impact:
+        entry["impact_summary"] = {
+            "affected_brief": bool(impact.get("affected_brief")),
+            "affected_design_system": bool(impact.get("affected_design_system")),
+            "affected_page_ids": list(impact.get("affected_page_ids") or []),
+            "affected_section_ids": list(impact.get("affected_section_ids") or []),
+            "affected_asset_ids": list(impact.get("affected_asset_ids") or []),
+            "affected_artifact_ids": list(impact.get("affected_artifact_ids") or []),
+            "recommended_action": str(impact.get("recommended_action") or ""),
+        }
+    return entry
+
+
+def _compact_revision_targets(targets: Any) -> list[Any]:
+    """Return revision targets without carrying arbitrary request payloads."""
+    if not isinstance(targets, list):
+        return []
+    compacted: list[Any] = []
+    allowed_keys = ("kind", "type", "id", "label", "path")
+    for target in targets:
+        if isinstance(target, dict):
+            item = {
+                key: str(target.get(key) or "").strip()
+                for key in allowed_keys
+                if str(target.get(key) or "").strip()
+            }
+            if item:
+                compacted.append(item)
+            continue
+        text = str(target or "").strip()
+        if text:
+            compacted.append(text)
+    return compacted
 
 
 def _read_latest_html(state: DesignProductionState) -> str:
