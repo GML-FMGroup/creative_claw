@@ -46,6 +46,7 @@ from src.production.short_video.models import (
     VideoTrack,
 )
 from src.production.short_video.impact import build_revision_impact_view
+from src.production.short_video.expert_runtime import ShortVideoStoryboardExpertRuntime
 from src.production.short_video.placeholders import PlaceholderAssetFactory
 from src.production.short_video.prompt_catalog import render_prompt_template
 from src.production.short_video.providers import (
@@ -84,6 +85,7 @@ class ShortVideoProductionManager:
         provider_runtime: ShortVideoProviderRuntime | None = None,
         renderer: TimelineRenderer | None = None,
         validator: RenderValidator | None = None,
+        storyboard_expert_runtime: ShortVideoStoryboardExpertRuntime | None = None,
     ) -> None:
         """Initialize the short-video production manager."""
         self.store = store or ProductionSessionStore()
@@ -91,6 +93,70 @@ class ShortVideoProductionManager:
         self.provider_runtime = provider_runtime or RoutedShortVideoProviderRuntime()
         self.renderer = renderer or TimelineRenderer()
         self.validator = validator or RenderValidator()
+        self.storyboard_expert_runtime = storyboard_expert_runtime
+
+    async def _build_storyboard_for_review(
+        self,
+        state: ShortVideoProductionState,
+        *,
+        user_prompt: str,
+        reference_assets: list[ReferenceAssetEntry],
+        selected_ratio: str | None,
+        duration_seconds: float,
+        video_type: str,
+    ) -> ShortVideoStoryboard:
+        """Build a storyboard with the optional structured expert and deterministic fallback."""
+        baseline = _build_short_video_storyboard(
+            user_prompt=user_prompt,
+            reference_assets=reference_assets,
+            selected_ratio=selected_ratio,
+            duration_seconds=duration_seconds,
+            video_type=video_type,
+        )
+        if self.storyboard_expert_runtime is None:
+            return baseline
+
+        try:
+            expert_storyboard = await self.storyboard_expert_runtime.plan_storyboard(
+                user_prompt=user_prompt,
+                video_type=baseline.video_type,
+                selected_ratio=selected_ratio,
+                duration_seconds=duration_seconds,
+                reference_assets=reference_assets,
+                baseline_storyboard=baseline,
+            )
+            storyboard = _normalize_expert_storyboard(
+                expert_storyboard,
+                baseline_storyboard=baseline,
+            )
+        except Exception as exc:
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="storyboard_expert_fallback",
+                    stage=state.stage,
+                    message=(
+                        "ShortVideoStoryboardExpert failed; using deterministic storyboard fallback."
+                    ),
+                    metadata={
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:500],
+                    },
+                )
+            )
+            return baseline
+
+        state.production_events.append(
+            ProductionEvent(
+                event_type="storyboard_expert_prepared",
+                stage=state.stage,
+                message="Prepared the short-video storyboard with structured expert planning.",
+                metadata={
+                    "model_name": getattr(self.storyboard_expert_runtime, "model_name", ""),
+                    "shot_count": len(storyboard.shots),
+                },
+            )
+        )
+        return storyboard
 
     async def start(
         self,
@@ -131,7 +197,7 @@ class ShortVideoProductionManager:
 
         try:
             if not placeholder_assets:
-                return self._prepare_storyboard_review(
+                return await self._prepare_storyboard_review(
                     state,
                     user_prompt=user_prompt,
                     render_settings_payload=render_settings or {},
@@ -417,7 +483,8 @@ class ShortVideoProductionManager:
                     "impact_level": impact_view.get("impact_level", ""),
                 },
             )
-            state.storyboard = _build_short_video_storyboard(
+            state.storyboard = await self._build_storyboard_for_review(
+                state,
                 user_prompt=state.brief_summary,
                 reference_assets=_valid_reference_assets(state),
                 selected_ratio=(
@@ -618,7 +685,8 @@ class ShortVideoProductionManager:
                 "video_resolution": current_resolution,
             }
         )
-        state.storyboard = _build_short_video_storyboard(
+        state.storyboard = await self._build_storyboard_for_review(
+            state,
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
             selected_ratio=selected_ratio,
@@ -720,7 +788,7 @@ class ShortVideoProductionManager:
 
         if decision == "revise":
             if state.active_breakpoint.stage == "storyboard_review":
-                return self._revise_storyboard_and_pause(
+                return await self._revise_storyboard_and_pause(
                     state,
                     user_response=response,
                     adk_state=adk_state,
@@ -789,7 +857,7 @@ class ShortVideoProductionManager:
             message=f"Current review stage cannot be approved by this action: {state.active_breakpoint.stage}.",
         )
 
-    def _prepare_storyboard_review(
+    async def _prepare_storyboard_review(
         self,
         state: ShortVideoProductionState,
         *,
@@ -817,7 +885,10 @@ class ShortVideoProductionManager:
             "video_resolution": video_resolution,
             "selected_ratio": selected_ratio,
         }
-        state.storyboard = _build_short_video_storyboard(
+        state.stage = "storyboard_preparing"
+        state.progress_percent = max(state.progress_percent, 10)
+        state.storyboard = await self._build_storyboard_for_review(
+            state,
             user_prompt=user_prompt,
             reference_assets=state.reference_assets,
             selected_ratio=selected_ratio,
@@ -922,7 +993,7 @@ class ShortVideoProductionManager:
             message="Storyboard approved. Please review the short-video asset plan before real generation.",
         )
 
-    def _revise_storyboard_and_pause(
+    async def _revise_storyboard_and_pause(
         self,
         state: ShortVideoProductionState,
         *,
@@ -946,7 +1017,8 @@ class ShortVideoProductionManager:
         if selected_ratio is None:
             selected_ratio = _default_aspect_ratio_for_video_type(_planning_video_type(state))
         state.planning_context["selected_ratio"] = selected_ratio
-        state.storyboard = _build_short_video_storyboard(
+        state.storyboard = await self._build_storyboard_for_review(
+            state,
             user_prompt=state.brief_summary,
             reference_assets=_valid_reference_assets(state),
             selected_ratio=selected_ratio,
@@ -2263,6 +2335,133 @@ def _normalize_storyboard_durations(
     ]
     durations[-1] = round(max(minimum, total - sum(durations[:-1])), 2)
     return durations
+
+
+def _normalize_expert_storyboard(
+    storyboard: ShortVideoStoryboard,
+    *,
+    baseline_storyboard: ShortVideoStoryboard,
+) -> ShortVideoStoryboard:
+    """Normalize expert storyboard output before storing it in production state."""
+    if storyboard is None or not storyboard.shots:
+        raise ValueError("ShortVideoStoryboardExpert returned no storyboard shots.")
+
+    max_count = _max_expert_storyboard_shots(baseline_storyboard.target_duration_seconds)
+    raw_shots = list(storyboard.shots[:max_count])
+    minimum = _expert_storyboard_minimum_duration(
+        baseline_storyboard.target_duration_seconds,
+        shot_count=len(raw_shots),
+    )
+    durations = _normalize_storyboard_durations(
+        [float(shot.duration_seconds or 0.0) for shot in raw_shots],
+        baseline_storyboard.target_duration_seconds,
+        minimum_seconds=minimum,
+    )
+    known_reference_ids = set(baseline_storyboard.reference_asset_ids)
+    fallback_shots = baseline_storyboard.shots or []
+    normalized_shots: list[ShortVideoStoryboardShot] = []
+    for index, raw_shot in enumerate(raw_shots, start=1):
+        fallback_shot = fallback_shots[min(index - 1, len(fallback_shots) - 1)] if fallback_shots else None
+        purpose = _clean_review_text(raw_shot.purpose, max_chars=120) or (
+            fallback_shot.purpose if fallback_shot is not None else f"Shot {index}"
+        )
+        visual_beat = _clean_review_text(raw_shot.visual_beat, max_chars=500) or (
+            fallback_shot.visual_beat if fallback_shot is not None else purpose
+        )
+        audio_notes = _clean_review_text(raw_shot.audio_notes, max_chars=240)
+        if not audio_notes and fallback_shot is not None:
+            audio_notes = fallback_shot.audio_notes
+        reference_asset_ids = [
+            item
+            for item in _clean_string_list(raw_shot.reference_asset_ids, max_items=12, max_chars=80)
+            if item in known_reference_ids
+        ]
+        if not reference_asset_ids and known_reference_ids:
+            reference_asset_ids = list(baseline_storyboard.reference_asset_ids)
+        normalized_shots.append(
+            ShortVideoStoryboardShot(
+                sequence_index=index,
+                duration_seconds=durations[index - 1],
+                purpose=purpose,
+                visual_beat=visual_beat,
+                dialogue_lines=_clean_string_list(raw_shot.dialogue_lines, max_items=12, max_chars=240),
+                audio_notes=audio_notes,
+                constraints=_clean_string_list(raw_shot.constraints, max_items=8, max_chars=220)
+                or (fallback_shot.constraints if fallback_shot is not None else []),
+                reference_asset_ids=reference_asset_ids,
+            )
+        )
+
+    return ShortVideoStoryboard(
+        video_type=baseline_storyboard.video_type,
+        title=_clean_review_text(storyboard.title, max_chars=120) or baseline_storyboard.title,
+        narrative_summary=(
+            _clean_review_text(storyboard.narrative_summary, max_chars=800)
+            or baseline_storyboard.narrative_summary
+        ),
+        target_duration_seconds=baseline_storyboard.target_duration_seconds,
+        selected_ratio=baseline_storyboard.selected_ratio,
+        global_constraints=_deduplicate_strings(
+            baseline_storyboard.global_constraints
+            + _clean_string_list(storyboard.global_constraints, max_items=12, max_chars=240)
+        ),
+        reference_asset_ids=baseline_storyboard.reference_asset_ids,
+        shots=normalized_shots,
+    )
+
+
+def _max_expert_storyboard_shots(total_seconds: float) -> int:
+    """Return a conservative shot count cap for provider-friendly storyboards."""
+    total = float(total_seconds or 0.0)
+    if total > 15:
+        return max(3, min(5, int(total // 4)))
+    return 5
+
+
+def _expert_storyboard_minimum_duration(total_seconds: float, *, shot_count: int) -> float:
+    """Return a shot minimum that will not inflate the storyboard total."""
+    minimum = _storyboard_minimum_shot_duration(total_seconds)
+    if minimum * float(max(shot_count, 1)) > float(total_seconds or 0.0):
+        return 1.0
+    return minimum
+
+
+def _clean_review_text(value: Any, *, max_chars: int) -> str:
+    """Normalize compact user-reviewable text."""
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 1)].rstrip() + "..."
+
+
+def _clean_string_list(values: Any, *, max_items: int, max_chars: int) -> list[str]:
+    """Normalize a short list of user-reviewable strings."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        candidates = [values]
+    else:
+        try:
+            candidates = list(values)
+        except TypeError:
+            candidates = [values]
+    return _deduplicate_strings(
+        _clean_review_text(item, max_chars=max_chars)
+        for item in candidates[:max_items]
+    )
+
+
+def _deduplicate_strings(values: Any) -> list[str]:
+    """Return non-empty strings in original order without duplicates."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _build_short_video_asset_plan(

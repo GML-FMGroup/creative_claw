@@ -17,6 +17,8 @@ from src.production.short_video.models import (
     RenderValidationReport,
     ShortVideoAssetPlan,
     ShortVideoRenderSettings,
+    ShortVideoStoryboard,
+    ShortVideoStoryboardShot,
     ShortVideoShotPlan,
 )
 from src.production.short_video.providers import (
@@ -169,6 +171,74 @@ class _FakeProviderRuntime:
             source="expert",
             provider="mock_tts",
             duration_seconds=asset_plan.duration_seconds,
+        )
+
+
+class _FakeStoryboardExpertRuntime:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.requests = []
+
+    @property
+    def model_name(self) -> str:
+        return "fake/storyboard-expert"
+
+    async def plan_storyboard(
+        self,
+        *,
+        user_prompt,
+        video_type,
+        selected_ratio,
+        duration_seconds,
+        reference_assets,
+        baseline_storyboard,
+    ):
+        self.requests.append(
+            {
+                "user_prompt": user_prompt,
+                "video_type": video_type,
+                "selected_ratio": selected_ratio,
+                "duration_seconds": duration_seconds,
+                "baseline_shot_count": len(baseline_storyboard.shots),
+            }
+        )
+        if self.fail:
+            raise RuntimeError("storyboard expert unavailable")
+        return ShortVideoStoryboard(
+            video_type=video_type,
+            title="Expert short-video storyboard",
+            narrative_summary="Expert plan preserving the exact user beat.",
+            target_duration_seconds=duration_seconds,
+            selected_ratio=selected_ratio,
+            global_constraints=["Preserve the exact scare-and-jump reaction from the brief."],
+            reference_asset_ids=[item.reference_asset_id for item in reference_assets],
+            shots=[
+                ShortVideoStoryboardShot(
+                    sequence_index=1,
+                    duration_seconds=2.0,
+                    purpose="Set up the two cats",
+                    visual_beat="Two cats face each other in a quiet room before the scare.",
+                    dialogue_lines=["猫A: 你听到了吗？"],
+                    audio_notes="Small nervous cat voice.",
+                    constraints=["No subtitles."],
+                ),
+                ShortVideoStoryboardShot(
+                    sequence_index=2,
+                    duration_seconds=3.0,
+                    purpose="Exact reaction beat",
+                    visual_beat="Both cats are startled and jump up at the same time, matching the brief.",
+                    dialogue_lines=["猫B: 快跑！"],
+                    audio_notes="Synchronized jump sound effect.",
+                    constraints=["Show the simultaneous jump clearly."],
+                ),
+                ShortVideoStoryboardShot(
+                    sequence_index=3,
+                    duration_seconds=3.0,
+                    purpose="Comedic landing",
+                    visual_beat="The cats land awkwardly, then freeze for the final comedic pause.",
+                    audio_notes="Soft comedic resolve.",
+                ),
+            ],
         )
 
 
@@ -535,6 +605,50 @@ class ShortVideoProductionTests(unittest.TestCase):
         durations = [shot["duration_seconds"] for shot in shots]
         self.assertEqual(durations, [2.5, 5.0, 2.5])
         self.assertEqual(shots[-1]["purpose"], "Trust close and call to action")
+
+    def test_manager_uses_storyboard_expert_when_injected(self) -> None:
+        state = _adk_state()
+        runtime = _FakeStoryboardExpertRuntime()
+        manager = ShortVideoProductionManager(storyboard_expert_runtime=runtime)
+
+        result = asyncio.run(manager.start(
+            user_prompt="做一个 8 秒两只猫短剧：两只猫同时被吓得跳起来，然后尴尬落地",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "9:16", "duration_seconds": 8},
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        self.assertEqual(runtime.requests[0]["baseline_shot_count"], 3)
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        shots = state_payload["storyboard"]["shots"]
+        self.assertEqual(state_payload["storyboard"]["title"], "Expert short-video storyboard")
+        self.assertIn("jump up at the same time", shots[1]["visual_beat"])
+        self.assertEqual([shot["duration_seconds"] for shot in shots], [2.0, 3.0, 3.0])
+        event_types = [event["event_type"] for event in state_payload["production_events"]]
+        self.assertIn("storyboard_expert_prepared", event_types)
+
+    def test_manager_falls_back_when_storyboard_expert_fails(self) -> None:
+        state = _adk_state()
+        manager = ShortVideoProductionManager(
+            storyboard_expert_runtime=_FakeStoryboardExpertRuntime(fail=True),
+        )
+
+        result = asyncio.run(manager.start(
+            user_prompt="make an 8 second product ad for a smart mug",
+            input_files=[],
+            placeholder_assets=False,
+            render_settings={"aspect_ratio": "16:9", "duration_seconds": 8},
+            adk_state=state,
+        ))
+
+        self.assertEqual(result.status, "needs_user_review")
+        state_payload = json.loads(resolve_workspace_path(result.state_ref or "").read_text(encoding="utf-8"))
+        first_shot = state_payload["storyboard"]["shots"][0]
+        self.assertEqual(first_shot["purpose"], "Hook and product reveal")
+        event_types = [event["event_type"] for event in state_payload["production_events"]]
+        self.assertIn("storyboard_expert_fallback", event_types)
 
     def test_manager_start_accepts_seedance_fast_model_settings(self) -> None:
         state = _adk_state()

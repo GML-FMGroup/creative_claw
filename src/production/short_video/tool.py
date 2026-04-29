@@ -8,6 +8,7 @@ from typing import Any, Literal
 from google.adk.tools.tool_context import ToolContext
 
 from src.production.models import ProductionRunResult
+from src.production.short_video.expert_runtime import ShortVideoStoryboardExpertRuntime
 from src.production.short_video.manager import ShortVideoProductionManager
 
 
@@ -39,7 +40,8 @@ async def run_short_video_production(
         view_type: Read-only view to load when action is view. Allowed values are overview, brief, storyboard, asset_plan, timeline, quality, events, and artifacts.
         input_files: Optional workspace file records or workspace-relative path strings to use as reference assets.
         placeholder_assets: Use true only for P0a placeholder rendering.
-        render_settings: Optional aspect ratio, duration, fps, width, height, provider/runtime, model_name, and resolution settings.
+        render_settings: Optional aspect ratio, duration, fps, width, height, provider/runtime, model_name,
+            resolution settings, and storyboard_expert enable/disable flag.
         user_response: User decision payload for resume, replacement details for add_reference_assets, or targets/notes for revision actions. Plain text is accepted and treated as notes.
     """
     if tool_context is None:
@@ -55,7 +57,9 @@ async def run_short_video_production(
     state = tool_context.state
     raw_input_files = input_files if input_files is not None else state.get("uploaded") or state.get("input_files")
     resolved_input_files = _normalize_input_files(raw_input_files)
-    manager = ShortVideoProductionManager()
+    manager = ShortVideoProductionManager(
+        storyboard_expert_runtime=_storyboard_expert_runtime_for_tool(render_settings, tool_context),
+    )
     if action == "start":
         result = await manager.start(
             user_prompt=user_prompt,
@@ -143,3 +147,19 @@ def _normalize_input_files(raw_files: Any) -> list[dict[str, Any]]:
         normalized_item.setdefault("description", "")
         normalized.append(normalized_item)
     return normalized
+
+
+def _storyboard_expert_runtime_for_tool(
+    render_settings: dict[str, Any] | None,
+    tool_context: ToolContext,
+) -> ShortVideoStoryboardExpertRuntime | None:
+    """Return the storyboard expert runtime for real ADK tool calls."""
+    settings = render_settings or {}
+    requested = settings.get("storyboard_expert", settings.get("use_storyboard_expert"))
+    if requested is False:
+        return None
+    if requested is True:
+        return ShortVideoStoryboardExpertRuntime()
+    if not isinstance(tool_context, ToolContext):
+        return None
+    return ShortVideoStoryboardExpertRuntime()
