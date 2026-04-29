@@ -303,6 +303,42 @@ def _collect_known_workspace_paths(state: dict[str, Any]) -> set[str]:
     return known_paths
 
 
+def _pending_production_session_ids(state: dict[str, Any]) -> set[str]:
+    """Return active production ids that are not ready for final delivery."""
+    pending_statuses = {"running", "needs_user_review", "needs_user_input"}
+    session_ids: set[str] = set()
+
+    active_status = str(state.get("active_production_status", "") or "").strip()
+    active_session_id = str(state.get("active_production_session_id", "") or "").strip()
+    if active_session_id and active_status in pending_statuses:
+        session_ids.add(active_session_id)
+
+    scoped_sessions = state.get("active_production_sessions")
+    if isinstance(scoped_sessions, dict):
+        for entry in scoped_sessions.values():
+            if isinstance(entry, str):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            session_id = str(entry.get("production_session_id", "") or "").strip()
+            status = str(entry.get("status", "") or "").strip()
+            if session_id and status in pending_statuses:
+                session_ids.add(session_id)
+
+    return session_ids
+
+
+def _is_pending_production_attachment(relative_path: str, *, state: dict[str, Any]) -> bool:
+    """Return whether a path belongs to a production session still under review."""
+    pending_session_ids = _pending_production_session_ids(state)
+    if not pending_session_ids:
+        return False
+    path_parts = set(Path(relative_path).parts)
+    if "production" not in path_parts:
+        return False
+    return any(session_id in path_parts for session_id in pending_session_ids)
+
+
 def _normalize_final_response_paths(paths: list[str], *, state: dict[str, Any]) -> list[str]:
     """Validate final attachment paths against the current session file history."""
     known_paths = _collect_known_workspace_paths(state)
@@ -317,6 +353,8 @@ def _normalize_final_response_paths(paths: list[str], *, state: dict[str, Any]) 
         if Path(cleaned_path).is_absolute():
             raise ValueError("Final attachment paths must be workspace-relative, not absolute.")
         relative_path = workspace_relative_path(cleaned_path)
+        if _is_pending_production_attachment(relative_path, state=state):
+            continue
         if relative_path not in known_paths:
             raise ValueError(
                 f"Final attachment path '{relative_path}' is not part of the current session file history."
@@ -452,6 +490,7 @@ Rules:
 - For PPT, slides, PowerPoint, deck, presentation, 演示文稿, 汇报, or converting a brief/source/template into slides, use `run_ppt_production` instead of manually chaining text/image/file tools. PPT production is for durable, reviewable `.pptx` outputs.
 - Current PPT production supports native editable PPTX generation, TXT/MD/DOCX plus lightweight text-layer PDF source-document summaries, PPTX template summaries, optional brief review, outline review, deck spec review, generated slide previews, per-slide PPTX segments, stale slide preview/segment regeneration, a render manifest, a quality report with source fact coverage checks, status/view actions, and revision impact analysis. Template editing, PDF OCR/deep layout extraction, and patching regenerated pages back into an existing final PPTX remain future capabilities.
 - Start PPT production with `run_ppt_production(action="start", user_prompt=..., input_files=..., render_settings=...)`. The standard gated reviews are `outline_review`, then `deck_spec_review`, then `final_preview_review`; if the user asks to confirm deck direction before outline planning, pass `render_settings.brief_review=true` to insert `brief_review` before `outline_review`; targeted stale-page regeneration may insert `page_preview_review` before returning to `deck_spec_review`. Call `resume` with `decision="approve"` only after the user approves the current review payload. Approving the final preview completes production and projects final artifacts into session state.
+- Any PPT result with `status="needs_user_review"` is a hard stop for the current turn: show the review payload to the user, ask for approval/revision/cancel, do not call another PPT `resume` in the same turn, and set final structured `final_file_paths` to `[]`. Preview PNGs, per-slide segments, manifest paths, and quality paths returned during review are for inspection only until the final preview is approved.
 - Use `run_ppt_production(action="view", view_type=...)` when the user asks for PPT status, inputs, document summary, template summary, outline, deck spec, previews, manifest, quality, events, or artifacts. Use `view_type="manifest"` for delivery paths across final PPTX, previews, per-slide segments, and quality files; use `view_type="quality"` for QC, validation, or delivery readiness.
 - Use `run_ppt_production(action="add_inputs", input_files=...)` when the user adds a PPT template, source document, or visual reference to the current PPT production. This keeps the same production session and returns to outline review.
 - Use `run_ppt_production(action="analyze_revision_impact", user_response=...)` before applying targeted PPT changes when the user asks what would be affected. If the user names a slide/page number, include `slide_number`; if a review payload item id is known, include `target_kind` (`outline_entry` or `deck_slide`) and `target_id`. Use `apply_revision` only after the user confirms the change; targeted outline changes return to `outline_review`, while targeted deck-slide changes return to `deck_spec_review`. If a targeted deck-slide revision leaves stale previews and the user wants to refresh those pages before approving the full deck rebuild, call `run_ppt_production(action="regenerate_stale_segments")`; this refreshes stale preview PNGs and per-slide PPTX segments only, returns `page_preview_review`, and keeps the final PPTX and quality report stale until the regenerated pages and deck spec are approved.

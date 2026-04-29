@@ -156,6 +156,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn('action="analyze_revision_impact"', instruction)
         self.assertIn('action="apply_revision"', instruction)
         self.assertIn("needs_user_review", instruction)
+        self.assertIn("hard stop for the current turn", instruction)
         self.assertIn("completed artifacts", instruction)
 
     def test_agent_uses_structured_output_schema(self) -> None:
@@ -269,6 +270,45 @@ class OrchestratorTests(unittest.TestCase):
                     [workspace_relative_path(file_path)],
                     state={"generated": []},
                 )
+
+    def test_normalize_final_response_paths_ignores_pending_production_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            production_session_id = "ppt_pending_review"
+            preview_path = Path(tmpdir) / "production" / production_session_id / "preview" / "slide-01.png"
+            preview_path.parent.mkdir(parents=True)
+            preview_path.write_bytes(b"fake-preview")
+
+            normalized = _normalize_final_response_paths(
+                [workspace_relative_path(preview_path)],
+                state={
+                    "active_production_status": "needs_user_review",
+                    "active_production_session_id": production_session_id,
+                    "generated": [],
+                },
+            )
+
+        self.assertEqual(normalized, [])
+
+    def test_normalize_final_response_paths_keeps_tracked_files_during_pending_production(self) -> None:
+        with tempfile.TemporaryDirectory(dir=workspace_root()) as tmpdir:
+            file_path = Path(tmpdir) / "result.png"
+            file_path.write_bytes(b"fake-image")
+            file_record = build_workspace_file_record(
+                file_path,
+                description="generated image",
+                source="image_generation",
+            )
+
+            normalized = _normalize_final_response_paths(
+                [workspace_relative_path(file_path)],
+                state={
+                    "active_production_status": "needs_user_review",
+                    "active_production_session_id": "ppt_pending_review",
+                    "generated": [file_record],
+                },
+            )
+
+        self.assertEqual(normalized, [workspace_relative_path(file_path)])
 
     def test_summarize_read_file_result_prefers_preview(self) -> None:
         status, summary = Orchestrator._summarize_tool_result(
