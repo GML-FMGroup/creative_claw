@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -742,6 +743,11 @@ class DesignProductionManager:
         last_processing: dict[str, Any] = {}
         for page in target_pages:
             state.stage = "html_building"
+            shared_html_context = (
+                _shared_html_context_for_artifacts(built_artifacts)
+                if state.build_mode == "multi_html" and builder_mode in {"expert", "revision"}
+                else ""
+            )
             artifact = await self._build_html_artifact_for_page(
                 session_root=session_root,
                 state=state,
@@ -749,7 +755,46 @@ class DesignProductionManager:
                 builder_mode=builder_mode,
                 revision_request=revision_request,
                 revision_impact=revision_impact,
+                shared_html_context=shared_html_context,
             )
+            validation_report = self.html_validator.validate(
+                artifact.path,
+                session_root=session_root,
+                artifact_id=artifact.artifact_id,
+            )
+            if validation_report.status == "invalid" and builder_mode in {"expert", "revision"}:
+                repair_source_artifact_id = artifact.artifact_id
+                repair_feedback = _html_validation_repair_feedback(validation_report)
+                state.production_events.append(
+                    ProductionEvent(
+                        event_type="html_validation_repair_attempted",
+                        stage=state.stage,
+                        message="Generated HTML failed validation; requesting one HtmlBuilderExpert repair pass.",
+                        metadata={
+                            "artifact_id": repair_source_artifact_id,
+                            "page_id": page.page_id,
+                            "issues": validation_report.issues,
+                        },
+                    )
+                )
+                artifact = await self._build_html_artifact_for_page(
+                    session_root=session_root,
+                    state=state,
+                    page=page,
+                    builder_mode=builder_mode,
+                    revision_request=revision_request,
+                    revision_impact=revision_impact,
+                    validation_feedback=repair_feedback,
+                    previous_html_override=_read_artifact_html(artifact),
+                    shared_html_context=shared_html_context,
+                )
+                artifact.metadata["validation_repair_attempted"] = True
+                artifact.metadata["validation_repair_source_artifact_id"] = repair_source_artifact_id
+                validation_report = self.html_validator.validate(
+                    artifact.path,
+                    session_root=session_root,
+                    artifact_id=artifact.artifact_id,
+                )
             state.html_artifacts.append(artifact)
             built_artifacts.append(artifact)
             last_processing = await self._validate_preview_and_qc_artifact(
@@ -757,6 +802,7 @@ class DesignProductionManager:
                 state=state,
                 artifact=artifact,
                 builder_mode=builder_mode,
+                validation_report=validation_report,
             )
 
         page_handoff_report = _append_page_handoff(state)
@@ -786,6 +832,9 @@ class DesignProductionManager:
         builder_mode: str,
         revision_request: dict[str, Any] | None = None,
         revision_impact: dict[str, Any] | None = None,
+        validation_feedback: dict[str, Any] | None = None,
+        previous_html_override: str | None = None,
+        shared_html_context: str = "",
     ) -> HtmlArtifact:
         """Build one page-scoped HTML artifact with the selected builder."""
         if builder_mode in {"expert", "revision"}:
@@ -796,6 +845,9 @@ class DesignProductionManager:
                 builder_mode=builder_mode,
                 revision_request=revision_request,
                 revision_impact=revision_impact,
+                validation_feedback=validation_feedback,
+                previous_html_override=previous_html_override,
+                shared_html_context=shared_html_context,
             )
         return self.placeholder_builder.build(session_root=session_root, state=state, page=page)
 
@@ -806,10 +858,11 @@ class DesignProductionManager:
         state: DesignProductionState,
         artifact: HtmlArtifact,
         builder_mode: str,
+        validation_report: HtmlValidationReport | None = None,
     ) -> dict[str, Any]:
         """Validate, preview, and quality-check one generated HTML artifact."""
         state.stage = "html_validation"
-        validation_report = self.html_validator.validate(
+        validation_report = validation_report or self.html_validator.validate(
             artifact.path,
             session_root=session_root,
             artifact_id=artifact.artifact_id,
@@ -849,6 +902,7 @@ class DesignProductionManager:
             preview_reports=preview_reports,
             brief=state.brief,
             layout_plan=state.layout_plan,
+            accessibility_report=accessibility_report,
             expert_report=expert_qc_report,
         )
         state.qc_reports.append(qc_report)
@@ -939,6 +993,9 @@ class DesignProductionManager:
         builder_mode: str,
         revision_request: dict[str, Any] | None = None,
         revision_impact: dict[str, Any] | None = None,
+        validation_feedback: dict[str, Any] | None = None,
+        previous_html_override: str | None = None,
+        shared_html_context: str = "",
     ) -> HtmlArtifact:
         """Build and persist one HTML artifact with HtmlBuilderExpert."""
         if state.brief is None or state.design_system is None or state.layout_plan is None or not state.layout_plan.pages:
@@ -952,6 +1009,9 @@ class DesignProductionManager:
             revision=builder_mode == "revision",
             next_version=len(state.html_artifacts) + 1,
         )
+        previous_html_context = previous_html_override if previous_html_override is not None else ""
+        if previous_html_override is None and builder_mode == "revision":
+            previous_html_context = _read_latest_html_for_page(state, page.page_id)
         html_output = await self.expert_runtime.build_html(
             brief=state.brief,
             design_system=state.design_system,
@@ -960,7 +1020,9 @@ class DesignProductionManager:
             build_mode="revision" if builder_mode == "revision" else "baseline",
             revision_request=revision_request,
             revision_impact=revision_impact,
-            previous_html=_read_latest_html_for_page(state, page.page_id) if builder_mode == "revision" else "",
+            validation_feedback=validation_feedback,
+            previous_html=previous_html_context,
+            shared_html_context=shared_html_context,
         )
         output_path.write_text(html_output.html, encoding="utf-8")
         section_fragments = html_output.section_fragments or {
@@ -982,6 +1044,7 @@ class DesignProductionManager:
                 "build_mode": "revision" if builder_mode == "revision" else "baseline",
                 "production_build_mode": state.build_mode,
                 "revision_id": (revision_request or {}).get("revision_id", ""),
+                "shared_html_context_used": bool(shared_html_context),
             },
         )
 
@@ -1510,6 +1573,50 @@ def _read_artifact_html(artifact: HtmlArtifact) -> str:
         return resolve_workspace_path(artifact.path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _shared_html_context_for_artifacts(artifacts: list[HtmlArtifact]) -> str:
+    """Return compact shared markup context from already-built pages."""
+    entries: list[str] = []
+    for artifact in artifacts:
+        fragments = _shared_html_fragments(_read_artifact_html(artifact))
+        if not fragments:
+            continue
+        artifact_name = Path(artifact.path).name
+        entries.append(f"{artifact_name} ({artifact.artifact_id}):\n{fragments}")
+    return "\n\n".join(entries)
+
+
+def _shared_html_fragments(html: str, *, max_chars: int = 5000) -> str:
+    """Extract repeated page chrome fragments for multi-page consistency prompts."""
+    fragments: list[str] = []
+    for tag in ("header", "nav", "footer"):
+        match = re.search(rf"<{tag}\b.*?</{tag}>", html, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            fragments.append(_compact_html_fragment(match.group(0), max_chars=1800))
+    text = "\n".join(fragments)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()} ... [truncated]"
+
+
+def _compact_html_fragment(html: str, *, max_chars: int) -> str:
+    """Return one HTML fragment as compact prompt text."""
+    text = " ".join(str(html or "").split())
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars].rstrip()} ... [truncated]"
+
+
+def _html_validation_repair_feedback(report: HtmlValidationReport) -> dict[str, Any]:
+    """Return compact validation feedback for one HtmlBuilderExpert repair pass."""
+    return {
+        "status": report.status,
+        "path": report.path,
+        "issues": report.issues,
+        "warnings": report.warnings,
+        "repair_instruction": "Return a complete corrected HTML document that resolves every validation issue.",
+    }
 
 
 def _append_design_system_audit(state: DesignProductionState) -> DesignSystemAuditReport:

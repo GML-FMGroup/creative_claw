@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from src.production.design.accessibility import build_accessibility_report
 from src.production.design.component_inventory import build_component_inventory
@@ -27,6 +28,8 @@ from src.production.design.expert_runtime import (
 )
 from src.production.design.manager import DesignProductionManager
 from src.production.design.models import (
+    AccessibilityFinding,
+    AccessibilityReport,
     DesignBrief,
     DesignProductionState,
     DesignQcFinding,
@@ -41,6 +44,7 @@ from src.production.design.models import (
     PageBlueprint,
     PdfExportReport,
     PreviewReport,
+    ReferenceAssetEntry,
 )
 from src.production.design.page_handoff import build_page_handoff
 from src.production.design.prompt_catalog import (
@@ -48,6 +52,7 @@ from src.production.design.prompt_catalog import (
     available_prompt_templates,
     render_prompt_template,
 )
+from src.production.design.quality import build_quality_report
 from src.production.design.tool import run_design_production
 from src.production.design.tools.html_validator import HtmlValidator
 from src.production.models import ProductionSession, utc_now_iso
@@ -252,14 +257,18 @@ class _FakeDesignExpertRuntime:
         build_mode="baseline",
         revision_request=None,
         revision_impact=None,
+        validation_feedback=None,
         previous_html="",
+        shared_html_context="",
     ):
         self.build_calls.append(
             {
                 "build_mode": build_mode,
                 "revision_request": revision_request or {},
                 "revision_impact": revision_impact or {},
+                "validation_feedback": validation_feedback or {},
                 "previous_html": previous_html,
+                "shared_html_context": shared_html_context,
                 "page_ids": [page.page_id for page in layout_plan.pages],
             }
         )
@@ -283,10 +292,12 @@ class _FakeDesignExpertRuntime:
   </style>
 </head>
 <body>
+  <header><nav><a href="index.html">Home</a><a href="product.html">Product</a></nav></header>
   <main>
     <section id="hero"><h1>{heading}</h1><p>{body}</p></section>
     <section id="workflow"><h2>Workflow</h2><p>Prioritize exceptions and route next actions.</p></section>
   </main>
+  <footer><p>Expert design footer</p></footer>
 </body>
 </html>
 """,
@@ -331,18 +342,76 @@ class _FakeDesignExpertRuntime:
         )
 
 
+class _RepairingDesignExpertRuntime(_FakeDesignExpertRuntime):
+    async def build_html(
+        self,
+        *,
+        brief,
+        design_system,
+        layout_plan,
+        reference_assets,
+        build_mode="baseline",
+        revision_request=None,
+        revision_impact=None,
+        validation_feedback=None,
+        previous_html="",
+        shared_html_context="",
+    ):
+        self.build_calls.append(
+            {
+                "build_mode": build_mode,
+                "revision_request": revision_request or {},
+                "revision_impact": revision_impact or {},
+                "validation_feedback": validation_feedback or {},
+                "previous_html": previous_html,
+                "shared_html_context": shared_html_context,
+                "page_ids": [page.page_id for page in layout_plan.pages],
+            }
+        )
+        if not validation_feedback:
+            html = """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bad HTML</title><style>body{margin:0}</style></head>
+<body><main><section id="hero"><h1>Bad HTML</h1><img src="assets/missing.png" alt="Missing"></section></main></body>
+</html>
+"""
+        else:
+            html = """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Repaired HTML</title><style>body{margin:0}</style></head>
+<body><main><section id="hero"><h1>Repaired HTML</h1></section></main></body>
+</html>
+"""
+        return HtmlBuildOutput(
+            title="Repaired HTML" if validation_feedback else "Bad HTML",
+            html=html,
+            section_fragments={"hero": "Hero"},
+            notes="repair test html",
+        )
+
+
 class _CapturingDesignExpertRuntime(DesignExpertRuntime):
     def __init__(self) -> None:
         super().__init__(model_reference="fake/design-model")
         self.requests = []
 
-    async def _run_structured_agent(self, *, agent_name, instruction, request_text, output_schema, output_key):
+    async def _run_structured_agent(
+        self,
+        *,
+        agent_name,
+        instruction,
+        request_text,
+        output_schema,
+        output_key,
+        extra_parts=None,
+    ):
         self.requests.append(
             {
                 "agent_name": agent_name,
                 "instruction": instruction,
                 "request_text": request_text,
                 "output_key": output_key,
+                "extra_parts_count": len(extra_parts or []),
             }
         )
         if output_schema is DesignBrief:
@@ -382,7 +451,74 @@ class _CapturingDesignExpertRuntime(DesignExpertRuntime):
                 ],
                 global_notes="Captured multi-page plan.",
             )
+        if output_schema is _AdkHtmlBuildOutput:
+            return _AdkHtmlBuildOutput(
+                title="Captured HTML",
+                html="""<!doctype html><html lang="en"><head><meta charset="utf-8"><style>body{margin:0}</style></head><body><main id="hero"></main></body></html>""",
+            )
         raise AssertionError(f"Unexpected schema for capture runtime: {output_schema!r}")
+
+
+class _FakeAdkLlmAgent:
+    instances = []
+
+    def __init__(self, **kwargs) -> None:
+        self.name = kwargs["name"]
+        self.model = kwargs["model"]
+        self.instruction = kwargs["instruction"]
+        self.include_contents = kwargs["include_contents"]
+        self.output_schema = kwargs["output_schema"]
+        self.output_key = kwargs["output_key"]
+        self.__class__.instances.append(self)
+
+
+class _FakeAdkSessionService:
+    def __init__(self) -> None:
+        self.sessions = {}
+
+    async def create_session(self, *, app_name, user_id, session_id, state):
+        self.sessions[session_id] = SimpleNamespace(state=dict(state))
+        return self.sessions[session_id]
+
+    async def get_session(self, *, app_name, user_id, session_id):
+        return self.sessions.get(session_id)
+
+
+class _FakeAdkEvent:
+    def __init__(self, text: str = "") -> None:
+        self.content = SimpleNamespace(parts=[SimpleNamespace(text=text)])
+
+    def is_final_response(self) -> bool:
+        return True
+
+
+class _FakeAdkRunner:
+    instances = []
+    queued_outputs = []
+
+    def __init__(self, *, agent, app_name) -> None:
+        self.agent = agent
+        self.app_name = app_name
+        self.session_service = _FakeAdkSessionService()
+        self.messages = []
+        self.run_count = 0
+        self.__class__.instances.append(self)
+
+    async def run_async(self, *, user_id, session_id, new_message):
+        self.run_count += 1
+        self.messages.append(new_message)
+        output = self.__class__.queued_outputs.pop(0) if self.__class__.queued_outputs else {"goal": "Cached runner goal"}
+        if isinstance(output, Exception):
+            raise output
+        if output is not None:
+            self.session_service.sessions[session_id].state[self.agent.output_key] = output
+        yield _FakeAdkEvent()
+
+
+def _reset_fake_adk_runtime() -> None:
+    _FakeAdkLlmAgent.instances = []
+    _FakeAdkRunner.instances = []
+    _FakeAdkRunner.queued_outputs = []
 
 
 class DesignProductionTests(unittest.TestCase):
@@ -824,6 +960,44 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
 
+    def test_manager_repairs_expert_html_after_validation_failure_once(self) -> None:
+        state = _adk_state("session_design_expert_repair")
+        runtime = _RepairingDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.status, "needs_user_review")
+        self.assertEqual(len(runtime.build_calls), 2)
+        self.assertIn("Referenced local resource does not exist", runtime.build_calls[1]["validation_feedback"]["issues"][0])
+        self.assertIn("assets/missing.png", runtime.build_calls[1]["previous_html"])
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual(len(persisted["html_artifacts"]), 1)
+        self.assertEqual(persisted["html_artifacts"][0]["status"], "valid")
+        self.assertTrue(persisted["html_artifacts"][0]["metadata"]["validation_repair_attempted"])
+        self.assertEqual(persisted["html_validation_reports"][0]["status"], "valid")
+        self.assertTrue(
+            any(event["event_type"] == "html_validation_repair_attempted" for event in persisted["production_events"])
+        )
+
     def test_manager_real_path_multi_html_builds_each_planned_page(self) -> None:
         state = _adk_state("session_design_expert_multi")
         runtime = _FakeDesignExpertRuntime()
@@ -865,6 +1039,10 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual({Path(item["path"]).name for item in persisted["html_artifacts"]}, {"index.html", "product.html"})
         self.assertEqual(len(runtime.build_calls), 2)
         self.assertTrue(all(len(call["page_ids"]) == 1 for call in runtime.build_calls))
+        self.assertEqual(runtime.build_calls[0]["shared_html_context"], "")
+        self.assertIn("<header>", runtime.build_calls[1]["shared_html_context"])
+        self.assertIn("<footer>", runtime.build_calls[1]["shared_html_context"])
+        self.assertTrue(persisted["html_artifacts"][1]["metadata"]["shared_html_context_used"])
         self.assertEqual(persisted["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(persisted["page_handoff_reports"][0]["metrics"]["ready_item_count"], 2)
 
@@ -1249,6 +1427,52 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("hero", result.view["affected_section_ids"])
         self.assertTrue(result.view["affected_page_ids"])
         self.assertEqual(result.view["recommended_action"], "rebuild_page")
+
+    def test_manager_revision_impact_matches_chinese_page_and_section_aliases(self) -> None:
+        state = _adk_state("session_design_revision_impact_alias")
+        runtime = _FakeDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        settings = {
+            "build_mode": "multi_html",
+            "pages": [
+                {"title": "Home", "path": "index.html"},
+                {"title": "Pricing", "path": "pricing.html"},
+                {"title": "About", "path": "about.html"},
+            ],
+        }
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a multi-page SaaS microsite",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=settings,
+                adk_state=state,
+            )
+        )
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        pricing_page_id = persisted["layout_plan"]["pages"][1]["page_id"]
+        pricing_section_id = persisted["layout_plan"]["pages"][1]["sections"][0]["section_id"]
+
+        result = asyncio.run(
+            manager.analyze_revision_impact(
+                production_session_id=started.production_session_id,
+                user_response={"notes": "把价格页首屏改得更强调套餐权益"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(result.view["affected_page_ids"], [pricing_page_id])
+        self.assertEqual(result.view["affected_section_ids"], [pricing_section_id])
 
     def test_manager_preview_review_revise_rebuilds_variant_html(self) -> None:
         state = _adk_state("session_design_revision_rebuild")
@@ -1772,6 +1996,74 @@ class DesignProductionTests(unittest.TestCase):
         ).to_html_build_output()
         self.assertEqual(html_output.section_fragments, {"hero": "<section id=\"hero\"></section>"})
 
+    def test_design_expert_runtime_reuses_cached_runner_with_fresh_sessions(self) -> None:
+        _reset_fake_adk_runtime()
+        runtime = DesignExpertRuntime(model_reference="fake/design-model")
+
+        with (
+            patch("src.production.design.expert_runtime.LlmAgent", _FakeAdkLlmAgent),
+            patch("src.production.design.expert_runtime.InMemoryRunner", _FakeAdkRunner),
+            patch("src.production.design.expert_runtime.build_llm", lambda _model_reference: "fake-llm"),
+        ):
+            first = asyncio.run(
+                runtime._run_structured_agent(
+                    agent_name="DesignBriefExpert",
+                    instruction="Create a brief.",
+                    request_text="First request",
+                    output_schema=DesignBrief,
+                    output_key="design_brief",
+                )
+            )
+            second = asyncio.run(
+                runtime._run_structured_agent(
+                    agent_name="DesignBriefExpert",
+                    instruction="Create a brief.",
+                    request_text="Second request",
+                    output_schema=DesignBrief,
+                    output_key="design_brief",
+                )
+            )
+
+        self.assertEqual(first.goal, "Cached runner goal")
+        self.assertEqual(second.goal, "Cached runner goal")
+        self.assertEqual(len(_FakeAdkLlmAgent.instances), 1)
+        self.assertEqual(len(_FakeAdkRunner.instances), 1)
+        runner = _FakeAdkRunner.instances[0]
+        self.assertEqual(runner.run_count, 2)
+        self.assertEqual(len(runner.session_service.sessions), 2)
+
+    def test_design_expert_runtime_retries_structured_output_with_feedback(self) -> None:
+        _reset_fake_adk_runtime()
+        _FakeAdkRunner.queued_outputs = ["not valid json", {"goal": "Recovered brief"}]
+        runtime = DesignExpertRuntime(model_reference="fake/design-model")
+
+        with (
+            patch("src.production.design.expert_runtime.LlmAgent", _FakeAdkLlmAgent),
+            patch("src.production.design.expert_runtime.InMemoryRunner", _FakeAdkRunner),
+            patch("src.production.design.expert_runtime.build_llm", lambda _model_reference: "fake-llm"),
+        ):
+            result = asyncio.run(
+                runtime._run_structured_agent(
+                    agent_name="DesignBriefExpert",
+                    instruction="Create a brief.",
+                    request_text="Original request",
+                    output_schema=DesignBrief,
+                    output_key="design_brief",
+                )
+            )
+
+        self.assertEqual(result.goal, "Recovered brief")
+        self.assertEqual(len(_FakeAdkLlmAgent.instances), 1)
+        self.assertEqual(len(_FakeAdkRunner.instances), 1)
+        runner = _FakeAdkRunner.instances[0]
+        self.assertEqual(runner.run_count, 2)
+        first_prompt = runner.messages[0].parts[0].text
+        retry_prompt = runner.messages[1].parts[0].text
+        self.assertNotIn("Structured output repair instruction", first_prompt)
+        self.assertIn("Structured output repair instruction", retry_prompt)
+        self.assertIn("DesignBrief", retry_prompt)
+        self.assertIn("not valid json", retry_prompt)
+
     def test_design_expert_runtime_layout_prompt_includes_multi_page_settings(self) -> None:
         runtime = _CapturingDesignExpertRuntime()
         settings = {
@@ -1801,6 +2093,97 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn('"path": "product.html"', layout_request)
         self.assertIn("produce one `PageBlueprint` per requested page spec", layout_request)
 
+    def test_design_expert_runtime_sends_image_assets_as_extra_parts(self) -> None:
+        runtime = _CapturingDesignExpertRuntime()
+        asset_path = (
+            workspace_root()
+            / "generated"
+            / "session_design_multimodal"
+            / "production"
+            / "design"
+            / "assets"
+            / "design_asset_logo_logo.png"
+        )
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        asset_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        asset = ReferenceAssetEntry(
+            asset_id="design_asset_logo",
+            kind="logo",
+            path=workspace_relative_path(asset_path),
+            name="logo.png",
+            description="Primary brand logo.",
+        )
+
+        asyncio.run(
+            runtime.plan_direction(
+                user_prompt="Design a landing page aligned with the provided logo",
+                design_genre="landing_page",
+                design_settings={},
+                reference_assets=[asset],
+            )
+        )
+
+        extra_parts_by_agent = {
+            item["agent_name"]: item["extra_parts_count"]
+            for item in runtime.requests
+        }
+        self.assertEqual(extra_parts_by_agent["DesignBriefExpert"], 2)
+        self.assertEqual(extra_parts_by_agent["DesignSystemExpert"], 2)
+        self.assertEqual(extra_parts_by_agent["LayoutPlannerExpert"], 2)
+
+    def test_design_expert_runtime_html_prompt_includes_asset_src_and_validation_feedback(self) -> None:
+        runtime = _CapturingDesignExpertRuntime()
+        asset_path = (
+            workspace_root()
+            / "generated"
+            / "session_design_html_multimodal"
+            / "production"
+            / "design"
+            / "assets"
+            / "design_asset_logo_logo.png"
+        )
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        asset_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+        asset = ReferenceAssetEntry(
+            asset_id="design_asset_logo",
+            kind="logo",
+            path=workspace_relative_path(asset_path),
+            name="logo.png",
+        )
+
+        asyncio.run(
+            runtime.build_html(
+                brief=DesignBrief(goal="Build a landing page"),
+                design_system=DesignSystemSpec(),
+                layout_plan=LayoutPlan(
+                    pages=[
+                        PageBlueprint(
+                            title="Home",
+                            path="index.html",
+                            sections=[LayoutSection(section_id="hero", title="Hero")],
+                        )
+                    ]
+                ),
+                reference_assets=[asset],
+                validation_feedback={"issues": ["Referenced local resource does not exist: `assets/logo.png`."]},
+                shared_html_context="<header><nav><a href=\"index.html\">Home</a></nav></header>",
+            )
+        )
+
+        html_call = next(
+            item
+            for item in runtime.requests
+            if item["agent_name"] == "HtmlBuilderExpert"
+        )
+        html_request = html_call["request_text"]
+        self.assertEqual(html_call["extra_parts_count"], 2)
+        self.assertIn('"html_src": "../assets/design_asset_logo_logo.png"', html_request)
+        self.assertIn("Use `html_src` for `src`, CSS `url()`, or other asset references.", html_request)
+        self.assertIn("Validation feedback JSON:", html_request)
+        self.assertIn("Referenced local resource does not exist", html_request)
+        self.assertIn("Multi-page shared HTML context:", html_request)
+        self.assertIn("<header><nav>", html_request)
+
     def test_html_validator_rejects_local_absolute_paths(self) -> None:
         session_root = workspace_root() / "generated" / "session_design_validator" / "production" / "design_validator"
         artifacts_dir = session_root / "artifacts"
@@ -1819,6 +2202,100 @@ class DesignProductionTests(unittest.TestCase):
 
         self.assertEqual(report.status, "invalid")
         self.assertTrue(any("absolute path" in issue for issue in report.issues))
+
+    def test_html_validator_does_not_flag_visible_example_paths(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_validator_text" / "production" / "design_validator_text"
+        artifacts_dir = session_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        html_path = artifacts_dir / "index.html"
+        html_path.write_text(
+            """<!doctype html><html lang="en"><head><style>body{margin:0}</style></head><body><p>Save files under /Users/name/Documents when using macOS examples.</p></body></html>""",
+            encoding="utf-8",
+        )
+
+        report = HtmlValidator().validate(
+            workspace_relative_path(html_path),
+            session_root=session_root,
+            artifact_id="html_artifact_text",
+        )
+
+        self.assertEqual(report.status, "valid")
+
+    def test_html_validator_accepts_artifact_relative_assets(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_validator_asset" / "production" / "design_validator_asset"
+        artifacts_dir = session_root / "artifacts"
+        assets_dir = session_root / "assets"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        (assets_dir / "logo.png").write_bytes(b"fake-png")
+        html_path = artifacts_dir / "index.html"
+        html_path.write_text(
+            """<!doctype html><html lang="en"><head><style>body{background:url("../assets/logo.png")}</style></head><body><img src="../assets/logo.png" alt="Logo"></body></html>""",
+            encoding="utf-8",
+        )
+
+        report = HtmlValidator().validate(
+            workspace_relative_path(html_path),
+            session_root=session_root,
+            artifact_id="html_artifact_asset",
+        )
+
+        self.assertEqual(report.status, "valid")
+
+    def test_html_validator_rejects_external_runtime_resources_and_string_code(self) -> None:
+        session_root = workspace_root() / "generated" / "session_design_validator_external" / "production" / "design_validator_external"
+        artifacts_dir = session_root / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        html_path = artifacts_dir / "index.html"
+        html_path.write_text(
+            """<!doctype html><html lang="en"><head><link rel="stylesheet" href="https://cdn.example/app.css"><style>body{margin:0}</style><script src="https://cdn.example/app.js"></script><script>setTimeout("alert(1)", 0);</script></head><body><img src="https://cdn.example/logo.png" alt="Logo"></body></html>""",
+            encoding="utf-8",
+        )
+
+        report = HtmlValidator().validate(
+            workspace_relative_path(html_path),
+            session_root=session_root,
+            artifact_id="html_artifact_external",
+        )
+
+        self.assertEqual(report.status, "invalid")
+        self.assertTrue(any("External runtime resource" in issue for issue in report.issues))
+        self.assertTrue(any("setTimeout(string)" in issue for issue in report.issues))
+
+    def test_quality_report_includes_accessibility_errors(self) -> None:
+        artifact = HtmlArtifact(
+            page_id="page_accessibility_qc",
+            path="generated/session/report/index.html",
+            builder="HtmlBuilderExpert.baseline",
+        )
+        report = build_quality_report(
+            artifact=artifact,
+            validation_report=HtmlValidationReport(
+                artifact_id=artifact.artifact_id,
+                path=artifact.path,
+                status="valid",
+            ),
+            preview_reports=[],
+            brief=DesignBrief(goal="Design an accessible page"),
+            layout_plan=LayoutPlan(pages=[PageBlueprint(title="Home", path="index.html")]),
+            accessibility_report=AccessibilityReport(
+                artifact_id=artifact.artifact_id,
+                path=artifact.path,
+                status="fail",
+                findings=[
+                    AccessibilityFinding(
+                        severity="error",
+                        category="document",
+                        target="html",
+                        summary="HTML document is missing a lang attribute.",
+                        recommendation="Add a document language.",
+                    )
+                ],
+            ),
+        )
+
+        self.assertEqual(report.status, "fail")
+        self.assertTrue(any(finding.category == "accessibility" for finding in report.findings))
 
 
 def _assert_no_open_object_schema(test_case: unittest.TestCase, node: Any, *, path: str = "$") -> None:

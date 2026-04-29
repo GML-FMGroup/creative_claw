@@ -29,6 +29,7 @@ from src.production.design.models import (
     ReferenceAssetEntry,
 )
 from src.production.design.prompt_catalog import render_prompt_template
+from src.runtime.workspace import load_local_file_part, looks_like_image, resolve_workspace_path
 
 
 class DesignDirectionPlan(BaseModel):
@@ -229,6 +230,7 @@ class _AdkHtmlBuildOutput(_StrictModel):
 
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
+_STRUCTURED_AGENT_MAX_ATTEMPTS = 2
 
 
 class DesignExpertRuntime:
@@ -243,6 +245,7 @@ class DesignExpertRuntime:
         """Initialize the internal Design expert runtime."""
         self.model_reference = model_reference
         self.app_name = app_name
+        self._runner_cache: dict[tuple[str, str, type[BaseModel], str], InMemoryRunner] = {}
 
     async def plan_direction(
         self,
@@ -254,7 +257,8 @@ class DesignExpertRuntime:
     ) -> DesignDirectionPlan:
         """Generate brief, design system, and layout plan for the first review."""
         playbook_text = load_design_playbook(design_genre)
-        reference_assets_json = _json_dump([asset.model_dump(mode="json") for asset in reference_assets])
+        reference_assets_json = _reference_assets_prompt_json(reference_assets)
+        reference_asset_parts = _reference_asset_parts(reference_assets)
 
         brief_prompt = render_prompt_template(
             "brief_expert",
@@ -272,6 +276,7 @@ class DesignExpertRuntime:
             request_text=brief_prompt,
             output_schema=DesignBrief,
             output_key="design_brief",
+            extra_parts=reference_asset_parts,
         )
         brief.design_genre = design_genre
 
@@ -289,6 +294,7 @@ class DesignExpertRuntime:
             request_text=design_system_prompt,
             output_schema=_AdkDesignSystemSpec,
             output_key="design_system",
+            extra_parts=reference_asset_parts,
         )
         design_system = adk_design_system.to_design_system_spec()
         if design_system.source == "placeholder":
@@ -312,6 +318,7 @@ class DesignExpertRuntime:
             request_text=layout_prompt,
             output_schema=_AdkLayoutPlan,
             output_key="layout_plan",
+            extra_parts=reference_asset_parts,
         )
         layout_plan = adk_layout_plan.to_layout_plan()
 
@@ -332,9 +339,12 @@ class DesignExpertRuntime:
         build_mode: str = "baseline",
         revision_request: dict[str, Any] | None = None,
         revision_impact: dict[str, Any] | None = None,
+        validation_feedback: dict[str, Any] | None = None,
         previous_html: str = "",
+        shared_html_context: str = "",
     ) -> HtmlBuildOutput:
         """Generate a baseline or revision HTML artifact for one target page."""
+        reference_asset_parts = _reference_asset_parts(reference_assets)
         prompt = render_prompt_template(
             "html_builder_expert",
             {
@@ -342,10 +352,12 @@ class DesignExpertRuntime:
                 "brief_json": brief.model_dump_json(indent=2),
                 "design_system_json": design_system.model_dump_json(indent=2),
                 "layout_plan_json": layout_plan.model_dump_json(indent=2),
-                "reference_assets_json": _json_dump([asset.model_dump(mode="json") for asset in reference_assets]),
+                "reference_assets_json": _reference_assets_prompt_json(reference_assets),
                 "revision_request_json": _json_dump(revision_request or {}),
                 "revision_impact_json": _json_dump(revision_impact or {}),
+                "validation_feedback_json": _json_dump(validation_feedback or {}),
                 "previous_html_summary": _summarize_previous_html(previous_html),
+                "shared_html_context": _summarize_html(shared_html_context, max_chars=5000),
             },
         )
         adk_output = await self._run_structured_agent(
@@ -357,6 +369,7 @@ class DesignExpertRuntime:
             request_text=prompt,
             output_schema=_AdkHtmlBuildOutput,
             output_key="html_build_output",
+            extra_parts=reference_asset_parts,
         )
         output = adk_output.to_html_build_output()
         output.html = normalize_generated_html(output.html)
@@ -409,17 +422,49 @@ class DesignExpertRuntime:
         request_text: str,
         output_schema: type[SchemaT],
         output_key: str,
+        extra_parts: list[Part] | None = None,
     ) -> SchemaT:
         """Run one ADK LlmAgent and parse its structured output."""
-        agent = LlmAgent(
-            name=agent_name,
-            model=build_llm(self.model_reference),
+        last_error: Exception | None = None
+        for attempt_index in range(_STRUCTURED_AGENT_MAX_ATTEMPTS):
+            attempt_request_text = (
+                request_text
+                if attempt_index == 0
+                else _structured_retry_request_text(request_text, error=last_error, output_schema=output_schema)
+            )
+            try:
+                raw_output = await self._run_structured_agent_once(
+                    agent_name=agent_name,
+                    instruction=instruction,
+                    request_text=attempt_request_text,
+                    output_schema=output_schema,
+                    output_key=output_key,
+                    extra_parts=extra_parts,
+                )
+                return _coerce_structured_output(raw_output, output_schema)
+            except Exception as exc:
+                last_error = exc
+                if attempt_index + 1 >= _STRUCTURED_AGENT_MAX_ATTEMPTS:
+                    raise
+        raise RuntimeError(f"{agent_name} did not return structured output.") from last_error
+
+    async def _run_structured_agent_once(
+        self,
+        *,
+        agent_name: str,
+        instruction: str,
+        request_text: str,
+        output_schema: type[SchemaT],
+        output_key: str,
+        extra_parts: list[Part] | None = None,
+    ) -> Any:
+        """Run one cached ADK runner invocation and return raw structured output."""
+        runner = self._structured_runner(
+            agent_name=agent_name,
             instruction=instruction,
-            include_contents="none",
             output_schema=output_schema,
             output_key=output_key,
         )
-        runner = InMemoryRunner(agent=agent, app_name=self.app_name)
         user_id = "design-production"
         session_id = f"{agent_name.lower()}_{uuid.uuid4().hex[:12]}"
         await runner.session_service.create_session(
@@ -429,10 +474,13 @@ class DesignExpertRuntime:
             state={},
         )
         final_text = ""
+        message_parts = [Part(text=request_text)]
+        if extra_parts:
+            message_parts.extend(extra_parts)
         async for event in runner.run_async(
             user_id=user_id,
             session_id=session_id,
-            new_message=Content(role="user", parts=[Part(text=request_text)]),
+            new_message=Content(role="user", parts=message_parts),
         ):
             if event.is_final_response() and event.content and event.content.parts:
                 generated_text = next((part.text for part in event.content.parts if part.text), "")
@@ -444,7 +492,32 @@ class DesignExpertRuntime:
             session_id=session_id,
         )
         raw_output = session.state.get(output_key) if session is not None else None
-        return _coerce_structured_output(raw_output or final_text, output_schema)
+        return raw_output or final_text
+
+    def _structured_runner(
+        self,
+        *,
+        agent_name: str,
+        instruction: str,
+        output_schema: type[SchemaT],
+        output_key: str,
+    ) -> InMemoryRunner:
+        """Return a cached ADK runner for one structured expert configuration."""
+        cache_key: tuple[str, str, type[BaseModel], str] = (agent_name, instruction, output_schema, output_key)
+        cached = self._runner_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        agent = LlmAgent(
+            name=agent_name,
+            model=build_llm(self.model_reference),
+            instruction=instruction,
+            include_contents="none",
+            output_schema=output_schema,
+            output_key=output_key,
+        )
+        runner = InMemoryRunner(agent=agent, app_name=self.app_name)
+        self._runner_cache[cache_key] = runner
+        return runner
 
     @property
     def model_name(self) -> str:
@@ -500,6 +573,34 @@ def _coerce_structured_output(raw_output: Any, output_schema: type[SchemaT]) -> 
     return output_schema.model_validate(raw_output)
 
 
+def _structured_retry_request_text(
+    original_request_text: str,
+    *,
+    error: Exception | None,
+    output_schema: type[BaseModel],
+) -> str:
+    """Append concise structured-output feedback for one retry attempt."""
+    error_type = type(error).__name__ if error is not None else "UnknownError"
+    error_message = _truncate_prompt_text(str(error or ""), max_chars=1800)
+    return (
+        f"{original_request_text.rstrip()}\n\n"
+        "Structured output repair instruction:\n"
+        f"- The previous attempt failed while producing `{output_schema.__name__}`.\n"
+        f"- Error type: {error_type}.\n"
+        f"- Error detail: {error_message or '(empty)'}\n"
+        "- Return a complete response that satisfies the requested output schema exactly.\n"
+        "- Do not include Markdown fences or explanatory text outside the structured response."
+    )
+
+
+def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
+    """Return text capped for retry feedback prompts."""
+    value = " ".join(str(text or "").split())
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars].rstrip()} ... [truncated]"
+
+
 def _strip_json_fence(text: str) -> str:
     """Strip a simple Markdown JSON code fence when a provider returns one."""
     stripped = str(text or "").strip()
@@ -516,6 +617,64 @@ def _strip_json_fence(text: str) -> str:
 def _json_dump(value: Any) -> str:
     """Dump prompt variables as stable JSON."""
     return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _reference_assets_prompt_json(reference_assets: list[ReferenceAssetEntry]) -> str:
+    """Return reference asset metadata with artifact-relative HTML paths."""
+    return _json_dump(_reference_assets_prompt_payload(reference_assets))
+
+
+def _reference_assets_prompt_payload(reference_assets: list[ReferenceAssetEntry]) -> list[dict[str, Any]]:
+    """Build the asset payload given to Design experts."""
+    payload: list[dict[str, Any]] = []
+    for asset in reference_assets:
+        item = asset.model_dump(mode="json")
+        html_src = _asset_html_src(asset)
+        if html_src:
+            item["html_src"] = html_src
+            item["html_reference_rule"] = f'Use this asset from generated HTML as src="{html_src}".'
+        payload.append(item)
+    return payload
+
+
+def _asset_html_src(asset: ReferenceAssetEntry) -> str:
+    """Return the correct relative HTML src for one session asset."""
+    if asset.status != "valid" or not asset.path:
+        return ""
+    return f"../assets/{Path(asset.path).name}"
+
+
+def _reference_asset_parts(reference_assets: list[ReferenceAssetEntry]) -> list[Part]:
+    """Load valid image reference assets as multimodal prompt parts."""
+    parts: list[Part] = []
+    for asset in reference_assets:
+        if not _is_multimodal_reference_asset(asset):
+            continue
+        try:
+            resolved = resolve_workspace_path(asset.path)
+            if not looks_like_image(resolved):
+                continue
+            parts.append(Part(text=_reference_asset_part_label(asset)))
+            parts.append(load_local_file_part(resolved))
+        except Exception:
+            continue
+    return parts
+
+
+def _is_multimodal_reference_asset(asset: ReferenceAssetEntry) -> bool:
+    """Return whether an asset should be sent as image input to the model."""
+    return (
+        asset.status == "valid"
+        and bool(asset.path)
+        and asset.kind in {"logo", "screenshot", "product_photo", "reference_image", "generated_image"}
+    )
+
+
+def _reference_asset_part_label(asset: ReferenceAssetEntry) -> str:
+    """Return a compact label before an inline image asset part."""
+    name = asset.name or Path(asset.path).name
+    description = f"; description: {asset.description}" if asset.description else ""
+    return f"Reference asset {asset.asset_id} ({asset.kind}, {name}){description}."
 
 
 def _requested_layout_build_mode(design_settings: dict[str, Any]) -> str:

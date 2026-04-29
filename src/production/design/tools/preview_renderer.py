@@ -18,6 +18,7 @@ _DEFAULT_VIEWPORTS = [
     ViewportSpec(name="desktop", width=1440, height=1000),
     ViewportSpec(name="mobile", width=390, height=844),
 ]
+_PAGE_GOTO_TIMEOUT_MS = 15_000
 
 
 class HtmlPreviewRenderer:
@@ -95,7 +96,7 @@ async def _render_one_viewport(
     issues: list[str] = []
     metrics: dict[str, Any] = {}
     try:
-        await page.goto(html_path.as_uri(), wait_until="networkidle")
+        await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=_PAGE_GOTO_TIMEOUT_MS)
         await page.screenshot(path=str(screenshot_path), full_page=True)
         metrics = await page.evaluate(
             """() => ({

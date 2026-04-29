@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -10,13 +11,18 @@ from src.production.design.models import HtmlValidationReport
 from src.runtime.workspace import resolve_workspace_path, workspace_relative_path
 
 
-_RESOURCE_PATTERN = re.compile(r"""(?:src|href)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 _CSS_URL_PATTERN = re.compile(r"""url\(\s*["']?([^"')]+)["']?\s*\)""", re.IGNORECASE)
-_ID_PATTERN = re.compile(r"""\bid\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
-_DANGEROUS_SCRIPT_PATTERNS = (
-    "eval(",
-    "document.write(",
-    "new function(",
+_WINDOWS_ABSOLUTE_PATTERN = re.compile(r"[A-Za-z]:\\")
+_LOCAL_PATH_MARKERS = ("/Users/", "/home/", "/tmp/", "/var/folders/")
+_RESOURCE_SRC_TAGS = {"img", "source", "video", "audio", "iframe", "embed", "script", "track"}
+_RESOURCE_LINK_RELS = {"stylesheet", "preload", "modulepreload", "icon", "apple-touch-icon"}
+_DANGEROUS_SCRIPT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("eval(", re.compile(r"\beval\s*\(", re.IGNORECASE)),
+    ("document.write(", re.compile(r"\bdocument\s*\.\s*write\s*\(", re.IGNORECASE)),
+    ("Function(", re.compile(r"(?<![\w$])(?:new\s+)?Function\s*\(")),
+    ("new function(", re.compile(r"\bnew\s+function\s*\(", re.IGNORECASE)),
+    ("setTimeout(string)", re.compile(r"\bsetTimeout\s*\(\s*['\"]", re.IGNORECASE)),
+    ("setInterval(string)", re.compile(r"\bsetInterval\s*\(\s*['\"]", re.IGNORECASE)),
 )
 
 
@@ -60,19 +66,23 @@ class HtmlValidator:
         if "<style" not in lowered:
             warnings.append("No inline style block found; P0 expects self-contained HTML/CSS.")
 
-        if _contains_local_absolute_reference(text):
-            issues.append("HTML contains a local absolute path or file URL.")
+        context = _parse_html_validation_context(text)
+        local_references = _find_local_absolute_references(context)
+        if local_references:
+            issues.append(
+                "HTML contains a local absolute path or file URL: "
+                + ", ".join(local_references[:3])
+            )
 
-        for pattern in _DANGEROUS_SCRIPT_PATTERNS:
-            if pattern in lowered:
-                issues.append(f"HTML contains disallowed script pattern: {pattern}")
+        for issue in _validate_script_safety(context):
+            issues.append(issue)
 
-        duplicate_ids = _find_duplicate_ids(text)
+        duplicate_ids = _find_duplicate_ids(context.ids)
         if duplicate_ids:
             issues.append(f"HTML contains duplicate id values: {', '.join(sorted(duplicate_ids)[:5])}")
 
-        resource_issues = _validate_local_resources(
-            text,
+        resource_issues = _validate_resource_references(
+            context,
             html_dir=resolved_html_path.parent,
             session_root=session_root,
         )
@@ -87,18 +97,112 @@ class HtmlValidator:
         )
 
 
-def _contains_local_absolute_reference(text: str) -> bool:
-    """Return whether HTML contains local absolute references."""
-    if "file://" in text.lower():
-        return True
-    local_markers = ("/Users/", "/home/", "/tmp/", "/var/folders/")
-    if any(marker in text for marker in local_markers):
-        return True
-    return bool(re.search(r"[A-Za-z]:\\", text))
+class _HtmlValidationContext(HTMLParser):
+    """Collect URL, script, style, and id facts needed by static validation."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.ids: list[str] = []
+        self.url_attrs: list[tuple[str, str, str]] = []
+        self.resource_refs: list[tuple[str, str, str]] = []
+        self.script_texts: list[str] = []
+        self.style_texts: list[str] = []
+        self._script_depth = 0
+        self._style_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._handle_tag(tag, attrs)
+        normalized_tag = tag.lower()
+        if normalized_tag == "script":
+            self._script_depth += 1
+        elif normalized_tag == "style":
+            self._style_depth += 1
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._handle_tag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.lower()
+        if normalized_tag == "script" and self._script_depth:
+            self._script_depth -= 1
+        elif normalized_tag == "style" and self._style_depth:
+            self._style_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._script_depth:
+            self.script_texts.append(data)
+        if self._style_depth:
+            self.style_texts.append(data)
+
+    def _handle_tag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.lower()
+        normalized_attrs = {name.lower(): value or "" for name, value in attrs}
+        if normalized_attrs.get("id"):
+            self.ids.append(normalized_attrs["id"].strip())
+        for attr_name, attr_value in normalized_attrs.items():
+            if attr_name in {"src", "href", "poster", "data"}:
+                self.url_attrs.append((normalized_tag, attr_name, attr_value.strip()))
+            if attr_name.startswith("on") and attr_value:
+                self.script_texts.append(attr_value)
+            if attr_name == "style" and attr_value:
+                self.style_texts.append(attr_value)
+
+        if normalized_tag in _RESOURCE_SRC_TAGS and normalized_attrs.get("src"):
+            self.resource_refs.append((normalized_tag, "src", normalized_attrs["src"].strip()))
+        if normalized_tag == "object" and normalized_attrs.get("data"):
+            self.resource_refs.append((normalized_tag, "data", normalized_attrs["data"].strip()))
+        if normalized_tag == "video" and normalized_attrs.get("poster"):
+            self.resource_refs.append((normalized_tag, "poster", normalized_attrs["poster"].strip()))
+        if normalized_tag == "link" and normalized_attrs.get("href"):
+            rel_values = set(normalized_attrs.get("rel", "").lower().split())
+            if rel_values & _RESOURCE_LINK_RELS:
+                self.resource_refs.append((normalized_tag, "href", normalized_attrs["href"].strip()))
 
 
-def _find_duplicate_ids(text: str) -> set[str]:
-    ids = [match.group(1).strip() for match in _ID_PATTERN.finditer(text)]
+def _parse_html_validation_context(text: str) -> _HtmlValidationContext:
+    """Parse generated HTML into a validation context."""
+    parser = _HtmlValidationContext()
+    parser.feed(text)
+    parser.close()
+    return parser
+
+
+def _find_local_absolute_references(context: _HtmlValidationContext) -> list[str]:
+    """Return local absolute references from URL-bearing HTML/CSS locations."""
+    references = [value for _tag, _attr, value in context.url_attrs]
+    references.extend(_css_url_references(context))
+    result: list[str] = []
+    for ref in references:
+        if _is_local_absolute_reference(ref):
+            result.append(ref)
+    return result
+
+
+def _is_local_absolute_reference(ref: str) -> bool:
+    value = str(ref or "").strip()
+    if not value:
+        return False
+    if value.lower().startswith("file://"):
+        return True
+    if any(marker in value for marker in _LOCAL_PATH_MARKERS):
+        return True
+    return bool(_WINDOWS_ABSOLUTE_PATTERN.search(value))
+
+
+def _validate_script_safety(context: _HtmlValidationContext) -> list[str]:
+    """Return script safety issues from script-like locations only."""
+    issues: list[str] = []
+    script_text = "\n".join(context.script_texts)
+    for label, pattern in _DANGEROUS_SCRIPT_PATTERNS:
+        if pattern.search(script_text):
+            issues.append(f"HTML contains disallowed script pattern: {label}")
+    for tag, attr, value in context.url_attrs:
+        if value.strip().lower().startswith("javascript:"):
+            issues.append(f"HTML contains disallowed javascript URL in {tag}.{attr}.")
+    return issues
+
+
+def _find_duplicate_ids(ids: list[str]) -> set[str]:
     seen: set[str] = set()
     duplicate: set[str] = set()
     for value in ids:
@@ -108,15 +212,16 @@ def _find_duplicate_ids(text: str) -> set[str]:
     return duplicate
 
 
-def _validate_local_resources(text: str, *, html_dir: Path, session_root: Path) -> list[str]:
+def _validate_resource_references(context: _HtmlValidationContext, *, html_dir: Path, session_root: Path) -> list[str]:
     issues: list[str] = []
-    references = [match.group(1).strip() for match in _RESOURCE_PATTERN.finditer(text)]
-    references.extend(match.group(1).strip() for match in _CSS_URL_PATTERN.finditer(text))
-    for ref in references:
+    references = list(context.resource_refs)
+    references.extend(("style", "url", ref) for ref in _css_url_references(context))
+    for tag, attr, ref in references:
         if not ref or ref.startswith(("#", "data:", "mailto:", "tel:", "javascript:")):
             continue
         parsed = urlparse(ref)
-        if parsed.scheme in {"http", "https"}:
+        if parsed.scheme in {"http", "https"} or parsed.netloc:
+            issues.append(f"External runtime resource is not allowed in {tag}.{attr}: `{ref}`.")
             continue
         if parsed.scheme:
             issues.append(f"Unsupported resource URL scheme for `{ref}`.")
@@ -134,3 +239,10 @@ def _validate_local_resources(text: str, *, html_dir: Path, session_root: Path) 
             issues.append(f"Referenced local resource does not exist: `{ref}`.")
     return issues
 
+
+def _css_url_references(context: _HtmlValidationContext) -> list[str]:
+    """Return CSS url() references from style tags and style attributes."""
+    references: list[str] = []
+    for style_text in context.style_texts:
+        references.extend(match.group(1).strip() for match in _CSS_URL_PATTERN.finditer(style_text))
+    return references
