@@ -549,6 +549,10 @@ def load_design_playbook(design_genre: str) -> str:
         "landing_page": "landing_page.md",
         "ui_design": "ui_design.md",
         "product_detail_page": "product_detail_page.md",
+        "micro_site": "micro_site.md",
+        "one_pager": "one_pager.md",
+        "prototype": "prototype.md",
+        "wireframe": "wireframe.md",
     }
     filename = filename_by_genre.get(str(design_genre), "landing_page.md")
     repo_root = Path(__file__).resolve().parents[3]

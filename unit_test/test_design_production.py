@@ -15,6 +15,7 @@ from src.production.design.expert_runtime import (
     DesignDirectionPlan,
     DesignExpertRuntime,
     HtmlBuildOutput,
+    load_design_playbook,
     _AdkComponentToken,
     _AdkDesignSystemSpec,
     _AdkDesignTokenColor,
@@ -1106,7 +1107,12 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(old_product["status"], "stale")
         self.assertEqual(revised_product["status"], "valid")
         self.assertEqual(revised_product["builder"], "HtmlBuilderExpert.variant")
-        self.assertTrue(Path(revised_product["path"]).name.startswith("product_v"))
+        self.assertEqual(Path(revised_product["path"]).name, "product_v2.html")
+        revision_history = persisted["revision_history"][0]
+        self.assertEqual(revision_history["impact_summary"]["affected_page_ids"], [product_page_id])
+        self.assertEqual(revision_history["impact_summary"]["recommended_action"], "rebuild_page")
+        self.assertNotIn("impact", revision_history)
+        self.assertNotIn("available_targets", revision_history)
         self.assertEqual(len(runtime.build_calls), 3)
         self.assertEqual(runtime.build_calls[-1]["build_mode"], "revision")
         self.assertEqual(runtime.build_calls[-1]["page_ids"], [product_page_id])
@@ -1538,7 +1544,9 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(runtime.build_calls[-1]["build_mode"], "revision")
         self.assertIn("Expert generated HTML design", runtime.build_calls[-1]["previous_html"])
         self.assertIn("hero", runtime.build_calls[-1]["revision_impact"]["affected_section_ids"])
-        self.assertEqual(persisted["revision_history"][0]["impact"]["recommended_action"], "rebuild_page")
+        self.assertEqual(persisted["revision_history"][0]["impact_summary"]["recommended_action"], "rebuild_page")
+        self.assertEqual(persisted["revision_history"][0]["notes"], "Make the hero more product-led.")
+        self.assertNotIn("impact", persisted["revision_history"][0])
 
         completed = asyncio.run(
             manager.resume(
@@ -1917,6 +1925,25 @@ class DesignProductionTests(unittest.TestCase):
         self.assertIn("Preview reports JSON", qc_rendered)
         with self.assertRaises(DesignPromptCatalogError):
             render_prompt_template("brief_expert", {"user_prompt": "missing variables"})
+
+    def test_design_playbook_loader_maps_all_known_genres(self) -> None:
+        expected_markers = {
+            "landing_page": "# landing_page",
+            "ui_design": "# ui_design",
+            "product_detail_page": "# product_detail_page",
+            "micro_site": "# micro_site",
+            "one_pager": "# one_pager",
+            "prototype": "# prototype",
+            "wireframe": "# wireframe",
+        }
+
+        for genre, marker in expected_markers.items():
+            with self.subTest(genre=genre):
+                playbook = load_design_playbook(genre)
+                self.assertIn(marker, playbook)
+                self.assertIn("## QC Focus", playbook)
+
+        self.assertIn("# landing_page", load_design_playbook("unknown_genre"))
 
     def test_design_expert_runtime_adk_output_schemas_are_strict(self) -> None:
         for schema_model in (_AdkDesignSystemSpec, _AdkLayoutPlan, _AdkHtmlBuildOutput):
