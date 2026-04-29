@@ -46,6 +46,7 @@ from src.production.design.models import (
     PdfExportReport,
     PreviewReport,
     ReferenceAssetEntry,
+    ViewportSpec,
 )
 from src.production.design.page_handoff import build_page_handoff
 from src.production.design.prompt_catalog import (
@@ -76,27 +77,31 @@ def _adk_state(sid: str = "session_design_test") -> dict:
 
 
 class _FakePreviewRenderer:
+    def __init__(self) -> None:
+        self.calls = []
+
     async def render(self, *, artifact_id: str, html_path, output_dir: Path, viewports=None):
+        selected_viewports = viewports or _default_test_viewports()
+        self.calls.append({"artifact_id": artifact_id, "viewports": selected_viewports})
         output_dir.mkdir(parents=True, exist_ok=True)
         stem = Path(str(html_path)).stem
-        desktop_path = output_dir / f"{stem}_{artifact_id}_desktop.png"
-        mobile_path = output_dir / f"{stem}_{artifact_id}_mobile.png"
-        desktop_path.write_bytes(b"fake-desktop-preview")
-        mobile_path.write_bytes(b"fake-mobile-preview")
-        return [
-            PreviewReport(
-                artifact_id=artifact_id,
-                viewport="desktop",
-                screenshot_path=workspace_relative_path(desktop_path),
-                layout_metrics={"viewportWidth": 1440, "bodyScrollWidth": 1120, "bodyScrollHeight": 900},
-            ),
-            PreviewReport(
-                artifact_id=artifact_id,
-                viewport="mobile",
-                screenshot_path=workspace_relative_path(mobile_path),
-                layout_metrics={"viewportWidth": 390, "bodyScrollWidth": 390, "bodyScrollHeight": 1200},
-            ),
-        ]
+        reports = []
+        for viewport in selected_viewports:
+            screenshot_path = output_dir / f"{stem}_{artifact_id}_{viewport.name}.png"
+            screenshot_path.write_bytes(f"fake-{viewport.name}-preview".encode("utf-8"))
+            reports.append(
+                PreviewReport(
+                    artifact_id=artifact_id,
+                    viewport=viewport.name,
+                    screenshot_path=workspace_relative_path(screenshot_path),
+                    layout_metrics={
+                        "viewportWidth": viewport.width,
+                        "bodyScrollWidth": min(viewport.width, 1120),
+                        "bodyScrollHeight": 900 if viewport.name == "desktop" else 1200,
+                    },
+                )
+            )
+        return reports
 
 
 class _UnavailablePreviewRenderer:
@@ -104,7 +109,7 @@ class _UnavailablePreviewRenderer:
         return [
             PreviewReport(
                 artifact_id=artifact_id,
-                viewport="desktop",
+                viewport=viewport.name,
                 valid=False,
                 issues=[
                     "Browser environment is unavailable for preview rendering: "
@@ -115,24 +120,19 @@ class _UnavailablePreviewRenderer:
                     "browser_environment": "runtime_unavailable",
                     "remediation": "Install Playwright Chromium browser support with "
                     "`python -m playwright install chromium`, then rerun Design preview or PDF export.",
+                    "width": viewport.width,
+                    "height": viewport.height,
                 },
-            ),
-            PreviewReport(
-                artifact_id=artifact_id,
-                viewport="mobile",
-                valid=False,
-                issues=[
-                    "Browser environment is unavailable for preview rendering: "
-                    "Playwright browser executable is not installed."
-                ],
-                layout_metrics={
-                    "preview": "unavailable",
-                    "browser_environment": "runtime_unavailable",
-                    "remediation": "Install Playwright Chromium browser support with "
-                    "`python -m playwright install chromium`, then rerun Design preview or PDF export.",
-                },
-            ),
+            )
+            for viewport in (viewports or _default_test_viewports())
         ]
+
+
+def _default_test_viewports() -> list[ViewportSpec]:
+    return [
+        ViewportSpec(name="desktop", width=1440, height=1000),
+        ViewportSpec(name="mobile", width=390, height=844),
+    ]
 
 
 class _FakePdfExporter:
@@ -341,6 +341,32 @@ class _FakeDesignExpertRuntime:
                 )
             ],
         )
+
+
+class _TabletDesignExpertRuntime(_FakeDesignExpertRuntime):
+    async def plan_direction(self, *, user_prompt, design_genre, design_settings, reference_assets):
+        direction = await super().plan_direction(
+            user_prompt=user_prompt,
+            design_genre=design_genre,
+            design_settings=design_settings,
+            reference_assets=reference_assets,
+        )
+        for page in direction.layout_plan.pages:
+            page.device_targets = ["desktop", "tablet", "mobile"]
+        return direction
+
+
+class _UnknownDeviceTargetDesignExpertRuntime(_FakeDesignExpertRuntime):
+    async def plan_direction(self, *, user_prompt, design_genre, design_settings, reference_assets):
+        direction = await super().plan_direction(
+            user_prompt=user_prompt,
+            design_genre=design_genre,
+            design_settings=design_settings,
+            reference_assets=reference_assets,
+        )
+        for page in direction.layout_plan.pages:
+            page.device_targets = ["watch"]
+        return direction
 
 
 class _RepairingDesignExpertRuntime(_FakeDesignExpertRuntime):
@@ -960,6 +986,69 @@ class DesignProductionTests(unittest.TestCase):
         self.assertEqual(completed_payload["artifact_lineage_reports"][0]["status"], "ready")
         self.assertEqual(completed_payload["page_handoff_reports"][0]["status"], "ready")
         self.assertEqual(len(completed_payload["export_artifacts"]), 5)
+
+    def test_manager_preview_uses_page_device_targets(self) -> None:
+        state = _adk_state("session_design_tablet_preview")
+        preview_renderer = _FakePreviewRenderer()
+        manager = DesignProductionManager(
+            preview_renderer=preview_renderer,
+            expert_runtime=_TabletDesignExpertRuntime(),
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a tablet-ready operations dashboard",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual([report["viewport"] for report in persisted["preview_reports"]], ["desktop", "tablet", "mobile"])
+        self.assertEqual(
+            [viewport.name for viewport in preview_renderer.calls[0]["viewports"]],
+            ["desktop", "tablet", "mobile"],
+        )
+        self.assertEqual(preview.review_payload.metadata["delivery"]["preview_count"], 3)
+        self.assertEqual(preview.review_payload.metadata["delivery"]["screenshot_count"], 3)
+
+    def test_manager_preview_falls_back_for_unknown_device_targets(self) -> None:
+        state = _adk_state("session_design_unknown_preview")
+        preview_renderer = _FakePreviewRenderer()
+        manager = DesignProductionManager(
+            preview_renderer=preview_renderer,
+            expert_runtime=_UnknownDeviceTargetDesignExpertRuntime(),
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design a dashboard with an unsupported device target",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        self.assertEqual([report["viewport"] for report in persisted["preview_reports"]], ["desktop", "mobile"])
+        self.assertEqual([viewport.name for viewport in preview_renderer.calls[0]["viewports"]], ["desktop", "mobile"])
 
     def test_manager_repairs_expert_html_after_validation_failure_once(self) -> None:
         state = _adk_state("session_design_expert_repair")
