@@ -2506,17 +2506,26 @@ def _page_handoff_summary(report: PageHandoffReport | None) -> dict[str, Any]:
 def _quality_review_summary(report: DesignQcReport | None) -> dict[str, Any]:
     """Build a concise QC summary for review metadata."""
     finding_counts = {"info": 0, "warning": 0, "error": 0}
+    expert_finding_counts = {"info": 0, "warning": 0, "error": 0}
     if report is None:
         return {
             "status": "",
             "summary": "",
             "finding_counts": finding_counts,
+            "expert": {
+                "status": "",
+                "finding_counts": expert_finding_counts,
+                "error_count": 0,
+                "warning_count": 0,
+            },
             "attention_findings": [],
             "recommendations": [],
         }
 
     for finding in report.findings:
         finding_counts[finding.severity] = finding_counts.get(finding.severity, 0) + 1
+    for severity, count in report.expert_finding_counts.items():
+        expert_finding_counts[severity] = int(count)
     attention_findings = [
         {
             "finding_id": finding.finding_id,
@@ -2538,6 +2547,12 @@ def _quality_review_summary(report: DesignQcReport | None) -> dict[str, Any]:
         "status": report.status,
         "summary": report.summary,
         "finding_counts": finding_counts,
+        "expert": {
+            "status": report.expert_status,
+            "finding_counts": expert_finding_counts,
+            "error_count": expert_finding_counts.get("error", 0),
+            "warning_count": expert_finding_counts.get("warning", 0),
+        },
         "attention_findings": attention_findings,
         "recommendations": recommendations,
     }

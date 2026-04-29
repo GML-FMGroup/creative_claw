@@ -64,3 +64,27 @@ The deterministic unit tests `unit_test/test_short_video_adk_eval_assets.py`,
 `unit_test/test_design_adk_eval_assets.py`, and
 `unit_test/test_ppt_adk_eval_assets.py` validate that these files match the ADK
 eval schemas. They do not run live model inference.
+
+## Optional Design real smoke
+
+Use the opt-in Design smoke when changing image reference handling, asset URL
+rules, browser preview rendering, or multi-page shared chrome. It runs the real
+Design expert runtime and real Playwright preview path, so it requires model
+credentials, network access, and an installed Chromium browser:
+
+```bash
+CREATIVE_CLAW_RUN_DESIGN_REAL_SMOKE=1 \
+  .venv/bin/python -m unittest unit_test.test_design_real_smoke
+```
+
+To force a specific configured model, pass `CREATIVE_CLAW_DESIGN_REAL_SMOKE_MODEL`:
+
+```bash
+CREATIVE_CLAW_RUN_DESIGN_REAL_SMOKE=1 \
+CREATIVE_CLAW_DESIGN_REAL_SMOKE_MODEL=gemini/gemini-2.5-flash \
+  .venv/bin/python -m unittest unit_test.test_design_real_smoke
+```
+
+The smoke fixture checks that a generated microsite uses uploaded logo assets
+through `../assets/...`, avoids workspace-local paths, renders valid browser
+previews with screenshots, and keeps multi-page navigation links aligned.

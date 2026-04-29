@@ -26,6 +26,8 @@ def build_quality_report(
 ) -> DesignQcReport:
     """Build a P0 quality report from hard facts plus optional expert guidance."""
     findings: list[DesignQcFinding] = []
+    expert_finding_counts = _expert_finding_counts(expert_report)
+    expert_status = expert_report.status if expert_report is not None else ""
     for issue in validation_report.issues:
         findings.append(
             DesignQcFinding(
@@ -120,6 +122,8 @@ def build_quality_report(
         status=status,
         summary=summary,
         findings=findings,
+        expert_status=expert_status,
+        expert_finding_counts=expert_finding_counts,
     )
 
 
@@ -191,6 +195,18 @@ def _supplemental_expert_findings(expert_report: DesignQcReport | None) -> list[
             )
         )
     return normalized
+
+
+def _expert_finding_counts(expert_report: DesignQcReport | None) -> dict[str, int]:
+    """Count expert QC severities before they are normalized into non-blocking findings."""
+    counts = {"info": 0, "warning": 0, "error": 0}
+    if expert_report is None:
+        return counts
+    for finding in expert_report.findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    if expert_report.status != "pass" and not expert_report.findings:
+        counts["warning"] += 1
+    return counts
 
 
 def quality_report_markdown(report: DesignQcReport | None) -> str:

@@ -343,6 +343,42 @@ class _FakeDesignExpertRuntime:
         )
 
 
+class _ExpertErrorDesignExpertRuntime(_FakeDesignExpertRuntime):
+    async def assess_quality(
+        self,
+        *,
+        brief,
+        design_system,
+        layout_plan,
+        artifact,
+        validation_report,
+        preview_reports,
+        html,
+    ):
+        self.quality_calls.append(
+            {
+                "artifact_id": artifact.artifact_id,
+                "validation_status": validation_report.status,
+                "preview_count": len(preview_reports),
+                "html": html,
+            }
+        )
+        return DesignQcReport(
+            artifact_ids=[artifact.artifact_id],
+            status="fail",
+            summary="Fake expert QC found a visual failure.",
+            findings=[
+                DesignQcFinding(
+                    severity="error",
+                    category="visual",
+                    target="hero",
+                    summary="Hero is visually blank in the expert review.",
+                    recommendation="Regenerate or revise the hero before final handoff.",
+                )
+            ],
+        )
+
+
 class _TabletDesignExpertRuntime(_FakeDesignExpertRuntime):
     async def plan_direction(self, *, user_prompt, design_genre, design_settings, reference_assets):
         direction = await super().plan_direction(
@@ -1489,6 +1525,46 @@ class DesignProductionTests(unittest.TestCase):
         self.assertTrue(
             any("DesignQCExpert failed" in finding["summary"] for finding in review_metadata["quality"]["attention_findings"])
         )
+
+    def test_manager_exposes_expert_quality_error_count_without_blocking(self) -> None:
+        state = _adk_state("session_design_expert_qc_error_count")
+        runtime = _ExpertErrorDesignExpertRuntime()
+        manager = DesignProductionManager(
+            preview_renderer=_FakePreviewRenderer(),
+            expert_runtime=runtime,
+        )
+        started = asyncio.run(
+            manager.start(
+                user_prompt="Design an operations dashboard UI for ecommerce GMV and inventory alerts",
+                input_files=[],
+                placeholder_design=False,
+                design_settings=None,
+                adk_state=state,
+            )
+        )
+
+        preview = asyncio.run(
+            manager.resume(
+                production_session_id=started.production_session_id,
+                user_response={"decision": "approve"},
+                adk_state=state,
+            )
+        )
+
+        self.assertEqual(preview.status, "needs_user_review")
+        self.assertEqual(preview.stage, "preview_review")
+        persisted = json.loads(resolve_workspace_path(preview.state_ref or "").read_text(encoding="utf-8"))
+        qc_report = persisted["qc_reports"][0]
+        self.assertEqual(qc_report["status"], "warning")
+        self.assertEqual(qc_report["expert_status"], "fail")
+        self.assertEqual(qc_report["expert_finding_counts"]["error"], 1)
+        self.assertEqual(qc_report["findings"][0]["severity"], "warning")
+        review_quality = preview.review_payload.metadata["quality"]
+        self.assertEqual(review_quality["finding_counts"]["error"], 0)
+        self.assertEqual(review_quality["finding_counts"]["warning"], 1)
+        self.assertEqual(review_quality["expert"]["status"], "fail")
+        self.assertEqual(review_quality["expert"]["error_count"], 1)
+        self.assertEqual(review_quality["expert"]["warning_count"], 0)
 
     def test_manager_revision_impact_marks_target_section(self) -> None:
         state = _adk_state("session_design_revision_impact")

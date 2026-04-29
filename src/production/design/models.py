@@ -443,6 +443,8 @@ class DesignQcReport(BaseModel):
     status: Literal["pass", "warning", "fail"] = "pass"
     summary: str = ""
     findings: list[DesignQcFinding] = Field(default_factory=list)
+    expert_status: Literal["", "pass", "warning", "fail"] = ""
+    expert_finding_counts: dict[str, int] = Field(default_factory=dict)
     report_path: str | None = None
     created_at: str = Field(default_factory=utc_now_iso)
 
