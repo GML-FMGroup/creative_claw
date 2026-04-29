@@ -25,7 +25,7 @@ class DeckBuilderService:
             from pptx.enum.shapes import MSO_SHAPE
             from pptx.enum.text import PP_ALIGN
             from pptx.util import Inches, Pt
-        except Exception:
+        except ImportError:
             return _build_minimal_ooxml_deck(
                 deck_spec=deck_spec,
                 render_settings=render_settings,
@@ -55,7 +55,7 @@ class DeckBuilderService:
             if slide_spec.speaker_notes:
                 try:
                     slide.notes_slide.notes_text_frame.text = slide_spec.speaker_notes
-                except Exception:
+                except AttributeError:
                     pass
 
         prs.save(output_path)

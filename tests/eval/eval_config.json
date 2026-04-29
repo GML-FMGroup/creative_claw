@@ -104,6 +104,48 @@
           "rubric_content": {
             "text_property": "When the user asks for an editable PPT deck or a standalone poster/image output rather than an HTML-centered design artifact, the agent should not route the request to run_design_production; it should use the appropriate PPT or image workflow."
           }
+        },
+        {
+          "rubric_id": "ppt_uses_production_tool",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for an editable PPTX deck, slides, PowerPoint, deck, presentation, 演示文稿, or business 汇报, the agent uses run_ppt_production instead of manually chaining text, image, file, or design tools."
+          }
+        },
+        {
+          "rubric_id": "ppt_review_gates_before_completion",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When starting non-placeholder PPT production, the agent should pause at outline_review, then deck_spec_review, then final_preview_review before completing and projecting final PPTX artifacts."
+          }
+        },
+        {
+          "rubric_id": "ppt_source_documents_are_passed_as_inputs",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for a PPT based on uploaded or referenced source documents, the agent passes those files through run_ppt_production input_files and relies on PPT document summaries and source_refs instead of inventing unsupported content."
+          }
+        },
+        {
+          "rubric_id": "ppt_view_for_state_manifest_or_quality",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks for PPT status, outline, deck spec, previews, manifest, quality, QC, events, or artifacts, the agent uses run_ppt_production with action view and the appropriate view_type instead of reconstructing state from memory."
+          }
+        },
+        {
+          "rubric_id": "ppt_impact_before_targeted_revision",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user asks what would be affected by changing a specific PPT slide, page, outline item, deck slide, preview, or final output, the agent uses run_ppt_production with analyze_revision_impact before applying the change."
+          }
+        },
+        {
+          "rubric_id": "ppt_apply_revision_after_confirmation",
+          "type": "TOOL_USE_QUALITY",
+          "rubric_content": {
+            "text_property": "When the user explicitly confirms applying a PPT revision, the agent uses run_ppt_production with apply_revision or resume decision=revise, scopes the target slide or outline item when possible, and returns to the appropriate review gate instead of directly completing the deck."
+          }
         }
       ]
     }

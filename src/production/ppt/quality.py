@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 import zipfile
 from pathlib import Path
 
 from src.production.ppt.models import PPTProductionState, PPTQualityCheck, PPTQualityReport
 from src.runtime.workspace import resolve_workspace_path
+
+
+@dataclass(frozen=True)
+class _SlideCountInspection:
+    """Result of inspecting generated PPTX slide count."""
+
+    count: int
+    method: str
+    error: str = ""
 
 
 def build_quality_report(state: PPTProductionState, *, report_path: str | None = None) -> PPTQualityReport:
@@ -135,17 +145,25 @@ def _final_pptx_exists_check(state: PPTProductionState) -> PPTQualityCheck:
 
 def _slide_count_check(state: PPTProductionState) -> PPTQualityCheck:
     expected = len(state.deck_spec.slides) if state.deck_spec is not None else 0
-    actual = _actual_pptx_slide_count(state)
+    inspection = _inspect_pptx_slide_count(state)
+    actual = inspection.count
+    details: dict[str, object] = {
+        "expected": expected,
+        "actual": actual,
+        "inspection_method": inspection.method,
+    }
+    if inspection.error:
+        details["inspection_error"] = inspection.error
     if expected <= 0:
         return _check("slide_count", "structure", "fail", "No deck spec slides are available.")
     if actual <= 0:
-        return _check("slide_count", "structure", "warning", "Could not inspect generated PPTX slide count.", {"expected": expected, "actual": actual})
+        return _check("slide_count", "structure", "warning", "Could not inspect generated PPTX slide count.", details)
     return _check(
         "slide_count",
         "structure",
         "pass" if actual == expected else "warning",
         "Generated PPTX slide count matches the deck spec." if actual == expected else "Generated PPTX slide count differs from the deck spec.",
-        {"expected": expected, "actual": actual},
+        details,
     )
 
 
@@ -317,30 +335,36 @@ def _normalize_match_text(text: str) -> str:
     return " ".join(tokens)
 
 
-def _actual_pptx_slide_count(state: PPTProductionState) -> int:
+def _inspect_pptx_slide_count(state: PPTProductionState) -> _SlideCountInspection:
+    """Inspect final PPTX slide count and preserve diagnostic failure details."""
     path = state.final_artifact.pptx_path if state.final_artifact is not None else ""
     if not path:
-        return 0
+        return _SlideCountInspection(count=0, method="missing_path", error="No final PPTX path is recorded.")
     try:
         from pptx import Presentation
 
-        return len(Presentation(str(resolve_workspace_path(path))).slides)
-    except Exception:
-        return _zip_slide_count(path)
+        return _SlideCountInspection(count=len(Presentation(str(resolve_workspace_path(path))).slides), method="python_pptx")
+    except Exception as pptx_exc:
+        zip_count, zip_error = _zip_slide_count(path)
+        pptx_error = f"python_pptx_failed:{type(pptx_exc).__name__}: {pptx_exc}"
+        if zip_count > 0:
+            return _SlideCountInspection(count=zip_count, method="zip_package", error=pptx_error)
+        return _SlideCountInspection(count=0, method="failed", error=f"{pptx_error}; zip_failed:{zip_error}")
 
 
-def _zip_slide_count(path: str) -> int:
+def _zip_slide_count(path: str) -> tuple[int, str]:
     try:
         with zipfile.ZipFile(resolve_workspace_path(path)) as package:
-            return len(
+            slide_count = len(
                 [
                     name
                     for name in package.namelist()
                     if name.startswith("ppt/slides/slide") and name.endswith(".xml")
                 ]
             )
-    except Exception:
-        return 0
+            return slide_count, "" if slide_count else "no_slide_xml_found"
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
 
 
 def _metrics(state: PPTProductionState) -> dict[str, object]:

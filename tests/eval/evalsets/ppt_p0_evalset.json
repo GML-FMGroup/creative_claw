@@ -1,0 +1,233 @@
+{
+  "eval_set_id": "ppt_p0",
+  "name": "PPT P0 behavior",
+  "description": "Checks that the orchestrator routes editable PPT work through PPT production, keeps review gates, passes source documents, and uses view/impact/revision actions for existing PPT sessions.",
+  "eval_cases": [
+    {
+      "eval_id": "start_chinese_executive_report_requires_outline_review",
+      "conversation": [
+        {
+          "invocation_id": "start_chinese_executive_report_requires_outline_review_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请做一份可编辑的 6 页 PPTX Q1 业务汇报，给高管看，重点包括收入增长、留存改善、成本压力和下季度决策。先给大纲 review，不要直接完成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_chinese_executive_report",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_source_doc_ppt_uses_uploaded_context",
+      "conversation": [
+        {
+          "invocation_id": "start_source_doc_ppt_uses_uploaded_context_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "基于我上传的 Q1 经营数据文档，生成一份 5 页可编辑 PPTX 高管汇报。请让每页都尽量引用文档事实，先停在大纲确认。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_source_doc_report",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [
+            {
+              "name": "q1_business_notes.md",
+              "path": "input/eval_q1_business_notes.md",
+              "description": "Q1 business source notes for PPT eval",
+              "source": "channel"
+            }
+          ],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "start_brief_review_when_requested",
+      "conversation": [
+        {
+          "invocation_id": "start_brief_review_when_requested_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "帮我做一份 4 页融资路演 PPTX，但在生成大纲前先让我确认 brief 和页数设置。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_brief_review",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "view_ppt_manifest_and_quality_state",
+      "conversation": [
+        {
+          "invocation_id": "view_ppt_manifest_and_quality_state_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "做一个 4 页产品策略更新 PPTX，先给 outline review。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "view_ppt_manifest_and_quality_state_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "现在这个 PPT 任务到哪一步了？把当前 outline、manifest 或质量状态给我看一下，不要重新生成。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_view_state",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "analyze_slide_revision_impact",
+      "conversation": [
+        {
+          "invocation_id": "analyze_slide_revision_impact_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "请做一份 5 页年度复盘 PPTX，先停在大纲 review。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "analyze_slide_revision_impact_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "如果我只把第 2 页改成更强调收入增长，会影响哪些 outline、deck spec、preview 或最终 PPTX？先不要真的改。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_revision_impact",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    },
+    {
+      "eval_id": "apply_confirmed_slide_revision",
+      "conversation": [
+        {
+          "invocation_id": "apply_confirmed_slide_revision_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "做一份 5 页销售复盘 PPTX，先给我 outline review。"
+              }
+            ]
+          }
+        },
+        {
+          "invocation_id": "apply_confirmed_slide_revision_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "确认修改：把第 2 页改成更强调收入增长和关键客户续约，应用后回到对应 review，不要直接完成 PPT。"
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "CreativeClaw",
+        "user_id": "ppt_eval_user",
+        "state": {
+          "sid": "eval_ppt_apply_slide_revision",
+          "turn_index": 1,
+          "channel": "eval",
+          "chat_id": "ppt_p0",
+          "sender_id": "eval-user",
+          "uploaded": [],
+          "generated": [],
+          "files_history": [],
+          "final_file_paths": []
+        }
+      }
+    }
+  ]
+}

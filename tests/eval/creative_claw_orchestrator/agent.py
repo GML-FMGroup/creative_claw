@@ -88,7 +88,26 @@ def _ensure_eval_product_fixture() -> None:
     target.write_bytes(_build_eval_product_png())
 
 
+def _ensure_eval_ppt_source_fixture() -> None:
+    """Create the workspace source document used by PPT eval cases."""
+    target = workspace_root() / "input" / "eval_q1_business_notes.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "\n".join(
+            [
+                "# Q1 Business Notes",
+                "- Q1 revenue grew 20% year over year, mainly from enterprise renewals.",
+                "- Customer retention improved by 6 percentage points after onboarding changes.",
+                "- Cloud infrastructure cost increased 14%, pressuring gross margin.",
+                "- The leadership decision is whether to fund retention automation before new acquisition spend.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 _ensure_eval_product_fixture()
+_ensure_eval_ppt_source_fixture()
 
 
 _orchestrator = Orchestrator(

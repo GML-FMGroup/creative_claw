@@ -32,7 +32,7 @@ def ingest_input_files(input_files: Any, *, turn_index: int) -> list[IngestEntry
                 status = "unsupported"
             template_seen = True
         elif role == "reference_image":
-            warning = "Reference images are recorded and will be used by a later implementation phase."
+            warning = "Reference images are used as lightweight visual context; image understanding is not applied in this iteration."
         elif role == "unknown":
             warning = "Unsupported input type for PPT production."
             status = "unsupported"

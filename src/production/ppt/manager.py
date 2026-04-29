@@ -21,6 +21,7 @@ from src.production.models import (
 )
 from src.production.ppt.deck_builder import DeckBuilderService
 from src.production.ppt.document_loader import DocumentLoaderService
+from src.production.ppt.expert_runtime import PPTExpertRuntime
 from src.production.ppt.impact import build_revision_impact_view
 from src.production.ppt.ingest import ingest_input_files
 from src.production.ppt.models import (
@@ -74,6 +75,7 @@ class PPTProductionManager:
         preview_renderer: PreviewRendererService | None = None,
         document_loader: DocumentLoaderService | None = None,
         template_analyzer: TemplateAnalyzerService | None = None,
+        expert_runtime: PPTExpertRuntime | None = None,
     ) -> None:
         """Initialize the PPT production manager."""
         self.store = store or ProductionSessionStore()
@@ -81,6 +83,7 @@ class PPTProductionManager:
         self.preview_renderer = preview_renderer or PreviewRendererService()
         self.document_loader = document_loader or DocumentLoaderService()
         self.template_analyzer = template_analyzer or TemplateAnalyzerService()
+        self.expert_runtime = expert_runtime or PPTExpertRuntime()
 
     async def start(
         self,
@@ -145,18 +148,12 @@ class PPTProductionManager:
                 self.store.project_pointer_to_adk_state(adk_state, state)
                 return self._result_from_state(state, message="Please review the PPT brief before outline generation.")
 
-            state.outline = _build_outline(
-                brief=state.brief_summary,
-                settings=settings,
-                inputs=state.inputs,
-                document_summary=state.document_summary,
-                template_summary=state.template_summary,
-            )
             state.stage = "outline_planning"
             state.progress_percent = 15
+            state.outline = await self._build_outline_for_state(state, adk_state=adk_state)
             if placeholder_assets or settings.skip_review:
                 state.outline.status = "approved"
-                return self._build_final_preview_or_complete(
+                return await self._build_final_preview_or_complete(
                     state,
                     adk_state=adk_state,
                     complete=bool(placeholder_assets or settings.skip_review),
@@ -271,7 +268,7 @@ class PPTProductionManager:
             return self._result_from_state(state, message="PPT production was cancelled.")
 
         if decision == "revise":
-            return self._revise_active_breakpoint_and_pause(state, user_response=response, adk_state=adk_state)
+            return await self._revise_active_breakpoint_and_pause(state, user_response=response, adk_state=adk_state)
 
         if decision != "approve":
             state.production_events.append(
@@ -289,15 +286,9 @@ class PPTProductionManager:
 
         if state.active_breakpoint.stage == "brief_review":
             state.active_breakpoint = None
-            state.outline = _build_outline(
-                brief=state.brief_summary,
-                settings=state.render_settings,
-                inputs=state.inputs,
-                document_summary=state.document_summary,
-                template_summary=state.template_summary,
-            )
             state.stage = "outline_planning"
             state.progress_percent = max(state.progress_percent, 15)
+            state.outline = await self._build_outline_for_state(state, adk_state=adk_state)
             state.status = "needs_user_review"
             state.stage = "outline_review"
             state.progress_percent = max(state.progress_percent, 20)
@@ -323,8 +314,8 @@ class PPTProductionManager:
                 state.outline.status = "approved"
             state.active_breakpoint = None
             if _should_pause_for_deck_spec_review(state):
-                return self._build_deck_spec_and_pause(state, adk_state=adk_state)
-            return self._build_final_preview_or_complete(
+                return await self._build_deck_spec_and_pause(state, adk_state=adk_state)
+            return await self._build_final_preview_or_complete(
                 state,
                 adk_state=adk_state,
                 complete=False,
@@ -333,7 +324,7 @@ class PPTProductionManager:
         if state.active_breakpoint.stage == "deck_spec_review":
             _approve_deck_spec(state.deck_spec)
             state.active_breakpoint = None
-            return self._build_final_preview_or_complete(
+            return await self._build_final_preview_or_complete(
                 state,
                 adk_state=adk_state,
                 complete=False,
@@ -393,13 +384,8 @@ class PPTProductionManager:
         state.document_summary = self.document_loader.build_summary(state.inputs)
         state.warnings = _state_warnings(state.inputs, state.template_summary, state.document_summary)
         state.stale_items = ["outline", "deck_spec", "slide_previews", "final", "quality"]
-        state.outline = _build_outline(
-            brief=state.brief_summary,
-            settings=state.render_settings,
-            inputs=state.inputs,
-            document_summary=state.document_summary,
-            template_summary=state.template_summary,
-        )
+        state.stage = "outline_planning"
+        state.outline = await self._build_outline_for_state(state, adk_state=adk_state)
         state.deck_spec = None
         state.slide_previews = []
         state.final_artifact = None
@@ -470,7 +456,7 @@ class PPTProductionManager:
                 view=impact_view,
                 error=ProductionErrorInfo(code="ppt_revision_target_unmatched", message="Revision target was not found."),
             )
-        return self._apply_revision_by_impact(state, notes=notes, user_response=response, impact_view=impact_view, adk_state=adk_state)
+        return await self._apply_revision_by_impact(state, notes=notes, user_response=response, impact_view=impact_view, adk_state=adk_state)
 
     async def regenerate_stale_segments(self, *, production_session_id: str | None, adk_state) -> ProductionRunResult:
         """Regenerate stale slide segment PPTX files and preview PNGs without rebuilding the final deck."""
@@ -692,14 +678,14 @@ class PPTProductionManager:
                 ),
             )
 
-    def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+    async def _revise_active_breakpoint_and_pause(self, state: PPTProductionState, *, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         notes = _revision_notes_from_response(user_response)
         if notes:
             if state.active_breakpoint is not None and state.active_breakpoint.stage == "brief_review":
                 return self._apply_brief_revision_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
             scoped_response = _scope_page_preview_revision_response(state, user_response)
             impact_view = build_revision_impact_view(state, scoped_response)
-            return self._apply_revision_by_impact(state, notes=notes, user_response=scoped_response, impact_view=impact_view, adk_state=adk_state)
+            return await self._apply_revision_by_impact(state, notes=notes, user_response=scoped_response, impact_view=impact_view, adk_state=adk_state)
         state.production_events.append(
             ProductionEvent(
                 event_type="revision_notes_required",
@@ -739,7 +725,7 @@ class PPTProductionManager:
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="PPT brief revision was applied. Please review the updated brief.")
 
-    def _apply_revision_by_impact(
+    async def _apply_revision_by_impact(
         self,
         state: PPTProductionState,
         *,
@@ -753,17 +739,12 @@ class PPTProductionManager:
             return self._apply_deck_slide_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
         if _has_only_target_kind(matched_targets, "outline_entry") and state.outline is not None:
             return self._apply_outline_entry_revision_and_pause(state, notes=notes, matched_targets=matched_targets, user_response=user_response, impact_view=impact_view, adk_state=adk_state)
-        return self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
+        return await self._apply_revision_notes_and_pause(state, notes=notes, user_response=user_response, adk_state=adk_state)
 
-    def _apply_revision_notes_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
+    async def _apply_revision_notes_and_pause(self, state: PPTProductionState, *, notes: str, user_response: dict[str, Any], adk_state) -> ProductionRunResult:
         state.brief_summary = _append_revision_note(state.brief_summary, notes)
-        state.outline = _build_outline(
-            brief=state.brief_summary,
-            settings=state.render_settings,
-            inputs=state.inputs,
-            document_summary=state.document_summary,
-            template_summary=state.template_summary,
-        )
+        state.stage = "outline_planning"
+        state.outline = await self._build_outline_for_state(state, adk_state=adk_state)
         state.deck_spec = None
         state.slide_previews = []
         state.final_artifact = None
@@ -865,13 +846,92 @@ class PPTProductionManager:
         self.store.project_pointer_to_adk_state(adk_state, state)
         return self._result_from_state(state, message="PPT deck slide revision was applied. Please review the updated deck spec.")
 
-    def _build_deck_spec_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
+    async def _build_outline_for_state(self, state: PPTProductionState, *, adk_state) -> PPTOutline:
+        """Build a PPT outline with the internal expert runtime and deterministic fallback."""
+        _publish_ppt_progress(adk_state, state, title="Planning PPT outline", detail="Generating slide narrative from brief and inputs.")
+        try:
+            outline = await self.expert_runtime.plan_outline(
+                brief=state.brief_summary,
+                settings=state.render_settings,
+                inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_outline_expert_planned",
+                    stage=state.stage,
+                    message="Prepared PPT outline with internal structured expert runtime.",
+                    metadata={
+                        "model_name": getattr(self.expert_runtime, "model_name", ""),
+                        "outline_id": outline.outline_id,
+                        "slide_count": len(outline.entries),
+                    },
+                )
+            )
+            return outline
+        except Exception as exc:
+            warning = f"PPT outline expert failed; deterministic fallback used: {type(exc).__name__}: {exc}"
+            _append_warning_once(state, warning)
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_outline_expert_failed",
+                    stage=state.stage,
+                    message=warning,
+                    metadata={"model_name": getattr(self.expert_runtime, "model_name", "")},
+                )
+            )
+            return _build_outline(
+                brief=state.brief_summary,
+                settings=state.render_settings,
+                inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
+            )
+
+    async def _build_deck_spec_for_state(self, state: PPTProductionState, *, adk_state) -> DeckSpec:
+        """Build a deck spec with the internal expert runtime and deterministic fallback."""
+        try:
+            deck_spec = await self.expert_runtime.build_deck_spec(
+                outline=state.outline,
+                settings=state.render_settings,
+                inputs=state.inputs,
+                document_summary=state.document_summary,
+                template_summary=state.template_summary,
+            )
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_deck_spec_expert_planned",
+                    stage=state.stage,
+                    message="Prepared PPT deck spec with internal structured expert runtime.",
+                    metadata={
+                        "model_name": getattr(self.expert_runtime, "model_name", ""),
+                        "deck_spec_id": deck_spec.deck_spec_id,
+                        "slide_count": len(deck_spec.slides),
+                    },
+                )
+            )
+            return deck_spec
+        except Exception as exc:
+            warning = f"PPT deck-spec expert failed; deterministic fallback used: {type(exc).__name__}: {exc}"
+            _append_warning_once(state, warning)
+            state.production_events.append(
+                ProductionEvent(
+                    event_type="ppt_deck_spec_expert_failed",
+                    stage=state.stage,
+                    message=warning,
+                    metadata={"model_name": getattr(self.expert_runtime, "model_name", "")},
+                )
+            )
+            return _build_deck_spec(state.outline, state.render_settings)
+
+    async def _build_deck_spec_and_pause(self, state: PPTProductionState, *, adk_state) -> ProductionRunResult:
         """Build an executable deck spec and pause for user review."""
         try:
             state.stage = "deck_spec_planning"
             state.progress_percent = max(state.progress_percent, 35)
             _publish_ppt_progress(adk_state, state, title="Building deck spec", detail="Converting the approved outline into executable slide content.")
-            state.deck_spec = _build_deck_spec(state.outline, state.render_settings)
+            state.deck_spec = await self._build_deck_spec_for_state(state, adk_state=adk_state)
             state.status = "needs_user_review"
             state.stage = "deck_spec_review"
             state.progress_percent = max(state.progress_percent, 42)
@@ -906,7 +966,7 @@ class PPTProductionManager:
                 error=ProductionErrorInfo(code="ppt_deck_spec_build_failed", message=f"{type(exc).__name__}: {exc}"),
             )
 
-    def _build_final_preview_or_complete(
+    async def _build_final_preview_or_complete(
         self,
         state: PPTProductionState,
         *,
@@ -917,7 +977,7 @@ class PPTProductionManager:
         try:
             _publish_ppt_progress(adk_state, state, title="Building PPTX", detail="Generating editable PPTX from approved deck spec.")
             if state.deck_spec is None:
-                state.deck_spec = _build_deck_spec(state.outline, state.render_settings)
+                state.deck_spec = await self._build_deck_spec_for_state(state, adk_state=adk_state)
             _approve_deck_spec(state.deck_spec)
             state.stage = "native_build"
             state.progress_percent = 55
@@ -937,6 +997,7 @@ class PPTProductionManager:
                 render_settings=state.render_settings,
                 output_dir=session_root / "preview",
             )
+            _record_preview_fallback_warning(state)
             segment_paths = self.deck_builder.build_slide_segments(
                 deck_spec=state.deck_spec,
                 render_settings=state.render_settings,
@@ -1116,6 +1177,12 @@ def _state_warnings(inputs, template_summary: TemplateSummary | None, document_s
     return warnings
 
 
+def _append_warning_once(state: PPTProductionState, warning: str) -> None:
+    """Append a production warning if it is not already present."""
+    if warning and warning not in state.warnings:
+        state.warnings.append(warning)
+
+
 def _input_warnings(inputs) -> list[str]:
     warnings = [item.warning for item in inputs if item.warning]
     return [warning for warning in warnings if warning]
@@ -1195,6 +1262,12 @@ def _apply_input_context_to_outline(
                     target.source_refs.append(source_id)
     elif any(item.role == "source_doc" for item in inputs):
         entries[0].bullet_points.append("Source documents are attached, but no supported text was extracted yet.")
+
+    reference_images = [item for item in inputs if item.role == "reference_image" and item.status == "valid"]
+    if reference_images:
+        names = ", ".join(item.name for item in reference_images[:3])
+        suffix = "..." if len(reference_images) > 3 else ""
+        entries[0].bullet_points.append(f"Reference image context attached for visual direction: {names}{suffix}.")
 
 
 def _has_only_target_kind(matched_targets: list[dict[str, Any]], kind: str) -> bool:
@@ -1447,14 +1520,29 @@ def _build_deck_spec(outline: PPTOutline | None, settings: PPTRenderSettings) ->
             sequence_index=entry.sequence_index,
             title=entry.title,
             layout_type=entry.layout_type,
-            bullets=entry.bullet_points,
+            bullets=_deck_slide_bullets(entry),
             visual_notes=_visual_note(entry.layout_type, settings.style_preset),
-            speaker_notes=entry.speaker_notes,
+            speaker_notes=_deck_slide_speaker_notes(entry),
             source_refs=list(entry.source_refs),
         )
         for entry in outline.entries
     ]
     return DeckSpec(title=outline.title, slides=slides)
+
+
+def _deck_slide_bullets(entry: PPTOutlineEntry) -> list[str]:
+    """Return visible deck bullets shaped for the target layout."""
+    if entry.layout_type == "metric":
+        return entry.bullet_points[:3]
+    return entry.bullet_points
+
+
+def _deck_slide_speaker_notes(entry: PPTOutlineEntry) -> str:
+    """Return speaker notes, preserving metric overflow outside visible cards."""
+    if entry.layout_type != "metric" or len(entry.bullet_points) <= 3:
+        return entry.speaker_notes
+    overflow = "\n".join(f"- {bullet}" for bullet in entry.bullet_points[3:])
+    return f"{entry.speaker_notes}\n\nAdditional metric context:\n{overflow}".strip()
 
 
 def _visual_note(layout_type: str, style: str) -> str:
@@ -1829,9 +1917,51 @@ def _final_preview_review_metadata(state: PPTProductionState) -> dict[str, Any]:
             "quality_report_markdown_path": f"{state.production_session.root_dir}/quality_report.md" if state.quality_report is not None else "",
             "quality_status": state.quality_report.status if state.quality_report is not None else "",
         },
+        "preview": _preview_renderer_summary(state),
         "quality": _quality_review_summary(state),
         "warnings": list(state.warnings),
     }
+
+
+def _preview_renderer_summary(state: PPTProductionState) -> dict[str, Any]:
+    """Return compact preview renderer metadata for review payloads."""
+    renderer_counts: dict[str, int] = {}
+    fallback_reasons: list[str] = []
+    for preview in state.slide_previews:
+        renderer = str(preview.metadata.get("renderer", "") or "unknown")
+        renderer_counts[renderer] = renderer_counts.get(renderer, 0) + 1
+        fallback_reason = str(preview.metadata.get("fallback_reason", "") or "").strip()
+        if fallback_reason and fallback_reason not in fallback_reasons:
+            fallback_reasons.append(fallback_reason)
+    return {
+        "renderers": renderer_counts,
+        "fallback_count": renderer_counts.get("pillow_fallback", 0),
+        "fallback_reasons": fallback_reasons,
+    }
+
+
+def _record_preview_fallback_warning(state: PPTProductionState) -> None:
+    """Expose preview-render fallback state as a warning and audit event."""
+    summary = _preview_renderer_summary(state)
+    fallback_count = int(summary.get("fallback_count", 0) or 0)
+    if fallback_count <= 0:
+        return
+    fallback_reasons = [str(reason) for reason in summary.get("fallback_reasons", []) if str(reason)]
+    reason_text = "; ".join(fallback_reasons) if fallback_reasons else "office preview renderer unavailable"
+    warning = f"PPT preview rendering used Pillow fallback for {fallback_count} slide(s): {reason_text}"
+    _append_warning_once(state, warning)
+    state.production_events.append(
+        ProductionEvent(
+            event_type="ppt_preview_renderer_fallback",
+            stage=state.stage,
+            message=warning,
+            metadata={
+                "fallback_count": fallback_count,
+                "fallback_reasons": fallback_reasons,
+                "renderers": summary.get("renderers", {}),
+            },
+        )
+    )
 
 
 def _quality_review_summary(state: PPTProductionState) -> dict[str, Any]:
@@ -2087,7 +2217,7 @@ def _one_line_summary(brief: str) -> str:
     title = _deck_title(brief)
     if title == "CreativeClaw Presentation":
         return "Turn the brief into a structured, reviewable presentation."
-    return f"Translate `{title}` into a clear presentation narrative."
+    return f"Translate {title} into a clear presentation narrative."
 
 
 def _keywords(brief: str) -> list[str]:

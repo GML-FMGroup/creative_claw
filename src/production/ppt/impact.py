@@ -61,10 +61,15 @@ def _targets_from_response(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _target(kind: Any, target_id: Any, label: Any) -> dict[str, str]:
+    normalized_kind = str(kind or "").strip().lower()
+    normalized_id = str(target_id or "").strip()
+    normalized_label = str(label or "").strip()
+    if not normalized_kind and not normalized_id and not normalized_label:
+        return {}
     return {
-        "kind": str(kind or "").strip().lower() or "unknown",
-        "id": str(target_id or "").strip(),
-        "label": str(label or "").strip(),
+        "kind": normalized_kind or "unknown",
+        "id": normalized_id,
+        "label": normalized_label,
     }
 
 
